@@ -1,0 +1,22 @@
+name: lint
+on: { push: {}, pull_request: {} }
+permissions: { contents: read }
+jobs:
+  skill-frontmatter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install pyyaml
+      - run: |
+          python3 - <<'PY'
+          import glob,re,yaml,sys
+          bad=[]
+          for p in glob.glob('skills/*/SKILL.md'):
+              t=open(p).read()
+              m=re.match(r'^---\n(.*?)\n---\n',t,re.S)
+              if not m: bad.append(f'{p}: no frontmatter'); continue
+              d=yaml.safe_load(m.group(1)) or {}
+              if not d.get('name') or not str(d.get('description','')).strip():
+                  bad.append(f'{p}: missing name/description')
+          print('\n'.join(bad) or 'all skills valid'); sys.exit(1 if bad else 0)
+          PY

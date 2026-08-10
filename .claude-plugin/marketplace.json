@@ -1,0 +1,13 @@
+{
+  "name": "advisor-reach-hermes-skills",
+  "description": "Public AdvisorReach skills for Hermes agents (and any SKILL.md-compatible agent)",
+  "owner": { "name": "AdvisorReach" },
+  "plugins": [
+    {
+      "name": "advisor-reach-hermes-skills",
+      "description": "AdvisorReach Hermes skills — present-file and more",
+      "source": "./",
+      "version": "0.1.0"
+    }
+  ]
+}
