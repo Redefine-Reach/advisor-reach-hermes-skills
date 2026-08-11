@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- APPROVED pre-listing packet template (design signed off 2026-08-12). Port of Joe Gilmore's
+     generate_packet.js (advisormastery@gmail.com). Renders via weasyprint on the box's Debian base.
+     Tokens ({{...}}) are the ONLY per-listing fills; everything else is locked copy — DO NOT change. -->
+<style>
+  :root{
+    --navy:#1F2A44; --gold:#C9A227; --lightgold:#F7F1DE; --lightgrey:#F2F2F2; --textgrey:#404040;
+  }
+  @page{
+    size: Letter; margin: 0.9in 0.85in 0.95in 0.85in;
+    @bottom-center{
+      content: "{{brand}}  |  The Intelligent Listing System  |  Maximum Price. Minimum Time. Precision Strategy.";
+      font-family: Helvetica, Arial, sans-serif; font-size: 7.5pt; color:#8a8f9a; letter-spacing:.3px;
+    }
+    @bottom-right{ content: counter(page); font-family: Helvetica, Arial, sans-serif; font-size:8pt; color:#8a8f9a; }
+  }
+  *{ box-sizing: border-box; }
+  body{ font-family: Helvetica, Arial, sans-serif; color: var(--textgrey); font-size: 10.5pt; line-height: 1.5; margin:0; }
+  h1,h2,h3,h4{ font-family: Georgia, 'Times New Roman', serif; color: var(--navy); margin:0; }
+  p{ margin: 0 0 9pt; }
+  .gold{ color: var(--gold); }
+  .muted{ color:#6b7280; }
+
+  .cover{ text-align:center; padding: 26pt 0 6pt; }
+  .cover .brand{ font-family: Georgia, serif; font-size: 22pt; letter-spacing: 2px; color: var(--navy); text-transform: uppercase; }
+  .cover .rule{ width: 64px; height: 3px; background: var(--gold); margin: 12pt auto; }
+  .cover .kicker{ font-family: Helvetica, Arial, sans-serif; font-size: 13pt; letter-spacing: 6px; color: var(--gold); text-transform: uppercase; font-weight:700; }
+  .cover .sub{ font-family: Georgia, serif; font-style: italic; font-size: 12pt; color:#55607a; margin-top: 8pt; }
+  .prepared{ background: var(--lightgold); border:1px solid #e7dcb6; border-radius:4px; padding: 12pt 16pt; margin: 20pt auto 0; max-width: 78%; }
+  .prepared .lbl{ font-size:7.5pt; letter-spacing:2px; text-transform:uppercase; color: var(--gold); font-weight:700; }
+  .prepared .who{ font-family: Georgia, serif; font-size: 13pt; color: var(--navy); margin-top:2pt; }
+  .prepared .addr{ font-size: 10pt; color: var(--textgrey); }
+  .advisor{ margin-top: 16pt; font-size: 9.5pt; color: var(--navy); }
+  .advisor strong{ font-size: 11pt; }
+
+  .section{ page-break-inside: avoid; }
+  .sec-head{ margin-top: 24pt; }
+  .sec-kicker{ font-size: 8pt; letter-spacing: 3px; text-transform: uppercase; color: var(--gold); font-weight:700; }
+  .sec-title{ font-size: 17pt; margin-top: 2pt; }
+  .sec-title:after{ content:""; display:block; width: 46px; height:3px; background: var(--gold); margin-top: 7pt; }
+  .sub{ font-style: italic; color:#55607a; }
+
+  .grid{ width:100%; border-collapse: separate; border-spacing: 8pt; margin-top: 8pt; }
+  .grid td{ width: 33.33%; background: var(--lightgrey); border-top: 2px solid var(--gold); padding: 9pt 10pt; vertical-align: top; }
+  .grid .n{ font-family: Georgia, serif; color: var(--gold); font-size: 13pt; font-weight:700; }
+  .grid .t{ font-family: Georgia, serif; color: var(--navy); font-size: 10pt; font-weight:700; display:block; margin: 1pt 0 3pt; }
+  .grid .d{ font-size: 8.6pt; line-height:1.4; color: var(--textgrey); }
+
+  .quote{ border-left: 3px solid var(--gold); background: var(--lightgold); padding: 11pt 16pt; margin: 14pt 0; font-family: Georgia, serif; font-style: italic; font-size: 12.5pt; color: var(--navy); }
+
+  table.cmp{ width:100%; border-collapse: collapse; margin-top: 10pt; font-size: 8.8pt; }
+  table.cmp th{ background: var(--navy); color:#fff; padding: 8pt 10pt; text-align:left; font-family: Georgia, serif; font-size:9.5pt; }
+  table.cmp th.opus{ background: var(--gold); color: var(--navy); }
+  table.cmp td{ padding: 7pt 10pt; vertical-align: top; border-bottom: 1px solid #e5e7eb; line-height:1.35; }
+  table.cmp tr td:first-child{ color:#6b7280; width:44%; }
+  table.cmp tr td:last-child{ color: var(--navy); font-weight:600; }
+  table.cmp tr:nth-child(even) td{ background:#fafafa; }
+
+  .callouts td{ width:50%; vertical-align: top; padding: 10pt 12pt; background: var(--lightgrey); border-top:2px solid var(--navy); }
+  .callouts .h{ font-family: Georgia, serif; color: var(--navy); font-weight:700; font-size:10pt; }
+
+  .step{ margin-top: 10pt; page-break-inside: avoid; }
+  .step-head{ font-family: Georgia, serif; color: var(--navy); font-weight:700; font-size: 11pt; }
+  .step-head .num{ display:inline-block; width: 22px; color: var(--gold); }
+  .step p{ margin: 2pt 0 0 22px; font-size: 9.4pt; }
+
+  .stats{ width:100%; border-collapse: separate; border-spacing:8pt; margin-top: 14pt; }
+  .stats td{ width:25%; text-align:center; background: var(--navy); color:#fff; padding: 12pt 6pt; }
+  .stats .big{ font-family: Georgia, serif; font-size: 26pt; color: var(--gold); line-height:1; }
+  .stats .cap{ font-size: 7.6pt; text-transform:uppercase; letter-spacing:.5px; margin-top:5pt; color:#cdd3df; }
+
+  ul.exp{ margin: 6pt 0; padding-left: 16pt; }
+  ul.exp li{ margin-bottom: 4pt; font-size:9.6pt; }
+  ul.exp li strong{ color: var(--navy); }
+
+  .cta{ margin-top: 20pt; text-align:center; background: var(--navy); color:#fff; padding: 18pt; page-break-inside: avoid; }
+  .cta h3{ color:#fff; font-size: 15pt; }
+  .cta .line{ color: var(--gold); font-size: 10.5pt; margin-top: 8pt; letter-spacing:.5px; }
+</style>
+</head>
+<body>
+
+  <div class="cover">
+    <div class="brand">{{brand}}</div>
+    <div class="rule"></div>
+    <div class="kicker">Pre-Listing Packet</div>
+    <div class="sub">What We Do. How We Are Different. How We Get Results.</div>
+    <div class="prepared">
+      <div class="lbl">Prepared For</div>
+      <div class="who">{{client_names}}</div>
+      <div class="addr">{{property_address}}</div>
+    </div>
+    <div class="advisor">
+      <strong>{{advisor_name}}</strong><br>
+      {{advisor_phone}} &nbsp;|&nbsp; {{advisor_email}}<br>
+      Book a strategy session: {{advisor_calendly}}
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head">
+      <div class="sec-kicker">Who We Are</div>
+      <h2 class="sec-title">A Different Kind of Real Estate Experience</h2>
+    </div>
+    <p>Most advisors approach selling a home the same way: listed, photographed, posted, and waited. The {{brand}} Intelligent Listing System was built on a single premise — your home deserves a buyer who is pre-identified, pre-qualified, and pre-motivated before the listing launches. We combine deep local expertise with precision data science to sell your home to the <em>right</em> buyer, not the next buyer.</p>
+    <div class="quote">"We don't market broadly and hope. We identify your buyer first, then build every campaign to reach them directly."</div>
+
+    <h3 class="sec-title" style="font-size:13pt; margin-top:16pt;">What We Do</h3>
+    <table class="grid">
+      <tr>
+        <td><span class="n">01</span><span class="t">We Find Your Buyer Before Launch</span><span class="d">Four buyer profiles are built before day one — each with a specific digital fingerprint, channel preference, and motivation trigger.</span></td>
+        <td><span class="n">02</span><span class="t">We Price With Precision</span><span class="d">Our CMA analyzes 3 sold, 3 under contract, and 3 active — pricing not to meet the market, but to lead it.</span></td>
+        <td><span class="n">03</span><span class="t">We Market to People, Not Algorithms</span><span class="d">Every campaign is tailored to {{buyer_descriptor}} — the specific buyer types most likely to pay a premium for this home.</span></td>
+      </tr>
+      <tr>
+        <td><span class="n">04</span><span class="t">We Activate a Private Network</span><span class="d">Niche buyer channels, top-producing agents, and community insiders — audiences others don't reach.</span></td>
+        <td><span class="n">05</span><span class="t">We Build Demand Before Day One</span><span class="d">Neighbor previews, teaser content, and early agent access create momentum before the MLS listing goes live.</span></td>
+        <td><span class="n">06</span><span class="t">We Keep You Informed — Always</span><span class="d">Structured weekly updates tied to milestones, not just when there's news. You'll always know where you stand.</span></td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="section" style="page-break-before: always;">
+    <div class="sec-head">
+      <div class="sec-kicker">How We Are Different</div>
+      <h2 class="sec-title">The Gap Between Standard and Extraordinary</h2>
+    </div>
+    <p>The differences below are not cosmetic. Each one represents a strategy gap that affects how fast your home sells — and for how much.</p>
+    <table class="cmp">
+      <tr><th>The Standard Approach</th><th class="opus">The {{brand}} Intelligent System</th></tr>
+      <tr><td>One generic marketing plan</td><td>Four buyer-specific marketing plans — each targeting the exact buyer most likely to pay a premium for THIS home</td></tr>
+      <tr><td>MLS exposure and an open house</td><td>Pre-listing demand building, teaser content, and neighbor preview events before launch</td></tr>
+      <tr><td>Standard photography</td><td>Lifestyle photography, cinematic video, 3D virtual tour, and drone footage — built to stop the scroll</td></tr>
+      <tr><td>No buyer research before launch</td><td>Four printed buyer intelligence maps on the table at the listing appointment — before we ask for a price</td></tr>
+      <tr><td>CMA from whatever comps are convenient</td><td>3 sold + 3 under contract + 3 active — priced to lead the market, not follow it</td></tr>
+      <tr><td>Broad social ads to a general audience</td><td>Precision digital targeting by income, lifestyle, job title, and search behavior</td></tr>
+      <tr><td>Agent email blast to the whole MLS</td><td>Personalized agent-to-agent briefs matched to each agent's active buyer list</td></tr>
+      <tr><td>No niche buyer strategy</td><td>{{niche_channels}} channels — private audiences others can't access</td></tr>
+      <tr><td>Updates when the agent thinks of it</td><td>Structured weekly reports tied to milestones, delivered on a schedule</td></tr>
+      <tr><td>One transaction = one transaction</td><td>AI-triggered direct mail generates 1–2 additional listing leads in the same neighborhood after every sale</td></tr>
+    </table>
+    <table class="callouts" style="margin-top:12pt; border-collapse:separate; border-spacing:8pt; width:100%;">
+      <tr>
+        <td><span class="h">DISC Behavioral Profile</span><br><span style="font-size:9pt;">Before we present a single number, we understand how you make decisions — data-driven or relationship-driven, fast or methodical. Every update and negotiation is calibrated to your decision style.</span></td>
+        <td><span class="h">Human Design Chart</span><br><span style="font-size:9pt;">We interpret your Human Design to understand how you process information and structure the experience so you feel informed and empowered — not overwhelmed.</span></td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="section" style="page-break-before: always;">
+    <div class="sec-head">
+      <div class="sec-kicker">How We Get Results</div>
+      <h2 class="sec-title">The 7-Step Process</h2>
+    </div>
+    <div class="step"><div class="step-head"><span class="num">1</span>Client Intelligence Briefing</div><p>We run your DISC profile and Human Design chart before any data is presented. We know how you make decisions before we ask you to make one.</p></div>
+    <div class="step"><div class="step-head"><span class="num">2</span>Property Snapshot &amp; Goal Alignment</div><p>We capture your property details, timeline, motivation, and success criteria. Your definition of a win drives every strategic decision.</p></div>
+    <div class="step"><div class="step-head"><span class="num">3</span>Precision CMA &amp; Pricing Strategy</div><p>3 sold, 3 under contract, 3 active — not cherry-picked, but precision-chosen. The price we recommend is a strategy, not a guess.</p></div>
+    <div class="step"><div class="step-head"><span class="num">4</span>Four Buyer Intelligence Maps</div><p>Before any marketing runs, we build four complete buyer profiles for THIS property: who they are, where they live, how they search, what they value, and exactly how to reach them.</p></div>
+    <div class="step"><div class="step-head"><span class="num">5</span>Pre-Listing Momentum Building</div><p>Neighbor previews, agent early-access emails, teaser content. We build demand before the listing launches so Day One feels like a premiere, not a debut.</p></div>
+    <div class="step"><div class="step-head"><span class="num">6</span>Coordinated Launch &amp; 14-Day Campaign</div><p>Professional lifestyle photography, cinematic video, 3D tour, MLS launch, social targeting, agent outreach — all coordinated and deployed the same day.</p></div>
+    <div class="step"><div class="step-head"><span class="num">7</span>Direct Mail, Niche Outreach &amp; Post-Sale</div><p>AI-triggered letters to 100 neighbors within 48 hours of a sale. Niche outreach to {{niche_channels}} channels. This isn't just a sale — it's a market signal that becomes your next listing.</p></div>
+
+    <table class="stats">
+      <tr>
+        <td><div class="big">4</div><div class="cap">Buyer Profiles<br>Before Launch</div></td>
+        <td><div class="big">9</div><div class="cap">CMA Comps Per<br>Pricing Analysis</div></td>
+        <td><div class="big">3</div><div class="cap">AI-Triggered<br>Letters Per Sale</div></td>
+        <td><div class="big">6</div><div class="cap">Niche Buyer<br>Channels Activated</div></td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="section" style="page-break-before: always;">
+    <div class="sec-head">
+      <div class="sec-kicker">Why It Matters</div>
+      <h2 class="sec-title">The Right Buyer. The Right Price. The Right Time.</h2>
+    </div>
+    <p>Every day a home sits on the market costs the seller money — in carrying costs, in buyer skepticism, and in eventual price reductions. The goal is never to sell faster at the expense of price. The goal is to sell at peak value by arriving at the market with a buyer already identified — so the launch creates urgency, not anxiety.</p>
+    <div class="quote">"The list price is not a wish. It is a strategy. And strategy — not hope — is what gets you to closing."</div>
+    <h4 style="margin-top:12pt; color:var(--navy);">What Sellers Experience With This System</h4>
+    <ul class="exp">
+      <li><strong>Confidence</strong> — because they understand the strategy, not just the process.</li>
+      <li><strong>Clarity</strong> — because the buyer was identified before the listing launched.</li>
+      <li><strong>Communication</strong> — weekly, structured, milestone-tied updates from day one to closing.</li>
+      <li><strong>Competitive edge</strong> — four marketing plans, six niche buyer channels, and a private network that goes beyond the MLS.</li>
+      <li><strong>Results</strong> — maximum price, minimum time, and a relationship that continues long after closing.</li>
+    </ul>
+
+    <div class="cta">
+      <h3>Ready to see what intelligent selling looks like?</h3>
+      <div style="margin-top:6pt; font-size:10pt;">"Can you show me who is going to buy my home before we list it?" If the answer is anything other than four printed profiles, a channel strategy, and a data-backed price — keep looking.</div>
+      <div class="line">{{advisor_name}} &nbsp;|&nbsp; {{advisor_phone}} &nbsp;|&nbsp; {{advisor_email}} &nbsp;|&nbsp; {{advisor_calendly}}</div>
+    </div>
+  </div>
+
+</body>
+</html>
