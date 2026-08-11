@@ -15,12 +15,12 @@ Both are provided to you in your operating context (see your `SOUL.md`). If you 
 ## Procedure
 
 1. Make sure the file exists on disk. If you generated content (e.g. an HTML one-pager), write it to a file first using your file tools.
-2. Choose a random, unguessable base name (e.g. 16+ hex chars) and keep the original extension. Example: `a3f9c1e08b2d4f67.pdf`.
+2. Give the file a clear, human-readable name based on its content — hyphenate spaces so the link is clean, and keep the original extension. Example: 'Pre-Listing-Packet-Anderson.pdf'. Make it distinctive enough (include the client, property, or date) not to overwrite a different file already served.
 3. Copy the file into `ARTIFACT_DIR` under that name, using your file tools.
 4. Reply to the user with exactly the link: `ARTIFACT_BASE_URL` + `/` + the file name. Nothing after the link needs the file path or the directory.
 
 ## Rules
 
 - Never expose `ARTIFACT_DIR` or any local path to the user — only the `ARTIFACT_BASE_URL` link.
-- One file, one random name, one link. Do not list the directory or reuse a predictable name.
+- One file, one clear human-readable name, one link. Do not list the directory. Reuse of the exact same name overwrites the previous file — keep names distinctive.
 - If the user already gave you a URL, return that URL unchanged instead of re-hosting.

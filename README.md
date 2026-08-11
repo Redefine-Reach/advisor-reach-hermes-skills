@@ -16,3 +16,8 @@ two env vars the skill reads:
 - `ARTIFACT_DIR` — writable dir whose contents are served publicly.
 - `ARTIFACT_BASE_URL` — public URL prefix for those files.
 The skill copies the file into `ARTIFACT_DIR` under a random name and returns `ARTIFACT_BASE_URL/<name>`.
+
+### listing-presentation
+Generates a seller's pre-listing packet as a PDF from a locked branded template, filling in
+advisor + property details gathered over the conversation, then delivers it via the
+`present-file` skill.
