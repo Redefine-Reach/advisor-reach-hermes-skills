@@ -1,6 +1,10 @@
 ---
 name: publish-site
 description: Put a real website live on the customer's own domain name, with a real, publicly-trusted SSL certificate. Use when the user asks to "make me a website", "put this on my domain", "publish my site", "get raylopezteam.com pointed at this", or otherwise wants their own domain serving something the agent has built. This is a two-turn process — do not promise a live URL in the same turn you start it.
+required_environment_variables:
+  - ADVISORREACH_API_URL
+  - ADVISORREACH_API_KEY
+  - SITE_DIR
 ---
 
 # Publish Site
