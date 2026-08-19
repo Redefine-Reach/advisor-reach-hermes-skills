@@ -28,14 +28,19 @@ The runtime gives you:
    You get back a `nonce`.
    (Do not run `hermes mcp add` yourself. It requires a terminal you do not have, and
    without one it silently drops the OAuth setting — A.18.)
-5. Text the user exactly this link and nothing else on the line:
+5. Text the user both links, in the same message:
    `<MCP_OAUTH_CONNECT_BASE_URL>#<this-box-hostname>/<nonce>`
-   Tell them it opens in their browser, that the first time they will be asked to add
-   a small browser add-on, and that they should sign in with the account they want
-   connected.
+   and `https://advisorreach.ai/connect/install`
+   Tell them the first link is where they sign in, and that if they haven't added the
+   browser add-on yet, they should get it here first — the second link. Tell them to
+   sign in with the account they want connected.
 6. Wait. Poll `GET https://<this-box-hostname>/oauth/flow/<nonce>/status` every 15
    seconds, for up to 30 minutes.
-   - `"authorizing"` — they have not finished signing in yet. Say nothing.
+   - `"authorizing"` — they have not finished signing in yet. Say nothing, EXCEPT: the
+     first time this state is still showing after a couple of minutes, send ONE
+     follow-up with the install link (`https://advisorreach.ai/connect/install`), in
+     case they don't have the add-on yet. After that one follow-up, go quiet again and
+     keep polling to the 30-minute limit — do not nag repeatedly.
    - `"authorized"` — tell them it is connected and name the service.
    - `"failed"` or `"expired"` — tell them it did not go through and offer to send a
      fresh link. Start over from step 4 with a new nonce; a nonce is single use.
