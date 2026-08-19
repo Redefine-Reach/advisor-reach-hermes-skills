@@ -35,8 +35,7 @@ The runtime gives you:
    connected.
 6. Wait. Poll `GET https://<this-box-hostname>/oauth/flow/<nonce>/status` every 15
    seconds, for up to 30 minutes.
-   - `"reserved"` — they have not started yet. Say nothing.
-   - `"armed"` — they are signing in right now. Say nothing.
+   - `"authorizing"` — they have not finished signing in yet. Say nothing.
    - `"authorized"` — tell them it is connected and name the service.
    - `"failed"` or `"expired"` — tell them it did not go through and offer to send a
      fresh link. Start over from step 4 with a new nonce; a nonce is single use.
