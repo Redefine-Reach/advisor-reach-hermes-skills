@@ -23,11 +23,11 @@ The runtime gives you:
    connected and wants another, pick a DIFFERENT name that says which account it is
    (for example `notion-work` alongside `notion-personal`). Two accounts of the same
    service must never share a name — the name is how they are kept apart.
-3. Register the server:
-   `hermes mcp add <name> --url <url> --auth oauth`
-4. Start a flow:
-   `POST http://127.0.0.1:8090/flow` with `{"server": "<name>"}`.
+3. Start a flow. Send BOTH the name and the URL — the broker registers the server for you:
+   `POST http://127.0.0.1:8090/flow` with `{"server": "<name>", "url": "<url>"}`.
    You get back a `nonce`.
+   (Do not run `hermes mcp add` yourself. It requires a terminal you do not have, and
+   without one it silently drops the OAuth setting — A.18.)
 5. Text the user exactly this link and nothing else on the line:
    `<MCP_OAUTH_CONNECT_BASE_URL>#<this-box-hostname>/<nonce>`
    Tell them it opens in their browser, that the first time they will be asked to add
