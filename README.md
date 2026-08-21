@@ -33,3 +33,28 @@ env vars the skill reads:
 - `ADVISORREACH_API_URL` — base URL of the AdvisorReach API.
 - `ADVISORREACH_API_KEY` — bearer key scoped to this customer.
 - `SITE_DIR` — writable dir for the site's content.
+
+### email-outreach (and its three children)
+Sets up cold email outreach for a customer via the AdvisorReach API: a SmartLead client
+account, sending mailboxes on a warmed-up domain, and the mailboxes connected to that
+account. `email-outreach` is the parent — it explains the whole picture, the retry
+contract, and what it costs — and points to three children that do the actual work:
+- `email-outreach-client` — creates or reuses the customer's SmartLead client account and
+  retrieves its login credentials. Creating one can purchase a $29/month seat; a 504 from
+  the create call is not a failure (the client may already exist) and is retried once with
+  the identical email address, since email is the idempotency key.
+- `email-outreach-mailboxes` — searches for a sending domain/vendor and orders mailboxes.
+  Costs around $13/domain/year plus around $4.50/mailbox/month; the price is always stated
+  and confirmed before ordering, and a failed order is never retried automatically (unlike
+  client creation, it isn't guaranteed idempotent).
+- `email-outreach-connect` — assigns an already-ordered, delivered set of mailboxes to a
+  client account so they become usable. Mailbox delivery takes ~8 hours; warmup after that
+  takes weeks.
+
+Each child says explicitly to read the `email-outreach` parent first if it hasn't already
+been read in the conversation. All four calls carry `Authorization: Bearer
+{ADVISORREACH_API_KEY}` and use a client-side timeout of at least 300 seconds
+(`curl --max-time 300`), since creating a client provisions upstream and is slow. The
+host runtime injects:
+- `ADVISORREACH_API_URL` — base URL of the AdvisorReach API.
+- `ADVISORREACH_API_KEY` — bearer key scoped to this customer.
