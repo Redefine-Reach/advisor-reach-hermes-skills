@@ -30,6 +30,30 @@ mailboxes on those domains, all connected to that account — ready to run cold
 email campaigns from. This is infrastructure, not a finished campaign: getting
 there does not by itself send any email.
 
+## Look before you ask — check the workspace first
+
+Before any step below asks the customer for anything, check their Omega
+workspace. In this skill set "the workspace" always means the customer's
+**Omega workspace**, reached through the `query-omega` MCP tools
+(`list_workspaces`, `ls`, `read`, `query`, `describe`, `run`, …) — never the
+local filesystem, and never your own past session logs. If you're unsure how
+to find your way around an Omega workspace, use the `omega-navigation`
+skill first — it covers listing workspaces, finding the root README, and
+following it out to `Notes/` and installed components.
+
+Two things worth checking there before you ask the customer to retype them:
+
+- **Business details** — company name, contact name/email, address, phone,
+  real website — commonly live on a business-details page under `Notes/` in
+  the workspace. `email-outreach-mailboxes` names the exact fields this can
+  fill in.
+- **Drafted campaign copy.** "We've got our copy drafted" usually means rows
+  already exist in the `Data/Copy` table of the email-campaigns install in
+  that same workspace — look there before treating it as something to ask
+  about or write yourself.
+
+Only ask the customer for what genuinely isn't in the workspace.
+
 ## Order of operations
 
 1. `email-outreach-client` — get or create the SmartLead client account.

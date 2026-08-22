@@ -124,9 +124,13 @@ more error-prone than reading them off the customer's own pages.
 
 ### Check the workspace before asking
 
-Before asking the customer for billing details, check their workspace for a
-business-details page (commonly under `Notes/`). If it has the fields you
-need, read them from there and confirm them with the customer rather than
+Before asking the customer for billing details, check their **Omega
+workspace** — via the `query-omega` MCP tools (`ls`, `read`, `describe`, …),
+never the local filesystem — for a business-details page (commonly under
+`Notes/`). See "Look before you ask" in the `email-outreach` parent skill for
+the general rule, and the `omega-navigation` skill for how to find your way
+around an unfamiliar workspace. If the business-details page has the fields
+you need, read them from there and confirm them with the customer rather than
 asking them to retype anything. Only ask for what is genuinely missing.
 
 ## Order one domain first
