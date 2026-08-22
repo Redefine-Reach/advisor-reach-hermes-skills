@@ -16,6 +16,26 @@ This skill finds an available domain and orders sending mailboxes on it. It
 does **not** connect them to a client account — that is
 `email-outreach-connect`, a separate step, run after the order exists.
 
+## STOP — do not spend the customer's money without their go-ahead
+
+**Never spend the customer's money without their explicit go-ahead in the
+current conversation.** Ordering a domain and mailboxes is a real, recurring
+charge on their account, and orders are not reversible or safely retryable.
+Before calling the order endpoint: state exactly what you are about to buy,
+what it costs up front and per month, and wait for the customer to say yes.
+
+**"Set it up for us" authorises the setup, not the spend.** Listing vendors,
+searching domains, creating the client account, installing the connector, and
+wiring the adapter are all free and reversible — do them without asking again.
+Placing the order is the one step that is neither, and it needs its own,
+separate yes, in this conversation, after the price has been stated. Silence,
+a previous approval, or a general "go ahead and set this up" is **not**
+consent to a purchase.
+
+If you cannot get a clear answer, stop and leave the order unplaced — there is
+never a reason to buy ahead of permission. This applies to any future paid
+step in this skill set too, not just this one endpoint.
+
 ## Endpoints
 
 - `GET {ADVISORREACH_API_URL}/smartlead/v1/mailboxes/vendors` — list available
