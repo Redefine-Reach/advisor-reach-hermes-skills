@@ -39,6 +39,84 @@ customer's explicit confirmation, before calling the order endpoint.** A skill
 that spends a customer's money without saying so first is not acceptable —
 this is the one thing in this whole skill set you must never skip or rush.
 
+## The order body — this is the vendor's contract, copy it exactly
+
+`POST .../mailboxes/orders` sends SmartLead's own `smart-senders/place-order`
+body. This is a verbatim copy of the vendor's documented schema — do not
+improvise a different shape:
+
+```json
+{
+  "vendor_id": 2,
+  "forwarding_domain": "example.com",
+  "user_details": {
+    "email": "...", "firstName": "...", "lastName": "...", "company": "...",
+    "country": "...", "city": "...", "addressLineOne": "...", "addressLineTwo": "",
+    "postalCode": "...", "state": "...", "phoneCc": "+1", "phone": "...",
+    "languagePreference": "en"
+  },
+  "domains": [
+    { "domain_name": "...",
+      "mailbox_details": [
+        { "mailbox": "first.last@...", "first_name": "...", "last_name": "..." }
+      ] }
+  ]
+}
+```
+
+**Required:** `vendor_id`, `forwarding_domain`, `user_details`, `domains`;
+within `user_details` everything except `addressLineTwo`; within each domain,
+`domain_name` and `mailbox_details`; within each mailbox, `mailbox`,
+`first_name`, `last_name`.
+**Optional:** `addressLineTwo`, `profile_pic`, `parent_account_id`.
+
+**Pin the formats — this is where an agent is most likely to get it wrong.**
+The vendor's own example uses full names, not codes (`"India"`, `"Karnataka"`,
+`"+91"`):
+
+- `country` and `state` are **full names**, not two-letter codes.
+- `phoneCc` carries the leading `+`, and is **separate** from `phone`.
+- `phone` is **digits only**.
+- `languagePreference` is `en`.
+
+### Ordering needs details only the customer can give you
+
+The purchase request carries their real billing address, and you will not
+find it in the workspace by guessing — do not invent it and do not use
+placeholder values. Ask for: company name, first and last name, email, street
+(line one, and line two if they have one), city, state/region, postcode,
+country, and a phone number with its country code. Read the whole set back to
+them together with the price before you order. `forwarding_domain` is the
+customer's real website — the lookalike domain you are buying will forward
+there. If they will not share the billing details, stop and tell them the
+order cannot proceed; a rejected order is not safely retryable.
+
+### Most of `user_details` is NOT a customer question
+
+A competent agent derives `email`, `firstName`/`lastName`, `company`, `city`,
+`state`, `country`, `phoneCc`, `languagePreference`, and `forwarding_domain`
+from the customer's own workspace business/brand pages — they are public
+facts about the business, not billing secrets. **Only `addressLineOne` (and
+`addressLineTwo` if they have one), `postalCode`, and `phone` genuinely
+require asking** — and even those may already be recorded in the workspace
+(see below). Asking for nine fields you could have derived is both slower and
+more error-prone than reading them off the customer's own pages.
+
+### Check the workspace before asking
+
+Before asking the customer for billing details, check their workspace for a
+business-details page (commonly under `Notes/`). If it has the fields you
+need, read them from there and confirm them with the customer rather than
+asking them to retype anything. Only ask for what is genuinely missing.
+
+## Order one domain first
+
+Order one domain with a single mailbox first, even if more are wanted. The
+first order for an account proves the billing details and the vendor's
+requirements; ordering several at once multiplies the cost of getting one
+field wrong. Once the first is delivered and attached, ordering more is
+routine.
+
 ## Ordering is NOT safely retryable — unlike client creation
 
 Client creation is idempotent by email (see `email-outreach`'s retry
