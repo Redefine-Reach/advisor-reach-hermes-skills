@@ -30,6 +30,33 @@ mailboxes on those domains, all connected to that account — ready to run cold
 email campaigns from. This is infrastructure, not a finished campaign: getting
 there does not by itself send any email.
 
+## Turning copy into campaigns is not this skill set's job
+
+None of the three child skills here creates a campaign, and none of them ever
+will — that is deliberate, not a gap to improvise around.
+
+Once the account/domain/mailbox infrastructure above exists and the customer
+has drafted copy, **campaigns are created inside the customer's Omega
+workspace, by the email-campaigns component's Design workflow — not by
+calling SmartLead's API.** That workflow is the natural next step after this
+skill set finishes: infrastructure here, campaigns there. If a task sounds
+like "build/create the campaigns in SmartLead," it belongs to that workflow,
+not to `email-outreach-client`, `email-outreach-mailboxes`, or
+`email-outreach-connect`.
+
+**Never call SmartLead's HTTP API directly to create, modify, or send
+campaigns — not even to "check what's available" or "try different
+endpoints."** If a task seems to need that, the answer is in the customer's
+workspace guides, not in the vendor's API — go find it there instead of
+inventing a request against `server.smartlead.ai`.
+
+**Where to look:** the customer's workspace carries its own guides for this,
+typically reachable from the workspace README via a skills/guides area (in
+this ecosystem, `Skills/Email Campaigns`). Use the "Look before you ask"
+workspace-first rule below and the `omega-navigation` skill to find your way
+there — this skill set cross-references that workflow, it does not restate
+its steps, gates, or invocation.
+
 ## Look before you ask — check the workspace first
 
 Before any step below asks the customer for anything, check their Omega
