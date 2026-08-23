@@ -101,22 +101,37 @@ The vendor's own example uses full names, not codes (`"India"`, `"Karnataka"`,
 
 ### Ordering needs details only the customer can give you
 
-The purchase request carries their real billing address, and you will not
-find it in the workspace by guessing — do not invent it and do not use
-placeholder values. Ask for: company name, first and last name, email, street
-(line one, and line two if they have one), city, state/region, postcode,
-country, and a phone number with its country code. Read the whole set back to
-them together with the price before you order. `forwarding_domain` is the
-customer's real website — the lookalike domain you are buying will forward
-there. If they will not share the billing details, stop and tell them the
-order cannot proceed; a rejected order is not safely retryable.
+The purchase request carries their real contact/registrant details — the
+domain vendor requires an accurate registrant record to register a domain,
+the same way any registrar does — and you will not find all of it in the
+workspace by guessing — do not invent it and do not use placeholder values.
+Ask for: company name, first and last name, email, street (line one, and line
+two if they have one), city, state/region, postcode, country, and a phone
+number with its country code. Read the whole set back to them together with
+the price before you order. `forwarding_domain` is the customer's real
+website — the lookalike domain you are buying will forward there. If they
+will not share these details, stop and tell them the order cannot proceed; a
+rejected order is not safely retryable.
+
+### If asked, say what these details actually are
+
+These are **not** a payment method — the agency's own SmartLead account is
+charged for the order, never the customer's. `user_details` becomes the
+domain's registration record (required to register the domain, the same as
+any registrar requires) and also seeds the mailbox account. For a `.com`
+domain, that record is not published in public WHOIS/RDAP by default — it has
+been redacted since the GDPR-era WHOIS changes — but it is not fully private
+either, since accredited requesters can still see it. Don't tell a customer
+it's their billing/card information, and don't promise the record stays
+private forever; state plainly what it is and what it is used for.
 
 ### Most of `user_details` is NOT a customer question
 
 A competent agent derives `email`, `firstName`/`lastName`, `company`, `city`,
 `state`, `country`, `phoneCc`, `languagePreference`, and `forwarding_domain`
 from the customer's own workspace business/brand pages — they are public
-facts about the business, not billing secrets. **Only `addressLineOne` (and
+facts about the business, not information you need to interrogate the
+customer for. **Only `addressLineOne` (and
 `addressLineTwo` if they have one), `postalCode`, and `phone` genuinely
 require asking** — and even those may already be recorded in the workspace
 (see below). Asking for nine fields you could have derived is both slower and
@@ -124,7 +139,7 @@ more error-prone than reading them off the customer's own pages.
 
 ### Check the workspace before asking
 
-Before asking the customer for billing details, check their **Omega
+Before asking the customer for these registrant/contact details, check their **Omega
 workspace** — via the `query-omega` MCP tools (`ls`, `read`, `describe`, …),
 never the local filesystem — for a business-details page (commonly under
 `Notes/`). See "Look before you ask" in the `email-outreach` parent skill for
@@ -136,7 +151,7 @@ asking them to retype anything. Only ask for what is genuinely missing.
 ## Order one domain first
 
 Order one domain with a single mailbox first, even if more are wanted. The
-first order for an account proves the billing details and the vendor's
+first order for an account proves the registrant/contact details and the vendor's
 requirements; ordering several at once multiplies the cost of getting one
 field wrong. Once the first is delivered and attached, ordering more is
 routine.
