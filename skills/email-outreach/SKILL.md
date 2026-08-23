@@ -203,3 +203,45 @@ is different.
 - If anything is unclear about a customer's intent (which domain, how many
   mailboxes, which client if they have more than one), ask — do not guess and
   proceed, especially where money is involved.
+
+## Stop and hand back — you are not a debugger
+
+This applies across all four skills in this set, on top of the narrower
+retry contracts above (the 504 retry-once-by-email rule, the "ordering is
+not safely retryable" rule). Those are specific, bounded exceptions for
+named situations. This section is the general backstop for everything else.
+
+If a tool or API call fails, you get **one** corrected retry, and only when
+the error names a specific field or value you clearly got wrong or omitted.
+Otherwise — and always on the second failure of the same call — stop.
+
+You must never: retry the same call more than once; vary the arguments to
+see what sticks; make a call whose purpose is to characterize or diagnose a
+failure rather than do the actual work; call an unrelated tool to
+investigate what went wrong; or work around a failing tool with curl, raw
+HTTP, a direct API call, or any other transport outside your normal tools.
+If you have made more than 3 tool calls without forward progress, stop even
+if nothing has actually errored.
+
+**A step that returns nothing, or a run that produces no result, is not an
+error and not an invitation to investigate.** Treat it the same as a clear
+failure: report plainly what you observed (or didn't) and stop — do not
+start reasoning about why it might have happened or try the same thing
+again with different arguments to see if that changes anything.
+
+A failing or empty call means something upstream needs a human's attention
+— not that you should work around it. When you stop, tell the customer
+plainly, in their own terms (not internal ids, error codes, or endpoint
+names), what you were trying to do and that it didn't work, and that you're
+handing it back rather than continuing to try things. It's fine to say you
+don't know why it failed.
+
+**Self-audit before you tell the customer anything went cleanly.** Look back
+over what you actually did. If you did retry a single call more than once,
+did vary arguments to see what would stick, did make a call just to
+investigate rather than to do the work, or did reach for any transport
+other than your normal tools — say so plainly to the customer instead of
+presenting the outcome as a clean success. Reporting something as fine
+after having flailed to get there is worse than reporting the flailing
+itself, because it hides the problem from the person who needs to know
+about it.
