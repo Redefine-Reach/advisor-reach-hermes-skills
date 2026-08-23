@@ -57,6 +57,23 @@ workspace-first rule below and the `omega-navigation` skill to find your way
 there — this skill set cross-references that workflow, it does not restate
 its steps, gates, or invocation.
 
+## Campaign management is iterative, not another one-shot step
+
+The client account, domain, and mailboxes above are one-shot infrastructure —
+built once and done. Campaign management is not, and carrying the one-shot
+habit over is the mistake to avoid: it is an **iterative, human-in-the-loop**
+process with no finish line. Copy gets drafted, shown to the customer, revised
+from their feedback, and re-run — repeatedly, for as long as the customer
+keeps refining it.
+
+The customer's judgement is the authority on their own copy, not yours. Your
+job there is to put drafts and results in front of them and act on what they
+say back, not to run something to completion and report status.
+
+The mechanics of that loop — which lever to pull, how to bound a run, what to
+read back — live entirely in the workspace guides above. This skill set does
+not restate them.
+
 ## Look before you ask — check the workspace first
 
 Before any step below asks the customer for anything, check their Omega
