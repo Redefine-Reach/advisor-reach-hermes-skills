@@ -157,9 +157,14 @@ yourself.** Instead:
 
 ## Procedure
 
-1. Ask the customer which domain they want to send from (or help them pick one
-   if they don't have a preference), and how many mailboxes.
-2. List vendors, then search for the domain through a vendor. Read back the
+1. Ask the customer how many mailboxes they want. For the domain, prefer
+   searching first over asking cold: listing vendors and searching a couple of
+   lookalike candidates (based on the customer's real domain/business name) is
+   free, so you can present two or three domains that are actually available
+   right now rather than asking the customer to guess a name blind and finding
+   out later it's taken. Only ask them to nominate a domain outright if you
+   have no reasonable candidate to search from.
+2. List vendors, then search for the domain(s) through a vendor. Read back the
    availability and price from the search result — don't estimate it yourself.
 3. State the total cost in plain terms (domain price + mailboxes × monthly
    rate) and get explicit confirmation before proceeding.
