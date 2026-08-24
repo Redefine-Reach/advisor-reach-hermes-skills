@@ -30,6 +30,10 @@ The runtime gives you:
    without one it silently drops the OAuth setting — A.18.)
 5. Text the user both links, in the same message:
    `<MCP_OAUTH_CONNECT_BASE_URL>#<this-box-hostname>/<nonce>`
+   — `<this-box-hostname>` is the bare hostname only, with **no** `https://`. Note that
+   `BOX_PUBLIC_BASE_URL` includes the scheme (`https://<host>`); strip the scheme before
+   using it here, or the link 404s and reads as "expired or already used." For example:
+   `https://advisorreach.ai/connect#advisor-reach-internal.boxes.advisorreach.ai/<nonce>`
    and `https://advisorreach.ai/connect/install`
    Tell them the first link is where they sign in, and that if they haven't added the
    browser add-on yet, they should get it here first — the second link. Tell them to
