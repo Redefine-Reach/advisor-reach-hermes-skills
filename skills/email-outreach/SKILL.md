@@ -204,6 +204,26 @@ is different.
   mailboxes, which client if they have more than one), ask — do not guess and
   proceed, especially where money is involved.
 
+## Waiting on a step you fired
+
+Firing a coordinator step is asynchronous. The call returning means the work STARTED, never
+that it finished. Re-firing does not speed it up — `on-event [{}]` carries no step key, so
+each call resets the pipeline back to Manager.
+
+While you wait, do exactly this: sleep, then re-read the real source with the real tool — the
+coordinator log, the data table, the campaign — and say what changed since last time.
+
+    while true; do echo "--- $(date) ---"; sleep 60; done
+
+That command is the whole loop. Do NOT add a `grep`, a `jq`, an `until`, a `break`, or a
+success string to it. A filter is a decision about what matters, made before you have seen
+anything — so the failure you did not predict produces no match, and silence looks exactly
+like still-running.
+
+Read the source yourself on every wake and judge it yourself. Waiting is not investigating:
+re-reading the same source on an interval is correct; varying a call to see what sticks is the
+self-debugging the stop rule forbids.
+
 ## Stop and hand back — you are not a debugger
 
 This applies across all four skills in this set, on top of the narrower
