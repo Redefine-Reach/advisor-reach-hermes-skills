@@ -1,6 +1,6 @@
 ---
 name: email-outreach
-description: Set up cold email outreach for the customer — a SmartLead client account, sending mailboxes on a warmed-up domain, and the mailboxes wired to that account. Use when the user asks to "set up email outreach", "start cold emailing", "get me sending cold emails", "set up SmartLead", or wants sending mailboxes/domains provisioned for outreach. This is the parent skill: it explains the whole picture and what it costs; the actual work is done by its three child skills.
+description: Use when the user asks to "set up email outreach", "start cold emailing", "get me sending cold emails", "set up SmartLead", or wants sending mailboxes/domains provisioned for outreach.
 required_environment_variables:
   - ADVISORREACH_API_URL
   - ADVISORREACH_API_KEY

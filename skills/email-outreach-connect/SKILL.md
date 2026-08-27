@@ -21,9 +21,13 @@ nothing usable until this step runs.
 
 ## Endpoint
 
-- `POST {ADVISORREACH_API_URL}/smartlead/v1/mailboxes/orders/{order_id}/assign`
+- `POST {ADVISORREACH_API_URL}/smartlead/v1/mailboxes/orders/{order_id}/finish`
   — body `{"client_id": ...}`. Assigns the mailboxes in that order to that
-  client.
+  client. (The service also accepts this same call at `.../assign` — `finish`
+  is the current name, use it.)
+
+`order_id` is a **string** (e.g. `SS-117116818593238-325640-55`), not a
+number.
 
 Carries `Authorization: Bearer {ADVISORREACH_API_KEY}`. **Allow at least 300
 seconds for a response** (`curl --max-time 300`).
@@ -31,10 +35,15 @@ seconds for a response** (`curl --max-time 300`).
 ## Before you call this
 
 You need both:
-- The order to have actually delivered. Mailbox delivery takes **around 8
-  hours** after ordering — check `GET .../mailboxes/orders/{order_id}` first
-  if you're not sure it's ready. Do not attempt to assign mailboxes that
-  haven't delivered yet; tell the customer to wait instead.
+- **The order to be `completed`, not just delivered-eventually.** Mailbox
+  delivery takes **around 8 hours** after ordering, and the order cannot be
+  finished before then. Check its `status` with `GET .../mailboxes/orders`
+  (lists all the caller's orders) or `GET .../mailboxes/orders/{order_id}`
+  first if you're not sure — don't call `finish` speculatively. See
+  `email-outreach-mailboxes`'s "The order lifecycle" section for the full
+  sequence, including why a `409` here means "still processing," not
+  broken — it is the expected answer for roughly the first 8 hours, not a
+  failure to retry around.
 - A client account that already exists (`email-outreach-client`). If the
   customer doesn't have one yet, that has to happen first — this skill does
   not create one for them.
@@ -45,10 +54,12 @@ earlier in the conversation, especially the order's delivery status.
 
 ## Procedure
 
-1. Confirm the order has delivered (check status if unsure).
+1. Confirm the order's `status` is `completed` (check `GET .../mailboxes/orders`
+   if unsure — see "Before you call this" above).
 2. Confirm which client account the mailboxes should go to — if the customer
    has more than one client account, ask which one; never guess.
-3. Assign the order to that client.
+3. Call `finish` to assign the order to that client. If it returns `409`, the
+   order isn't `completed` yet — tell the customer to wait, don't retry.
 4. Tell the customer the mailboxes are now connected to their account, and
    remind them plainly that this does not mean they're ready to send real
    outreach yet — warmup takes **weeks**, and there's no API call that tells
@@ -66,3 +77,5 @@ earlier in the conversation, especially the order's delivery status.
   succeeded.
 - Don't re-run the assignment "just in case" if you're unsure whether it
   already happened — check the order's status first.
+- A `409` from `finish` means the order is still processing — expected for
+  roughly the first 8 hours, not an error to retry around.

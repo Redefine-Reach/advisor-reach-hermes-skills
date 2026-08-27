@@ -1,6 +1,6 @@
 ---
 name: email-outreach-mailboxes
-description: Find a sending domain and order cold-email mailboxes on it, through the AdvisorReach API. Use when the user asks to buy/order mailboxes, set up a sending domain, or add more sending capacity for email outreach. Part of the email-outreach skill set. This step costs real money and must never be run without telling the customer the price first.
+description: Use when the user asks to buy/order mailboxes, set up a sending domain, add more sending capacity for email outreach, check on a mailbox order's status, or wants ordered mailboxes assigned/connected once an order finishes.
 required_environment_variables:
   - ADVISORREACH_API_URL
   - ADVISORREACH_API_KEY
@@ -36,6 +36,23 @@ If you cannot get a clear answer, stop and leave the order unplaced — there is
 never a reason to buy ahead of permission. This applies to any future paid
 step in this skill set too, not just this one endpoint.
 
+## Check before you buy — orders are recurring, not one-shot
+
+Before placing a new order, call `GET .../mailboxes/orders` and look for one
+that already covers what the customer is asking for. Orders carry a real,
+recurring monthly charge — placing a duplicate because you didn't check is a
+second bill for something the customer already has, not a harmless retry.
+This is a separate check from the consent rule above: consent covers "don't
+spend without a yes," this covers "don't spend because you forgot you
+already did." Do both, in this order — check first, then, if a new order is
+genuinely needed, get the go-ahead before placing it.
+
+If you cannot tell from the order list whether an existing order already
+covers the request — ambiguous domain names, an order in a state you can't
+interpret, multiple plausible matches — **stop and ask the customer** rather
+than ordering to be safe. Placing an order to avoid the awkwardness of
+asking is exactly the mistake this check exists to prevent.
+
 ## Endpoints
 
 - `GET {ADVISORREACH_API_URL}/smartlead/v1/mailboxes/vendors` — list available
@@ -43,10 +60,22 @@ step in this skill set too, not just this one endpoint.
 - `GET {ADVISORREACH_API_URL}/smartlead/v1/mailboxes/domains/search` —
   `?vendor_id=...&domain_name=...` — check whether a domain is available
   through a given vendor, and see its price.
+- `GET {ADVISORREACH_API_URL}/smartlead/v1/mailboxes/orders` — list every
+  order the caller has placed, each with its live vendor `status`. This is
+  the only way to discover an order you did not just place yourself in this
+  conversation — check it before assuming no order exists, and use it to
+  poll a pending order's status (see "The order lifecycle" below).
 - `POST {ADVISORREACH_API_URL}/smartlead/v1/mailboxes/orders` — place the
   order. **MONEY. See the price rule below before ever calling this.**
 - `GET {ADVISORREACH_API_URL}/smartlead/v1/mailboxes/orders/{order_id}` — check
-  an order's status.
+  one order's status.
+- `POST {ADVISORREACH_API_URL}/smartlead/v1/mailboxes/orders/{order_id}/finish`
+  — assign a **completed** order's mailboxes to the caller's client. This is
+  the call `email-outreach-connect` makes; see "The order lifecycle" below
+  for when it can succeed.
+
+`order_id` is a **string** (e.g. `SS-117116818593238-325640-55`), not a
+number — don't cast it or reformat it.
 
 All calls carry `Authorization: Bearer {ADVISORREACH_API_KEY}`. **Allow at
 least 300 seconds for a response** (`curl --max-time 300`).
@@ -156,6 +185,30 @@ requirements; ordering several at once multiplies the cost of getting one
 field wrong. Once the first is delivered and attached, ordering more is
 routine.
 
+## The order lifecycle — it will not be assigned yet, and cannot be
+
+Placing an order does not make mailboxes usable, and there is no way to make
+it usable sooner. The sequence is fixed:
+
+1. **Order.** Right after `POST .../orders` succeeds, the order exists but is
+   still processing upstream — it is not delivered, and it cannot be assigned
+   to a client yet. Don't imply otherwise to the customer.
+2. **Wait, and poll.** Delivery takes **around 8 hours**. Poll
+   `GET .../mailboxes/orders` (or `GET .../orders/{order_id}`) and read the
+   order's `status` field. There is no way to speed this up by polling more
+   often.
+3. **Finish, once `status` is `completed`.** Only then does
+   `POST .../orders/{order_id}/finish` (what `email-outreach-connect` calls)
+   succeed in assigning the order's mailboxes to the client.
+
+**Calling `finish` (or checking readiness) before the order is `completed`
+gets a `409` from the service.** That is the service correctly telling you
+the order isn't ready — not a bug, not a failure, and not something to work
+around by retrying, changing arguments, or investigating further. Treat a
+409 here exactly like the ~8 hour wait it represents: tell the customer the
+order is still processing and to expect it to be ready in about 8 hours,
+then stop for now.
+
 ## Ordering is NOT safely retryable — unlike client creation
 
 Client creation is idempotent by email (see `email-outreach`'s retry
@@ -172,6 +225,9 @@ yourself.** Instead:
 
 ## Procedure
 
+0. Call `GET .../mailboxes/orders` and check whether an existing order
+   already covers what the customer is asking for (see "Check before you
+   buy" above). Only continue to a new order if it genuinely doesn't.
 1. Ask the customer how many mailboxes they want. For the domain, prefer
    searching first over asking cold: listing vendors and searching a couple of
    lookalike candidates (based on the customer's real domain/business name) is
@@ -184,13 +240,17 @@ yourself.** Instead:
 3. State the total cost in plain terms (domain price + mailboxes × monthly
    rate) and get explicit confirmation before proceeding.
 4. Place the order. Do not retry on failure — see above.
-5. Tell the customer mailbox delivery takes **around 8 hours**, and that after
-   that, mailboxes still need to be connected to their SmartLead client
-   (`email-outreach-connect`) before they're usable, and then go through
-   **weeks** of warmup before they're trusted for real sending.
+5. Tell the customer mailbox delivery takes **around 8 hours** and the order
+   cannot be assigned before then (see "The order lifecycle" above). Once
+   `status` is `completed`, mailboxes still need to be connected to their
+   SmartLead client (`email-outreach-connect`'s `finish` call) before they're
+   usable, and then go through **weeks** of warmup before they're trusted for
+   real sending.
 
 ## Rules
 
+- Never place an order before checking `GET .../mailboxes/orders` for one
+  that already covers the request (see "Check before you buy").
 - Never place an order before the customer has heard the exact price and
   confirmed.
 - Never retry a failed or ambiguous order automatically.
@@ -198,3 +258,5 @@ yourself.** Instead:
   domain, mailbox count, and price instead.
 - A 404 on an order lookup means it does not exist for this customer — never
   treat it as a permissions issue.
+- A 409 on `finish` means the order is still processing, not broken — see
+  "The order lifecycle."
