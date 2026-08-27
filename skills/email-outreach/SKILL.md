@@ -238,10 +238,14 @@ Otherwise — and always on the second failure of the same call — stop.
 You must never: retry the same call more than once; vary the arguments to
 see what sticks; make a call whose purpose is to characterize or diagnose a
 failure rather than do the actual work; call an unrelated tool to
-investigate what went wrong; or work around a failing tool with curl, raw
-HTTP, a direct API call, or any other transport outside your normal tools.
-If you have made more than 3 tool calls without forward progress, stop even
-if nothing has actually errored.
+investigate what went wrong; or work around a failing tool by switching how
+you make the call — curl, raw HTTP, a direct API call, a different endpoint
+on the same route. **This holds regardless of whether that transport is one
+of your normal tools.** Curl is the sanctioned way to call these APIs, not
+an exemption from this rule — a diagnostic call made with your normal,
+sanctioned transport is still a diagnostic call, and still forbidden. If you
+have made more than 3 tool calls without forward progress, stop even if
+nothing has actually errored.
 
 **A step that returns nothing, or a run that produces no result, is not an
 error and not an invitation to investigate.** Treat it the same as a clear

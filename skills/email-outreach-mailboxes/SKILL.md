@@ -53,6 +53,13 @@ interpret, multiple plausible matches — **stop and ask the customer** rather
 than ordering to be safe. Placing an order to avoid the awkwardness of
 asking is exactly the mistake this check exists to prevent.
 
+**If `GET .../mailboxes/orders` itself fails** — errors, times out, returns
+something you can't parse — say so and stop. Do not infer whether an order
+already exists from any other endpoint, and never from
+`POST .../mailboxes/orders` itself: that endpoint is not a diagnostic tool,
+it is the one that spends money, and a failed check is not license to place
+a probing order to find out what's going on.
+
 ## Endpoints
 
 - `GET {ADVISORREACH_API_URL}/smartlead/v1/mailboxes/vendors` — list available
@@ -67,6 +74,16 @@ asking is exactly the mistake this check exists to prevent.
   poll a pending order's status (see "The order lifecycle" below).
 - `POST {ADVISORREACH_API_URL}/smartlead/v1/mailboxes/orders` — place the
   order. **MONEY. See the price rule below before ever calling this.**
+  **The only request you may ever send to this endpoint is the one order
+  body you have already had approved. Never send it to test it, to see what
+  it returns, or to find out why a different call failed.** An empty or
+  placeholder body is still a call to the live place-order route — being
+  rejected before it reaches the vendor is luck, not a safeguard, and this
+  rule does not depend on what the body contains.
+
+  | Excuse | Reality |
+  |--------|---------|
+  | "An empty POST isn't buying anything, so the money rule doesn't apply." | The money rule is about consent to spend, not about whether this particular call happened to fail. This is the *only* live route to a real charge — probing it to diagnose an unrelated 405 is still a call you were never authorised to make, whether or not it happened to get rejected first. |
 - `GET {ADVISORREACH_API_URL}/smartlead/v1/mailboxes/orders/{order_id}` — check
   one order's status.
 - `POST {ADVISORREACH_API_URL}/smartlead/v1/mailboxes/orders/{order_id}/finish`
