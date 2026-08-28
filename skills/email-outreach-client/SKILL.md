@@ -30,9 +30,19 @@ account that sending mailboxes get connected to later by
 - `GET {ADVISORREACH_API_URL}/smartlead/v1/clients/{client_id}/api-key` —
   retrieve login credentials for an existing client account.
 
-All calls carry `Authorization: Bearer {ADVISORREACH_API_KEY}`. **Allow at
-least 300 seconds for a response** (`curl --max-time 300`) — creation
-provisions upstream and is genuinely slow.
+All calls carry `Authorization: Bearer {ADVISORREACH_API_KEY}`, but the two
+kinds of call do not share a timeout budget:
+
+- **Reads** (`GET .../clients`, `GET .../clients/{client_id}/api-key`) are
+  plain lookups against this box, not upstream provisioning — measured
+  2026-08-28, `GET /smartlead/v1/clients` returned in **0.086s**. Give them a
+  short budget, generous over that: `curl --max-time 10`. A read that hasn't
+  answered in 10 seconds isn't "still working" — it's a fault to report, not
+  a reason to wait longer or retry with a bigger number.
+- **Create** (`POST .../clients`) **allow at least 300 seconds for a
+  response** (`curl --max-time 300`) — creation provisions upstream and is
+  genuinely slow. This long budget is specific to creation; it does not
+  apply to the reads above.
 
 ## Procedure
 

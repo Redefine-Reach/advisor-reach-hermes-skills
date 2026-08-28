@@ -170,10 +170,20 @@ quoted cost first.
 All three child skills call `{ADVISORREACH_API_URL}/smartlead/v1/...` with
 `Authorization: Bearer {ADVISORREACH_API_KEY}`.
 
-**Allow at least 300 seconds for a response** (`curl --max-time 300`, or the
-equivalent read timeout in whatever HTTP client you use). Creating a client is
-slow because it provisions upstream — cutting the request off early does not
-mean it failed, it means you stopped waiting.
+**These calls do not share one timeout budget** — each child skill states
+its own, because "genuinely slow" is true of the calls that provision or
+change something upstream (client creation, placing a mailbox order,
+finishing an order) and false of the calls that just look something up
+(listing clients, listing/checking orders, searching vendors/domains) —
+those measured under 0.1s against the local API on 2026-08-28. See each
+child skill's "Endpoints" section for its specific budgets and the reasons
+behind them; do not assume `--max-time 300` applies to a call just because
+it applies to another call in the same skill.
+
+**A call that exceeds its stated budget is a fault to report, not patience
+to extend.** Don't retry it with a longer timeout, don't treat the wait
+itself as evidence the call is "still working," and don't start diagnosing
+why — see "Stop and hand back" below.
 
 ## The retry contract — read this before any child skill retries anything
 

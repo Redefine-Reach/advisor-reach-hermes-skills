@@ -94,8 +94,23 @@ a probing order to find out what's going on.
 `order_id` is a **string** (e.g. `SS-117116818593238-325640-55`), not a
 number — don't cast it or reformat it.
 
-All calls carry `Authorization: Bearer {ADVISORREACH_API_KEY}`. **Allow at
-least 300 seconds for a response** (`curl --max-time 300`).
+All calls carry `Authorization: Bearer {ADVISORREACH_API_KEY}`, but the
+budget depends on what the call actually does:
+
+- **Reads** (`GET .../vendors`, `GET .../domains/search`, `GET .../orders`,
+  `GET .../orders/{order_id}`) are lookups, not upstream provisioning —
+  measured 2026-08-28, `GET /smartlead/v1/mailboxes/orders` returned in
+  **0.073s**. Give them a short budget, generous over that: `curl --max-time
+  10`. A read that hasn't answered in 10 seconds isn't "still working" —
+  it's a fault to report, not a reason to wait longer or retry with a bigger
+  number.
+- **Place the order** (`POST .../orders`) **allow at least 300 seconds for a
+  response** (`curl --max-time 300`) — like client creation, this provisions
+  a real order with the vendor and is genuinely slow.
+- **Finish** (`POST .../orders/{order_id}/finish`) also **allow at least 300
+  seconds** (`curl --max-time 300`) — it isn't measured, and unlike the
+  reads above it's a real state change (assigning mailboxes to a client), so
+  treat it conservatively until someone measures it, the same as creation.
 
 ## The price rule — non-negotiable
 
