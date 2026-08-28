@@ -1,6 +1,6 @@
 ---
 name: email-outreach
-description: Set up cold email outreach for the customer — a SmartLead client account, sending mailboxes on a warmed-up domain, and the mailboxes wired to that account. Use when the user asks to "set up email outreach", "start cold emailing", "get me sending cold emails", "set up SmartLead", or wants sending mailboxes/domains provisioned for outreach. This is the parent skill: it explains the whole picture and what it costs; the actual work is done by its three child skills.
+description: Use when the user asks to "set up email outreach", "start cold emailing", "get me sending cold emails", "set up SmartLead", or wants sending mailboxes/domains provisioned for outreach.
 required_environment_variables:
   - ADVISORREACH_API_URL
   - ADVISORREACH_API_KEY
@@ -30,6 +30,74 @@ mailboxes on those domains, all connected to that account — ready to run cold
 email campaigns from. This is infrastructure, not a finished campaign: getting
 there does not by itself send any email.
 
+## Turning copy into campaigns is not this skill set's job
+
+None of the three child skills here creates a campaign, and none of them ever
+will — that is deliberate, not a gap to improvise around.
+
+Once the account/domain/mailbox infrastructure above exists and the customer
+has drafted copy, **campaigns are created inside the customer's Omega
+workspace, by the email-campaigns component's Design workflow — not by
+calling SmartLead's API.** That workflow is the natural next step after this
+skill set finishes: infrastructure here, campaigns there. If a task sounds
+like "build/create the campaigns in SmartLead," it belongs to that workflow,
+not to `email-outreach-client`, `email-outreach-mailboxes`, or
+`email-outreach-connect`.
+
+**Never call SmartLead's HTTP API directly to create, modify, or send
+campaigns — not even to "check what's available" or "try different
+endpoints."** If a task seems to need that, the answer is in the customer's
+workspace guides, not in the vendor's API — go find it there instead of
+inventing a request against `server.smartlead.ai`.
+
+**Where to look:** the customer's workspace carries its own guides for this,
+typically reachable from the workspace README via a skills/guides area (in
+this ecosystem, `Skills/Email Campaigns`). Use the "Look before you ask"
+workspace-first rule below and the `omega-navigation` skill to find your way
+there — this skill set cross-references that workflow, it does not restate
+its steps, gates, or invocation.
+
+## Campaign management is iterative, not another one-shot step
+
+The client account, domain, and mailboxes above are one-shot infrastructure —
+built once and done. Campaign management is not, and carrying the one-shot
+habit over is the mistake to avoid: it is an **iterative, human-in-the-loop**
+process with no finish line. Copy gets drafted, shown to the customer, revised
+from their feedback, and re-run — repeatedly, for as long as the customer
+keeps refining it.
+
+The customer's judgement is the authority on their own copy, not yours. Your
+job there is to put drafts and results in front of them and act on what they
+say back, not to run something to completion and report status.
+
+The mechanics of that loop — which lever to pull, how to bound a run, what to
+read back — live entirely in the workspace guides above. This skill set does
+not restate them.
+
+## Look before you ask — check the workspace first
+
+Before any step below asks the customer for anything, check their Omega
+workspace. In this skill set "the workspace" always means the customer's
+**Omega workspace**, reached through the `query-omega` MCP tools
+(`list_workspaces`, `ls`, `read`, `query`, `describe`, `run`, …) — never the
+local filesystem, and never your own past session logs. If you're unsure how
+to find your way around an Omega workspace, use the `omega-navigation`
+skill first — it covers listing workspaces, finding the root README, and
+following it out to `Notes/` and installed components.
+
+Two things worth checking there before you ask the customer to retype them:
+
+- **Business details** — company name, contact name/email, address, phone,
+  real website — commonly live on a business-details page under `Notes/` in
+  the workspace. `email-outreach-mailboxes` names the exact fields this can
+  fill in.
+- **Drafted campaign copy.** "We've got our copy drafted" usually means rows
+  already exist in the `Data/Copy` table of the email-campaigns install in
+  that same workspace — look there before treating it as something to ask
+  about or write yourself.
+
+Only ask the customer for what genuinely isn't in the workspace.
+
 ## Order of operations
 
 1. `email-outreach-client` — get or create the SmartLead client account.
@@ -57,27 +125,65 @@ mailbox is still going through.
 
 ## What it costs
 
-- **Client account creation** can purchase a SmartLead seat at **$29/month** if
-  the account does not already have a free seat available. It is idempotent by
-  email — see the retry contract below — but the money aspect is real and
-  child skill `email-outreach-client` must not hide it.
-- **Ordering mailboxes** costs **around $13/domain/year** plus **around
-  $4.50/mailbox/month**. `email-outreach-mailboxes` must always state the exact
-  price quoted by the API and get the customer's confirmation before placing
-  the order — never place it silently.
+- **Client account creation** is usually **free**. The AdvisorReach account
+  shares a pool of pre-purchased SmartLead seats across all its customers, and
+  creating a client only costs **$29/month** if that shared pool has no free
+  seat left when you create it — most of the time it does, so most of the time
+  this step costs nothing.
 
-Never place an order, or create a client that may purchase a seat, without the
-customer having been told the cost in plain terms first.
+  **You cannot check the seat count yourself before calling create-client.**
+  The endpoint that reports it (`/api/v1/seats`) lives on SmartLead's internal
+  admin API, gated by an admin key you do not hold — your customer-scoped
+  `ADVISORREACH_API_KEY` cannot reach it, and the create-client response does
+  not report back whether a seat was purchased either. Given that, do not
+  stall this step on a "this might cost $29" question you have no way to
+  answer: treat client creation like the other free, reversible setup steps
+  and proceed. The `email-outreach-mailboxes` "explicit go-ahead" rule is
+  about the order step, which genuinely does have a known, quoted, irreversible
+  cost — it does not apply here.
+
+  The one real signal you do get: if create-client fails with an error whose
+  message mentions seats being exhausted or a configured ceiling, that is an
+  actual billing wall the account has hit — stop and tell the customer
+  plainly, and do not retry with different values to route around it. And
+  because you cannot confirm a seat purchase succeeded either, never tell the
+  customer this step "was free" — you genuinely do not know; only their own
+  account or invoice can confirm it.
+
+- **Ordering mailboxes** costs **around $13/domain/year** plus **around
+  $4.50/mailbox/month**. Unlike client creation, this price is not a maybe —
+  the domain-search response quotes it exactly before you spend anything.
+  `email-outreach-mailboxes` must always state the exact price quoted by the
+  API and get the customer's confirmation before placing the order — never
+  place it silently.
+
+A step that *might* cost money is not the same as a step that *does*. Work out
+which one you're looking at — check what's actually determinable — before
+treating a possible cost as a certain one. Blanket caution is not free: it
+stalls the customer on a question you may already be able to answer, or, as
+with the seat check above, may never be able to get an answer to at all.
+Never place an order without the customer having been told the exact,
+quoted cost first.
 
 ## Calling the AdvisorReach API
 
 All three child skills call `{ADVISORREACH_API_URL}/smartlead/v1/...` with
 `Authorization: Bearer {ADVISORREACH_API_KEY}`.
 
-**Allow at least 300 seconds for a response** (`curl --max-time 300`, or the
-equivalent read timeout in whatever HTTP client you use). Creating a client is
-slow because it provisions upstream — cutting the request off early does not
-mean it failed, it means you stopped waiting.
+**These calls do not share one timeout budget** — each child skill states
+its own, because "genuinely slow" is true of the calls that provision or
+change something upstream (client creation, placing a mailbox order,
+finishing an order) and false of the calls that just look something up
+(listing clients, listing/checking orders, searching vendors/domains) —
+those measured under 0.1s against the local API on 2026-08-28. See each
+child skill's "Endpoints" section for its specific budgets and the reasons
+behind them; do not assume `--max-time 300` applies to a call just because
+it applies to another call in the same skill.
+
+**A call that exceeds its stated budget is a fault to report, not patience
+to extend.** Don't retry it with a longer timeout, don't treat the wait
+itself as evidence the call is "still working," and don't start diagnosing
+why — see "Stop and hand back" below.
 
 ## The retry contract — read this before any child skill retries anything
 
@@ -107,3 +213,69 @@ is different.
 - If anything is unclear about a customer's intent (which domain, how many
   mailboxes, which client if they have more than one), ask — do not guess and
   proceed, especially where money is involved.
+
+## Waiting on a step you fired
+
+Firing a coordinator step is asynchronous. The call returning means the work STARTED, never
+that it finished. Re-firing does not speed it up — `on-event [{}]` carries no step key, so
+each call resets the pipeline back to Manager.
+
+While you wait, do exactly this: sleep, then re-read the real source with the real tool — the
+coordinator log, the data table, the campaign — and say what changed since last time.
+
+    while true; do echo "--- $(date) ---"; sleep 60; done
+
+That command is the whole loop. Do NOT add a `grep`, a `jq`, an `until`, a `break`, or a
+success string to it. A filter is a decision about what matters, made before you have seen
+anything — so the failure you did not predict produces no match, and silence looks exactly
+like still-running.
+
+Read the source yourself on every wake and judge it yourself. Waiting is not investigating:
+re-reading the same source on an interval is correct; varying a call to see what sticks is the
+self-debugging the stop rule forbids.
+
+## Stop and hand back — you are not a debugger
+
+This applies across all four skills in this set, on top of the narrower
+retry contracts above (the 504 retry-once-by-email rule, the "ordering is
+not safely retryable" rule). Those are specific, bounded exceptions for
+named situations. This section is the general backstop for everything else.
+
+If a tool or API call fails, you get **one** corrected retry, and only when
+the error names a specific field or value you clearly got wrong or omitted.
+Otherwise — and always on the second failure of the same call — stop.
+
+You must never: retry the same call more than once; vary the arguments to
+see what sticks; make a call whose purpose is to characterize or diagnose a
+failure rather than do the actual work; call an unrelated tool to
+investigate what went wrong; or work around a failing tool by switching how
+you make the call — curl, raw HTTP, a direct API call, a different endpoint
+on the same route. **This holds regardless of whether that transport is one
+of your normal tools.** Curl is the sanctioned way to call these APIs, not
+an exemption from this rule — a diagnostic call made with your normal,
+sanctioned transport is still a diagnostic call, and still forbidden. If you
+have made more than 3 tool calls without forward progress, stop even if
+nothing has actually errored.
+
+**A step that returns nothing, or a run that produces no result, is not an
+error and not an invitation to investigate.** Treat it the same as a clear
+failure: report plainly what you observed (or didn't) and stop — do not
+start reasoning about why it might have happened or try the same thing
+again with different arguments to see if that changes anything.
+
+A failing or empty call means something upstream needs a human's attention
+— not that you should work around it. When you stop, tell the customer
+plainly, in their own terms (not internal ids, error codes, or endpoint
+names), what you were trying to do and that it didn't work, and that you're
+handing it back rather than continuing to try things. It's fine to say you
+don't know why it failed.
+
+**Self-audit before you tell the customer anything went cleanly.** Look back
+over what you actually did. If you did retry a single call more than once,
+did vary arguments to see what would stick, did make a call just to
+investigate rather than to do the work, or did reach for any transport
+other than your normal tools — say so plainly to the customer instead of
+presenting the outcome as a clean success. Reporting something as fine
+after having flailed to get there is worse than reporting the flailing
+itself, because it hides the problem from the person who needs to know
+about it.
