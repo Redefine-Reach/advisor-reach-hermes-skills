@@ -70,9 +70,22 @@ kinds of call do not share a timeout budget:
 4. Retrieve the login credentials via the api-key endpoint (or use the ones
    returned directly by a successful creation call, if you just created it —
    no need to call api-key again in that case).
-5. Hand the customer their SmartLead login (email + password/key), and tell
-   them this account exists but has no sending mailboxes yet — that's the next
-   step (`email-outreach-mailboxes`, then `email-outreach-connect`).
+5. Hand the customer their SmartLead login (email + password), and record it in
+   their workspace at `Notes/SmartLead Login` so it survives this session — the
+   password is returned exactly once, at creation, and is not retrievable
+   afterwards. Tell them this account exists but has no sending mailboxes yet —
+   that's the next step (`email-outreach-mailboxes`, then
+   `email-outreach-connect`).
+
+6. **If the account already exists and you do not have the password:** it is not
+   retrievable. `GET .../clients/{client_id}/api-key` returns only the API key.
+   Reset it with `POST .../clients/{client_id}/reset-password`, then record the
+   result at `Notes/SmartLead Login`.
+
+   **A reset is destructive** — it invalidates whatever password the customer is
+   currently using, including one saved in their browser. Do it when the login is
+   actually needed and lost, never as a routine provisioning step or a way to
+   "check" the password.
 
 ## Rules
 
