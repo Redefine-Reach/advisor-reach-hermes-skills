@@ -97,13 +97,24 @@ number — don't cast it or reformat it.
 All calls carry `Authorization: Bearer {ADVISORREACH_API_KEY}`, but the
 budget depends on what the call actually does:
 
-- **Reads** (`GET .../vendors`, `GET .../domains/search`, `GET .../orders`,
+- **Reads** (`GET .../vendors`, `GET .../domains/search`,
   `GET .../orders/{order_id}`) are lookups, not upstream provisioning —
-  measured 2026-08-28, `GET /smartlead/v1/mailboxes/orders` returned in
-  **0.073s**. Give them a short budget, generous over that: `curl --max-time
-  10`. A read that hasn't answered in 10 seconds isn't "still working" —
-  it's a fault to report, not a reason to wait longer or retry with a bigger
-  number.
+  measured 2026-08-28 at **0.073s**. Give them a short budget, generous over
+  that: `curl --max-time 10`. A read that hasn't answered in 10 seconds isn't
+  "still working" — it's a fault to report, not a reason to wait longer or
+  retry with a bigger number.
+- **`GET .../orders` is the exception: `curl --max-time 60`.** It looks like
+  the other reads and is not one. The service asks the vendor for each
+  order's live status **one order at a time**, so the call costs roughly
+  *(number of your orders)* x *(one vendor round-trip)* — and when the vendor
+  is slow or unreachable, each of those is a connect timeout of several
+  seconds rather than milliseconds. The 0.073s above was measured against an
+  empty list, where that per-order work never ran. A few orders and a
+  degraded vendor is the realistic worst case, and 60s covers it.
+  **This does not weaken the rule above.** Past 60 seconds it is still a
+  fault to report, not patience to extend — and a slow answer here is
+  informative in itself: statuses come back `null` when the vendor could not
+  be reached, so the orders are still listed and still yours.
 - **Place the order** (`POST .../orders`) **allow at least 300 seconds for a
   response** (`curl --max-time 300`) — like client creation, this provisions
   a real order with the vendor and is genuinely slow.
