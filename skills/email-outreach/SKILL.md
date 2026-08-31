@@ -57,6 +57,15 @@ workspace-first rule below and the `omega-navigation` skill to find your way
 there — this skill set cross-references that workflow, it does not restate
 its steps, gates, or invocation.
 
+**The operating manual for campaigns is published, too.** Beyond the customer's
+own workspace guides, the canonical, maintainer-owned manual for running the
+email-campaigns Design workflow lives in OmegaAI at **`Docs/AdvisorReach` →
+`email-campaigns/`** (Connecting SmartLead, Provisioning Senders, Running the
+Design Workflow, Iterating Copy, Strategy). Read it there — via the
+`query-omega` MCP `read` on that docs path — for the canonical steps, gates,
+and failure-mode recovery; the customer's workspace README/guides remain their
+own evolving layer on top of it.
+
 ## Campaign management is iterative, not another one-shot step
 
 The client account, domain, and mailboxes above are one-shot infrastructure —
