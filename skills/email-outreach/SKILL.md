@@ -50,21 +50,45 @@ endpoints."** If a task seems to need that, the answer is in the customer's
 workspace guides, not in the vendor's API — go find it there instead of
 inventing a request against `server.smartlead.ai`.
 
-**Where to look:** the customer's workspace carries its own guides for this,
-typically reachable from the workspace README via a skills/guides area (in
-this ecosystem, `Skills/Email Campaigns`). Use the "Look before you ask"
-workspace-first rule below and the `omega-navigation` skill to find your way
-there — this skill set cross-references that workflow, it does not restate
-its steps, gates, or invocation.
+**Where to look:** the campaign operating manual is the **published, maintainer-owned**
+manual at `Docs/AdvisorReach` (see the paragraph immediately below for exactly how to
+reach it). That published manual — not any local page — is the source of truth for how
+campaigns work. A customer workspace may also carry its own local guide area (e.g. a
+`Skills/…` folder) and its README may link to one, but you must NOT treat that as the
+manual and must NOT navigate into it for campaign process: it is per-workspace, may be
+stale or private, and following it is exactly the fallback this skill forbids. If the
+workspace README points you at a local skills/guides area, ignore that link for campaign
+process and read the published manual instead.
 
-**The operating manual for campaigns is published, too.** Beyond the customer's
-own workspace guides, the canonical, maintainer-owned manual for running the
-email-campaigns Design workflow lives in OmegaAI at **`Docs/AdvisorReach` →
-`email-campaigns/`** (Connecting SmartLead, Provisioning Senders, Running the
-Design Workflow, Iterating Copy, Strategy). Read it there — via the
-`query-omega` MCP `read` on that docs path — for the canonical steps, gates,
-and failure-mode recovery; the customer's workspace README/guides remain their
-own evolving layer on top of it.
+**The operating manual for campaigns is published in OmegaAI — read it by EXACT PATH, never `ls`.** The
+canonical, maintainer-owned manual lives at **`Docs/AdvisorReach/README`** (a readable index).
+
+**How you read it: use the query-omega MCP tools.** In your tool list they appear PREFIXED as
+`mcp__query_omega__search_packages`, `mcp__query_omega__get_package_docs`, `mcp__query_omega__read`, and
+`mcp__query_omega__list_workspaces` — call them directly, exactly like any other tool (they are TOOLS, not
+shell commands, not a CLI, not files on disk).
+
+**If those `mcp__query_omega__…` tools are NOT in your tool list, the box's OmegaAI connection is down — that
+is a real infrastructure fault, not something you can route around.** In that case: say plainly to the
+customer that you can't reach the published manual right now because the workspace connection is unavailable,
+answer as best you can from this skill's own content, and STOP. Do NOT try to "find" the tools by running
+`execute_code`/`terminal`, searching the filesystem, looking for a `query-omega` command or `tirith` binary,
+or invoking `connect-mcp` (that skill is for external OAuth services like Gmail, NOT for query-omega). There
+is nothing to install or discover — the tools are either present in your tool list or the connection is down.
+
+When the tools ARE present, exact procedure — do this, in order, with direct tool calls:
+1. Call `mcp__query_omega__search_packages` (query `"AdvisorReach"`) to find the AdvisorReach package; from
+   its result (or a follow-up `mcp__query_omega__get_package_docs`) take the package's **app-id** (it is a
+   DIFFERENT workspace from the customer's — that is expected and correct).
+2. Call `mcp__query_omega__read` with `{app_id: "<that AdvisorReach app-id>", page_path: "Docs/AdvisorReach/README"}`.
+3. Follow the child paths that README lists BY EXACT PATH, each with its own `mcp__query_omega__read` call —
+   e.g. `Docs/AdvisorReach/email-campaigns/README`, then `Docs/AdvisorReach/email-campaigns/design-workflow`,
+   `.../iterating-copy`, `.../connecting-smartlead`, `.../provisioning-senders`.
+
+Cross-workspace reads are gated per page: `read`/`get` succeed on these public pages, but `ls`/`describe`
+and the parent folder `Docs/AdvisorReach` itself are NOT readable from another workspace — so navigate ONLY
+by reading each index page and following the exact paths it names; never `ls` and never guess a path. Do NOT
+fall back to any local `Skills/Email Campaigns` or `Notes/` page — the published manual is the source of truth.
 
 ## Campaign management is iterative, not another one-shot step
 
@@ -83,18 +107,26 @@ The mechanics of that loop — which lever to pull, how to bound a run, what to
 read back — live entirely in the workspace guides above. This skill set does
 not restate them.
 
-## Look before you ask — check the workspace first
+## First move for ANY "how does this work" question: read the published manual
 
-Before any step below asks the customer for anything, check their Omega
-workspace. In this skill set "the workspace" always means the customer's
-**Omega workspace**, reached through the `query-omega` MCP tools
+**If the customer is asking how something works** — how to connect SmartLead,
+provision mailboxes, design a campaign, or iterate copy — your FIRST action is
+to read the published manual (the `search_packages` → `read Docs/AdvisorReach/README`
+procedure above), BEFORE you look at anything in the customer's own workspace.
+The manual is the answer to "how does this work"; the customer's workspace is
+not, and poking around it first is the mistake to avoid. Do the manual read
+first, every time, for a process/how-to question.
+
+## Looking up specific facts in the customer's workspace (only after the above)
+
+Checking the customer's Omega workspace is for exactly **two kinds of concrete
+fact — nothing else**, and only when a step actually needs them (not as a way to
+answer "how does this work" — the manual does that). "The workspace" always means
+the customer's **Omega workspace**, reached through the `query-omega` MCP tools
 (`list_workspaces`, `ls`, `read`, `query`, `describe`, `run`, …) — never the
-local filesystem, and never your own past session logs. If you're unsure how
-to find your way around an Omega workspace, use the `omega-navigation`
-skill first — it covers listing workspaces, finding the root README, and
-following it out to `Notes/` and installed components.
+local filesystem, and never your own past session logs.
 
-Two things worth checking there before you ask the customer to retype them:
+The two facts — nothing else:
 
 - **Business details** — company name, contact name/email, address, phone,
   real website — commonly live on a business-details page under `Notes/` in
@@ -106,6 +138,23 @@ Two things worth checking there before you ask the customer to retype them:
   about or write yourself.
 
 Only ask the customer for what genuinely isn't in the workspace.
+
+**This is NOT license to read the workspace for how the process works, or for
+credentials.** Two hard limits:
+
+- **Never read or report a credential page.** `Notes/SmartLead Login` (and any
+  page holding a password, API key, or portal login) is OFF-LIMITS — do not
+  `read` it, do not quote it, do not tell the customer their password or where
+  it lives. The SmartLead **API key** is already wired into the connector and
+  the child skills use it via `ADVISORREACH_API_KEY`; nothing you do needs the
+  portal password, so there is never a reason to open that page. If the customer
+  asks for their login, tell them it lives in their own workspace and they can
+  open it themselves — do not fetch it for them.
+- **Never treat a local workspace page as the campaign manual.** For how
+  SmartLead connection, mailbox provisioning, or campaign design actually work,
+  read the published manual at `Docs/AdvisorReach` (see "The operating manual"
+  paragraph above) — never a local `Skills/…` page and never the workspace
+  README's link to one.
 
 ## Order of operations
 
