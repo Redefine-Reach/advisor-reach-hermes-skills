@@ -57,14 +57,14 @@ workspace-first rule below and the `omega-navigation` skill to find your way
 there — this skill set cross-references that workflow, it does not restate
 its steps, gates, or invocation.
 
-**The operating manual for campaigns is published, too.** Beyond the customer's
-own workspace guides, the canonical, maintainer-owned manual for running the
-email-campaigns Design workflow lives in OmegaAI at **`Docs/AdvisorReach` →
-`email-campaigns/`** (Connecting SmartLead, Provisioning Senders, Running the
-Design Workflow, Iterating Copy, Strategy). Read it there — via the
-`query-omega` MCP `read` on that docs path — for the canonical steps, gates,
-and failure-mode recovery; the customer's workspace README/guides remain their
-own evolving layer on top of it.
+**The operating manual for campaigns is published in OmegaAI — read it by EXACT PATH, never `ls`.** The
+canonical, maintainer-owned manual lives at **`Docs/AdvisorReach/README`** (a readable index). Read that page with
+the `query-omega` MCP `read` tool — `{app_id: "<the AdvisorReach package's app-id from search_packages/get_package_docs>", page_path: "Docs/AdvisorReach/README"}` — then follow the child paths it lists BY EXACT PATH: e.g.
+`Docs/AdvisorReach/email-campaigns/README`, then `Docs/AdvisorReach/email-campaigns/connecting-smartlead`. Cross-workspace
+reads are gated per page: `read`/`get` succeed on these public pages, but `ls`/`describe` and the parent folder
+`Docs/AdvisorReach` itself are NOT readable from another workspace — so navigate ONLY by reading each index page and
+following the exact paths it names; never `ls` and never guess a path. Do NOT fall back to any local
+`Skills/Email Campaigns` or `Notes/` page — the published manual is the source of truth.
 
 ## Campaign management is iterative, not another one-shot step
 
