@@ -15,6 +15,11 @@ Teaches the agent it has a **local** headless-Chromium browser (`browser_navigat
 `browser_click`, `browser_type`, …) — not a cloud provider — and when to prefer it over web search/scrape, with
 a STOP-on-error rule so it never scripts a browser via `execute_code`.
 
+### computer-use
+Teaches the agent it has a **local** virtual desktop (`computer_use` via `cua-driver` on an X11/Xvfb display) —
+screenshot, click, type — when to prefer the browser tools instead, and a STOP-on-error rule so it never drives
+the desktop via `execute_code`.
+
 ### present-file
 Turns a file the agent already has into a shareable public link. The host runtime injects
 two env vars the skill reads:
