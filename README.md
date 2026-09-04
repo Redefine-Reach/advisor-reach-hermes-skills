@@ -10,6 +10,11 @@ npx skills add Redefine-Reach/advisor-reach-hermes-skills
 Or add as a Claude Code plugin marketplace: `/plugin marketplace add Redefine-Reach/advisor-reach-hermes-skills`.
 
 ## Skills
+### browser-use
+Teaches the agent it has a **local** headless-Chromium browser (`browser_navigate`, `browser_snapshot`,
+`browser_click`, `browser_type`, …) — not a cloud provider — and when to prefer it over web search/scrape, with
+a STOP-on-error rule so it never scripts a browser via `execute_code`.
+
 ### present-file
 Turns a file the agent already has into a shareable public link. The host runtime injects
 two env vars the skill reads:
