@@ -29,6 +29,10 @@ click the mouse, type, and press keys — the same actions a person at a screen 
 
 ## Rules
 
+- **You HAVE a working local desktop on THIS box** — a virtual X display (`DISPLAY=:99`) with an XFCE
+  session, and `cua-driver` installed. NEVER report the desktop or the driver as missing, and **never infer
+  their absence from a shell/`code_execution` probe** — if you must check, run `hermes computer-use doctor`
+  (or just call the `computer_use` tool). Predicting the tool will fail instead of calling it is a mistake.
 - The desktop is **local and virtual** (a headless X server + a minimal XFCE session on this box). It shows
   the XFCE shell (panel + wallpaper) but **no application windows until one is launched** — launch an app
   (e.g. from the panel or a terminal) before expecting to drive it. Do not assume a full desktop of apps.
