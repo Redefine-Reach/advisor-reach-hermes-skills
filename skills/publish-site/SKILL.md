@@ -31,6 +31,21 @@ Because we already host the customer's DNS, publishing a site never involves a n
 
 None of this replaces or migrates anything: mail (MX, SPF, DKIM, DMARC), other subdomains, and any verification records the customer already has stay exactly as they are. There's no need to inventory the customer's DNS before proceeding, and no warning to deliver about moving control of the domain — that risk doesn't exist in this flow.
 
+## Cloudflare-for-SaaS: the self-zone caveat (you cannot test on a subdomain of advisorreach.ai)
+
+A customer site is reverse-proxied by registering **`www.<customer-domain>`** (U.19) as a **custom hostname** on our
+`advisorreach.ai` Cloudflare zone and CNAME-ing `www` (in the GCP zone we host) to `customers.advisorreach.ai`; the
+apex `<customer-domain>` gets an A → LB that 301-redirects to `www` (a bare apex can't be a custom hostname — it
+can't CNAME, U.7). This works ONLY when the customer domain is **NOT itself a zone in our Cloudflare account**. A hostname that is a subdomain of `advisorreach.ai` (e.g.
+`sites-test.advisorreach.ai`) is resolved by Cloudflare *in-zone* — it
+follows our own zone's DNS and uses that as the origin, which lands on a Cloudflare anycast IP → **Error 1000
+"DNS points to prohibited IP"** (403). It is NEVER SaaS-routed. Proven by a sentinel test (point the hostname's own
+record at an unreachable IP → the edge returns 522, following the hostname's OWN DNS, not the SaaS fallback).
+Therefore: **onboard/validate on a real external customer domain whose DNS we host in GCP (NS-delegated to our
+Cloud DNS) — never on a `*.advisorreach.ai` subdomain.** The fallback origin `proxy-fallback.advisorreach.ai` MUST
+stay **proxied** (Cloudflare uses its content IP `34.58.195.165` as the origin; a DNS-only fallback origin is
+rejected with Error 1040).
+
 ## Turn 1 — build the site and publish
 
 1. **Build and stage the site.** Write the site's HTML (and any assets) into `SITE_DIR` under a new subdirectory you choose an id for. If the user already gave you finished HTML, use it as-is; otherwise produce a reasonable page from what they've described. Confirm this before moving on — there's no point publishing a site that isn't ready. Paths serve clean — a file staged as `about.html` is reachable at both `/about` and `/about.html`, so link internally however reads best; you don't need to add the `.html` extension.
