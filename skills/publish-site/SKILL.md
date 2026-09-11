@@ -33,10 +33,10 @@ None of this replaces or migrates anything: mail (MX, SPF, DKIM, DMARC), other s
 
 ## Cloudflare-for-SaaS: the self-zone caveat (you cannot test on a subdomain of advisorreach.ai)
 
-A customer site is reverse-proxied by registering the customer's OWN chosen subdomain (e.g.
-`go.<customer-domain>` — **never `www`**, U.18) as a **custom hostname** on our `advisorreach.ai` Cloudflare zone
-and CNAME-ing it (in the GCP zone we host) to `customers.advisorreach.ai`. This works ONLY when the customer domain
-is **NOT itself a zone in our Cloudflare account**. A hostname that is a subdomain of `advisorreach.ai` (e.g.
+A customer site is reverse-proxied by registering **`www.<customer-domain>`** (U.19) as a **custom hostname** on our
+`advisorreach.ai` Cloudflare zone and CNAME-ing `www` (in the GCP zone we host) to `customers.advisorreach.ai`; the
+apex `<customer-domain>` gets an A → LB that 301-redirects to `www` (a bare apex can't be a custom hostname — it
+can't CNAME, U.7). This works ONLY when the customer domain is **NOT itself a zone in our Cloudflare account**. A hostname that is a subdomain of `advisorreach.ai` (e.g.
 `sites-test.advisorreach.ai`) is resolved by Cloudflare *in-zone* — it
 follows our own zone's DNS and uses that as the origin, which lands on a Cloudflare anycast IP → **Error 1000
 "DNS points to prohibited IP"** (403). It is NEVER SaaS-routed. Proven by a sentinel test (point the hostname's own
