@@ -33,6 +33,8 @@ None of this replaces or migrates anything: mail (MX, SPF, DKIM, DMARC), other s
 
 Deleting a site (`DELETE /sites/{id}`) fully tears down its resources — the Cloudflare custom hostname, the `www` CNAME + apex A + `_acme-challenge` TXT in the customer's GCP zone, and the k8s Ingress + its TLS secret.
 
+One site per customer zone — a domain is served by exactly one site (`www.<domain>` + apex 301). Creating a second site in the same zone is rejected with 409.
+
 ## Cloudflare-for-SaaS: the self-zone caveat (you cannot test on a subdomain of advisorreach.ai)
 
 A customer site is reverse-proxied by registering **`www.<customer-domain>`** (U.19) as a **custom hostname** on our
