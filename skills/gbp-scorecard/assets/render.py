@@ -69,6 +69,22 @@ def main() -> None:
             print(f"render.py: derived total {m.group(0)!r} has no '(N sales)' count within 120 chars — show the addend count or drop the figure", file=sys.stderr)
             sys.exit(2)
 
+    # Found-but-dropped guard: every research_log entry the agent marked found:true must be
+    # cited somewhere in the report body (its domain must appear in some cell, the bio, or
+    # sources). Measured 2026-09-12: runs found the trade-press finalist page and then omitted it.
+    from urllib.parse import urlparse
+    body = json.dumps({k: v for k, v in report.items() if k != "research_log"}, ensure_ascii=False).lower()
+    uncited = []
+    for entry in report["research_log"]:
+        if entry.get("found") and entry.get("url"):
+            host = urlparse(entry["url"]).netloc.lower().removeprefix("www.")
+            if host and host not in body:
+                uncited.append(f'{entry["step"]} -> {host}')
+    if uncited:
+        print("render.py: found:true sources never cited in the report (add each domain to a table cell, the bio, or `sources`): "
+              + "; ".join(uncited), file=sys.stderr)
+        sys.exit(2)
+
     env = jinja2.Environment(
         loader=jinja2.FileSystemLoader(str(HERE)),
         autoescape=jinja2.select_autoescape(["html"]),
