@@ -77,4 +77,4 @@ from a locked AdvisorReach-branded template in `assets/`, delivered as a link vi
 own domain via `publish-site`). The agent then suggests concrete tweaks (defaults, an
 employer-match field, their own CTA, colors, their domain); change requests are edits to
 the agent's working copy, re-delivered under the same name so the link never changes.
-The template's math has a hermetic test: `node --test tests/`.
+The template's math has a hermetic test: `node --test tests/*.test.mjs`.
