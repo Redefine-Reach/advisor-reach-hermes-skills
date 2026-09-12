@@ -1,0 +1,35 @@
+{
+ "rows": [
+  {
+   "signal": "License tenure",
+   "record": "Licensed 1 May 2024.",
+   "read": "~28 months in the business."
+  },
+  {
+   "signal": "RealTrends / city rank",
+   "record": "No personal card found.",
+   "read": "Ranking pages will not hand a stranger her name yet."
+  },
+  {
+   "signal": "Zillow / Realtor.com agent card",
+   "record": "No durable personal card surfaced.",
+   "read": "Portals are not carrying a 24-month closed-volume number."
+  },
+  {
+   "signal": "Confirmed listing footprint",
+   "record": "Active example: 1 Fixture Way, Boise 83702, $899,000.",
+   "read": "Upper-mid band."
+  },
+  {
+   "signal": "Shop context (not hers)",
+   "record": "Shop card: 90 sold LTM.",
+   "read": "Do not treat shop volume as her volume."
+  },
+  {
+   "signal": "Internal recognition",
+   "record": "Shop Top Producer, fixture month.",
+   "read": "Ask the broker for the closed-side export."
+  }
+ ],
+ "honest_line": "Honest line on volume: public sources do not publish her closed sides or dollar volume for the last 24 months."
+}

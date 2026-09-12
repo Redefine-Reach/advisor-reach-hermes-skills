@@ -39,6 +39,13 @@ Generates a seller's pre-listing packet as a PDF from a locked branded template,
 advisor + property details gathered over the conversation, then delivers it via the
 `present-file` skill.
 
+### gbp-scorecard
+Generates a four-page "Digital + AI Scorecard · GBP Playbook" for a named real-estate advisor from
+public sources only (state license board, brokerage directory, portals, social, reviews, local press
+via the box's Exa search): bio, 24-month production as published, 15 channel scores, Google Business
+Profile field-by-field, and a 90-day game plan. Locked template (`assets/template.html`) rendered by
+`assets/render.py` (jinja2 + weasyprint) from small per-section JSON files; delivered via `present-file`.
+
 ### publish-site
 Puts a real website live on a customer's own domain, with a real SSL certificate, via the
 AdvisorReach API. A two-turn skill: turn 1 stages the site, gathers the customer's existing

@@ -1,0 +1,101 @@
+{
+ "intro": "Google Screened is N/A (home-service trades only). GBP has no blog tab; Posts plus a website journal are the substitute.",
+ "rows": [
+  {
+   "field": "Personal profile claimed",
+   "score": 1.0,
+   "see": "Fixture: what we can see for Personal profile claimed.",
+   "lift": "Fixture: comment and lift for Personal profile claimed."
+  },
+  {
+   "field": "Shop listings claimed",
+   "score": 1.5,
+   "see": "Fixture: what we can see for Shop listings claimed.",
+   "lift": "Fixture: comment and lift for Shop listings claimed."
+  },
+  {
+   "field": "Business name",
+   "score": 2.0,
+   "see": "Fixture: what we can see for Business name.",
+   "lift": "Fixture: comment and lift for Business name."
+  },
+  {
+   "field": "Categories",
+   "score": 2.5,
+   "see": "Fixture: what we can see for Categories.",
+   "lift": "Fixture: comment and lift for Categories."
+  },
+  {
+   "field": "Description / About",
+   "score": 3.0,
+   "see": "Fixture: what we can see for Description / About.",
+   "lift": "Fixture: comment and lift for Description / About."
+  },
+  {
+   "field": "NAP",
+   "score": 1.0,
+   "see": "Fixture: what we can see for NAP.",
+   "lift": "Fixture: comment and lift for NAP."
+  },
+  {
+   "field": "Hours",
+   "score": 1.5,
+   "see": "Fixture: what we can see for Hours.",
+   "lift": "Fixture: comment and lift for Hours."
+  },
+  {
+   "field": "Photos / video",
+   "score": 2.0,
+   "see": "Fixture: what we can see for Photos / video.",
+   "lift": "Fixture: comment and lift for Photos / video."
+  },
+  {
+   "field": "Services",
+   "score": 2.5,
+   "see": "Fixture: what we can see for Services.",
+   "lift": "Fixture: comment and lift for Services."
+  },
+  {
+   "field": "Posts (the GBP “blog”)",
+   "score": 3.0,
+   "see": "Fixture: what we can see for Posts (the GBP “blog”).",
+   "lift": "Fixture: comment and lift for Posts (the GBP “blog”)."
+  },
+  {
+   "field": "Q&A",
+   "score": 1.0,
+   "see": "Fixture: what we can see for Q&A.",
+   "lift": "Fixture: comment and lift for Q&A."
+  },
+  {
+   "field": "Reviews — rating",
+   "score": 1.5,
+   "see": "Fixture: what we can see for Reviews — rating.",
+   "lift": "Fixture: comment and lift for Reviews — rating."
+  },
+  {
+   "field": "Reviews — volume",
+   "score": 2.0,
+   "see": "Fixture: what we can see for Reviews — volume.",
+   "lift": "Fixture: comment and lift for Reviews — volume."
+  },
+  {
+   "field": "Owner replies",
+   "score": 2.5,
+   "see": "Fixture: what we can see for Owner replies.",
+   "lift": "Fixture: comment and lift for Owner replies."
+  },
+  {
+   "field": "Google Screened",
+   "score": "N/A",
+   "see": "Fixture: what we can see for Google Screened.",
+   "lift": "Fixture: comment and lift for Google Screened."
+  },
+  {
+   "field": "Products",
+   "score": "N/A",
+   "see": "Fixture: what we can see for Products.",
+   "lift": "Fixture: comment and lift for Products."
+  }
+ ]
+}

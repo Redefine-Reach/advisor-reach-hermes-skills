@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ meta.name }} — Digital + AI Scorecard · GBP Playbook</title>
+<style>
+  /* Look distilled from the Source Artifact (ReportLab, Letter, Helvetica header bars,
+     Times body). Colours sampled from the rendered page: navy #1B2A4A, tile #F4F1EA,
+     alternating row #FAF7F2. Layout is LOCKED — render.py fills it; the agent never edits it. */
+  @page {
+    size: Letter;
+    margin: 0.85in 0.6in 0.75in 0.6in;
+    /* The navy bars are position:fixed divs (below), which WeasyPrint repeats on every
+       page. The page number MUST be a margin box: counter(page) inside a fixed div is
+       laid out once and prints "Page 1" on every page (measured). The margin box is
+       bottom-aligned with padding so it sits inside the 0.38in bar. WeasyPrint 62 does
+       not paint an EMPTY margin box and rejects calc() inside gradients. */
+    @bottom-right { content: "Page " counter(page); font: 8pt Helvetica, Arial, sans-serif; color: #fff;
+                    padding-right: 0.6in; padding-bottom: 0.13in; vertical-align: bottom; }
+  }
+  .bar { position: fixed; left: -0.6in; width: 8.5in; height: 0.42in; background: #1B2A4A; color: #fff;
+         font: 8pt Helvetica, Arial, sans-serif; display: flex; align-items: center; justify-content: space-between;
+         padding: 0 0.6in; box-sizing: border-box; }
+  .bar.top { top: -0.85in; }
+  .bar.bottom { top: auto; bottom: -0.75in; height: 0.38in; }
+  .bar b { font-weight: bold; letter-spacing: 0.06em; }
+  html, body { margin: 0; padding: 0; }
+  body { font: 9.6pt/1.32 "Times New Roman", Times, serif; color: #111; }
+  .eyebrow { font: bold 8pt Helvetica, Arial, sans-serif; color: #1B2A4A; letter-spacing: 0.08em; text-transform: uppercase; margin: 0 0 4pt 0; }
+  h1 { font: bold 17pt/1.15 "Times New Roman", Times, serif; margin: 0 0 4pt 0; color: #111; }
+  .sub { font-style: italic; color: #333; margin: 0 0 10pt 0; }
+  h2 { font: bold 12pt "Times New Roman", Times, serif; margin: 12pt 0 4pt 0; color: #111; }
+  p { margin: 0 0 6pt 0; }
+  .verdict { font-style: italic; margin: 8pt 0 10pt 0; }
+  .tiles { display: flex; gap: 6pt; margin: 6pt 0 4pt 0; }
+  .tile { flex: 1; background: #F4F1EA; border: 0.5pt solid #D9D3C6; text-align: center; padding: 6pt 4pt 7pt 4pt; }
+  .tile .label { font: bold 7pt Helvetica, Arial, sans-serif; letter-spacing: 0.08em; color: #444; text-transform: uppercase; }
+  .tile .num { font: bold 15pt "Times New Roman", Times, serif; color: #1B2A4A; margin-top: 3pt; }
+  table { width: 100%; border-collapse: collapse; margin: 4pt 0 8pt 0; page-break-inside: auto; }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; }
+  th { font: bold 7.5pt Helvetica, Arial, sans-serif; letter-spacing: 0.06em; text-transform: uppercase; color: #fff; background: #1B2A4A; text-align: left; padding: 4pt 5pt; }
+  td { vertical-align: top; padding: 4pt 5pt; border-bottom: 0.5pt solid #E3DED3; font-size: 9pt; }
+  tbody tr:nth-child(even) td { background: #FAF7F2; }
+  td.k { font-weight: bold; width: 21%; }
+  td.n { width: 6%; text-align: center; font-weight: bold; }
+  .honest { font-style: italic; margin-top: 2pt; }
+  ul { margin: 2pt 0 6pt 14pt; padding: 0; }
+  li { margin: 0 0 3pt 0; }
+  .sources { font-size: 8.2pt; color: #333; }
+</style>
+</head>
+<body>
+
+<div class="bar top"><b>DIGITAL + AI SCORECARD · GBP PLAYBOOK</b><span>{{ meta.name }} · {{ meta.market_short }}</span></div>
+<div class="bar bottom"><span>Public-source briefing · {{ meta.date_long }}</span><span></span></div>
+
+<p class="eyebrow">{{ meta.name }} · {{ meta.brokerage }}</p>
+<h1>{{ meta.headline }}</h1>
+<p class="sub">{{ meta.subline }}</p>
+
+<div class="tiles">
+  <div class="tile"><div class="label">Overall</div><div class="num">{{ tiles.overall }} / 10</div></div>
+  <div class="tile"><div class="label">Known-name search</div><div class="num">{{ tiles.known_name }}</div></div>
+  <div class="tile"><div class="label">Open-demand search</div><div class="num">{{ tiles.open_demand }}</div></div>
+  <div class="tile"><div class="label">AI citation readiness</div><div class="num">{{ tiles.ai_citation }}</div></div>
+</div>
+
+<p class="verdict">{{ verdict }}</p>
+
+<h2>Short bio</h2>
+{% for para in bio %}<p>{{ para }}</p>{% endfor %}
+
+<h2>Production — past 24 months (what is public)</h2>
+<table>
+  <thead><tr><th>Signal</th><th>Public record</th><th>How to read it</th></tr></thead>
+  <tbody>
+  {% for r in production.rows %}<tr><td class="k">{{ r.signal }}</td><td>{{ r.record }}</td><td>{{ r.read }}</td></tr>{% endfor %}
+  </tbody>
+</table>
+<p class="honest">{{ production.honest_line }}</p>
+
+<h2>How this is scored</h2>
+<p>{{ how_scored }}</p>
+
+<table>
+  <thead><tr><th>Channel</th><th>#</th><th>What exists</th><th>What it means</th></tr></thead>
+  <tbody>
+  {% for c in channels %}<tr><td class="k">{{ c.name }}</td><td class="n">{{ c.score }}</td><td>{{ c.exists }}</td><td>{{ c.means }}</td></tr>{% endfor %}
+  </tbody>
+</table>
+<p class="honest">{{ channels_note }}</p>
+
+<h2>Google Business Profile — field by field</h2>
+<p>{{ gbp.intro }}</p>
+<table>
+  <thead><tr><th>GBP field</th><th>#</th><th>What we can see</th><th>Comment · lift</th></tr></thead>
+  <tbody>
+  {% for g in gbp.rows %}<tr><td class="k">{{ g.field }}</td><td class="n">{{ g.score }}</td><td>{{ g.see }}</td><td>{{ g.lift }}</td></tr>{% endfor %}
+  </tbody>
+</table>
+
+<h2>Game plan — everything here is 8 or below</h2>
+<p>{{ plan.intro }}</p>
+<h2>Week 0 · one working day</h2>
+<ul>{% for b in plan.week0 %}<li>{{ b }}</li>{% endfor %}</ul>
+<h2>Weeks 1–2</h2>
+<ul>{% for b in plan.weeks1_2 %}<li>{{ b }}</li>{% endfor %}</ul>
+<h2>Weeks 3–6</h2>
+<ul>{% for b in plan.weeks3_6 %}<li>{{ b }}</li>{% endfor %}</ul>
+<h2>Weeks 7–12</h2>
+<ul>{% for b in plan.weeks7_12 %}<li>{{ b }}</li>{% endfor %}</ul>
+
+<table>
+  <thead><tr><th>Signal</th><th>Today</th><th>Day 90 target</th></tr></thead>
+  <tbody>
+  {% for t in targets %}<tr><td class="k">{{ t.signal }}</td><td>{{ t.today }}</td><td>{{ t.day90 }}</td></tr>{% endfor %}
+  </tbody>
+</table>
+
+<h2>What not to do</h2>
+<ul>{% for d in donts %}<li>{{ d }}</li>{% endfor %}</ul>
+
+<p class="sources"><b>Sources:</b> {{ sources }}</p>
+
+</body>
+</html>
