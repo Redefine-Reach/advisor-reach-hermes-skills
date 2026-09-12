@@ -1,0 +1,92 @@
+[
+ {
+  "name": "Google branded search (her name)",
+  "score": 1.0,
+  "exists": "Fixture: what exists for Google branded search (her name).",
+  "means": "Fixture: what it means for Google branded search (her name)."
+ },
+ {
+  "name": "Google category search (luxury realtor Boise)",
+  "score": 1.5,
+  "exists": "Fixture: what exists for Google category search (luxury realtor Boise).",
+  "means": "Fixture: what it means for Google category search (luxury realtor Boise)."
+ },
+ {
+  "name": "Google Business / Maps — personal",
+  "score": 2.0,
+  "exists": "Fixture: what exists for Google Business / Maps — personal.",
+  "means": "Fixture: what it means for Google Business / Maps — personal."
+ },
+ {
+  "name": "Google Business — shop listings",
+  "score": 2.5,
+  "exists": "Fixture: what exists for Google Business — shop listings.",
+  "means": "Fixture: what it means for Google Business — shop listings."
+ },
+ {
+  "name": "AI assistants",
+  "score": 3.0,
+  "exists": "Fixture: what exists for AI assistants.",
+  "means": "Fixture: what it means for AI assistants."
+ },
+ {
+  "name": "Instagram",
+  "score": 3.5,
+  "exists": "Fixture: what exists for Instagram.",
+  "means": "Fixture: what it means for Instagram."
+ },
+ {
+  "name": "YouTube",
+  "score": 4.0,
+  "exists": "Fixture: what exists for YouTube.",
+  "means": "Fixture: what it means for YouTube."
+ },
+ {
+  "name": "TikTok / Reels discovery",
+  "score": 1.0,
+  "exists": "Fixture: what exists for TikTok / Reels discovery.",
+  "means": "Fixture: what it means for TikTok / Reels discovery."
+ },
+ {
+  "name": "Facebook",
+  "score": 1.5,
+  "exists": "Fixture: what exists for Facebook.",
+  "means": "Fixture: what it means for Facebook."
+ },
+ {
+  "name": "X / Twitter",
+  "score": 2.0,
+  "exists": "Fixture: what exists for X / Twitter.",
+  "means": "Fixture: what it means for X / Twitter."
+ },
+ {
+  "name": "LinkedIn",
+  "score": 2.5,
+  "exists": "Fixture: what exists for LinkedIn.",
+  "means": "Fixture: what it means for LinkedIn."
+ },
+ {
+  "name": "Zillow / Realtor.com / Homes.com",
+  "score": 3.0,
+  "exists": "Fixture: what exists for Zillow / Realtor.com / Homes.com.",
+  "means": "Fixture: what it means for Zillow / Realtor.com / Homes.com."
+ },
+ {
+  "name": "Website / brokerage microsite",
+  "score": 3.5,
+  "exists": "Fixture: what exists for Website / brokerage microsite.",
+  "means": "Fixture: what it means for Website / brokerage microsite."
+ },
+ {
+  "name": "PR / print / local media",
+  "score": 4.0,
+  "exists": "Fixture: what exists for PR / print / local media.",
+  "means": "Fixture: what it means for PR / print / local media."
+ },
+ {
+  "name": "Review density",
+  "score": 1.0,
+  "exists": "Fixture: what exists for Review density.",
+  "means": "Fixture: what it means for Review density."
+ }
+]

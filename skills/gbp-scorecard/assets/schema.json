@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "gbp-scorecard report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["meta", "tiles", "verdict", "bio", "production", "how_scored", "channels", "channels_note", "gbp", "plan", "targets", "donts", "sources"],
+  "$defs": {
+    "score": { "type": "number", "minimum": 0, "maximum": 10 },
+    "scoreOrNA": { "anyOf": [ { "$ref": "#/$defs/score" }, { "const": "N/A" } ] },
+    "text": { "type": "string", "minLength": 1 }
+  },
+  "properties": {
+    "meta": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "brokerage", "market", "market_short", "date_long", "headline", "subline"],
+      "properties": {
+        "name": { "$ref": "#/$defs/text" },
+        "brokerage": { "$ref": "#/$defs/text" },
+        "market": { "$ref": "#/$defs/text" },
+        "market_short": { "$ref": "#/$defs/text" },
+        "date_long": { "$ref": "#/$defs/text" },
+        "headline": { "$ref": "#/$defs/text" },
+        "subline": { "$ref": "#/$defs/text" }
+      }
+    },
+    "tiles": {
+      "type": "object", "additionalProperties": false,
+      "required": ["overall", "known_name", "open_demand", "ai_citation"],
+      "properties": {
+        "overall": { "$ref": "#/$defs/score" },
+        "known_name": { "$ref": "#/$defs/score" },
+        "open_demand": { "$ref": "#/$defs/score" },
+        "ai_citation": { "$ref": "#/$defs/score" }
+      }
+    },
+    "verdict": { "$ref": "#/$defs/text" },
+    "bio": { "type": "array", "minItems": 2, "maxItems": 3, "items": { "$ref": "#/$defs/text" } },
+    "production": {
+      "type": "object", "additionalProperties": false,
+      "required": ["rows", "honest_line"],
+      "properties": {
+        "rows": {
+          "type": "array", "minItems": 4, "maxItems": 8,
+          "items": { "type": "object", "additionalProperties": false, "required": ["signal", "record", "read"],
+            "properties": { "signal": { "$ref": "#/$defs/text" }, "record": { "$ref": "#/$defs/text" }, "read": { "$ref": "#/$defs/text" } } }
+        },
+        "honest_line": { "$ref": "#/$defs/text" }
+      }
+    },
+    "how_scored": { "$ref": "#/$defs/text" },
+    "channels": {
+      "type": "array", "minItems": 15, "maxItems": 15,
+      "items": { "type": "object", "additionalProperties": false, "required": ["name", "score", "exists", "means"],
+        "properties": { "name": { "$ref": "#/$defs/text" }, "score": { "$ref": "#/$defs/score" }, "exists": { "$ref": "#/$defs/text" }, "means": { "$ref": "#/$defs/text" } } }
+    },
+    "channels_note": { "$ref": "#/$defs/text" },
+    "gbp": {
+      "type": "object", "additionalProperties": false,
+      "required": ["intro", "rows"],
+      "properties": {
+        "intro": { "$ref": "#/$defs/text" },
+        "rows": {
+          "type": "array", "minItems": 16, "maxItems": 17,
+          "items": { "type": "object", "additionalProperties": false, "required": ["field", "score", "see", "lift"],
+            "properties": { "field": { "$ref": "#/$defs/text" }, "score": { "$ref": "#/$defs/scoreOrNA" }, "see": { "$ref": "#/$defs/text" }, "lift": { "$ref": "#/$defs/text" } } }
+        }
+      }
+    },
+    "plan": {
+      "type": "object", "additionalProperties": false,
+      "required": ["intro", "week0", "weeks1_2", "weeks3_6", "weeks7_12"],
+      "properties": {
+        "intro": { "$ref": "#/$defs/text" },
+        "week0": { "type": "array", "minItems": 3, "items": { "$ref": "#/$defs/text" } },
+        "weeks1_2": { "type": "array", "minItems": 3, "items": { "$ref": "#/$defs/text" } },
+        "weeks3_6": { "type": "array", "minItems": 3, "items": { "$ref": "#/$defs/text" } },
+        "weeks7_12": { "type": "array", "minItems": 3, "items": { "$ref": "#/$defs/text" } }
+      }
+    },
+    "targets": {
+      "type": "array", "minItems": 5, "maxItems": 8,
+      "items": { "type": "object", "additionalProperties": false, "required": ["signal", "today", "day90"],
+        "properties": { "signal": { "$ref": "#/$defs/text" }, "today": { "$ref": "#/$defs/text" }, "day90": { "$ref": "#/$defs/text" } } }
+    },
+    "donts": { "type": "array", "minItems": 3, "maxItems": 5, "items": { "$ref": "#/$defs/text" } },
+    "sources": { "$ref": "#/$defs/text" }
+  }
+}

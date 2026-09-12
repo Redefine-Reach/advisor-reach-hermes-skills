@@ -1,0 +1,37 @@
+[
+ {
+  "signal": "Personal Google reviews",
+  "today": "Effectively 0",
+  "day90": "25+ at 5.0"
+ },
+ {
+  "signal": "Personal GBP",
+  "today": "Not usable",
+  "day90": "Claimed, 40+ photos, 2 posts in last 7 days"
+ },
+ {
+  "signal": "Named webpage",
+  "today": "Not ranking",
+  "day90": "Live microsite with schema + production numbers"
+ },
+ {
+  "signal": "YouTube",
+  "today": "None",
+  "day90": "Channel + 4 long films + 8 Shorts"
+ },
+ {
+  "signal": "Known-name Google",
+  "today": "4.0",
+  "day90": "6.5+"
+ },
+ {
+  "signal": "Open-demand search",
+  "today": "2.0",
+  "day90": "Moving toward 4"
+ },
+ {
+  "signal": "24-month volume on the public web",
+  "today": "Not published",
+  "day90": "On the microsite, quoted by AI"
+ }
+]
