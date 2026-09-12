@@ -51,7 +51,7 @@ The response looks like:
       "access_token_expires_at": "...",
       "refresh_token_expires_at": "...",
       "community_member_id": 87952792,
-      "community_id": 1
+      "community_id": 592032
     }
 
 **`access_token` is valid for roughly one hour.** Mint one when you start
@@ -60,6 +60,33 @@ for later, do not write it to a file, and do not carry it into a conversation
 tomorrow — mint a fresh one. There is no penalty for minting again.
 
 Use it against Circle's Member API as `Authorization: Bearer {access_token}`.
+
+## Using the token
+
+The Member API base URL is `https://app.circle.so/api/headless/v1`. To read the
+member's own record:
+
+    curl --max-time 30 \
+      -H "Authorization: Bearer {access_token}" \
+      https://app.circle.so/api/headless/v1/community_member
+
+    {"id":87952792,"user_id":36492293,"public_uid":"cf2d7568","email":"ryan@getomega.ai","name":"Ryan Radomski",...}
+
+**The endpoint noun is `community_member`, singular.** `community_members`,
+`members`, and `members/me` are not endpoints — they do not exist on this API.
+
+**Rule: a non-JSON body from `app.circle.so` means the path is wrong, not that
+an edge or WAF is blocking you.** A bad path returns Circle's SPA HTML with a
+`404` status — it looks like a block if you don't check `content-type` first,
+but it isn't one. Check `content-type` before parsing the response. Never
+report a WAF/Cloudflare fault without first retrying the exact path documented
+above.
+
+**Do not fall back to the Circle admin API.** The admin API is a different
+credential with different scope. Falling back to it when a member-scoped read
+fails silently defeats the point of a member-scoped token and makes the
+feature untestable — if a member-scoped read fails, report the failure, don't
+paper over it with admin access.
 
 ## What this does NOT do
 
