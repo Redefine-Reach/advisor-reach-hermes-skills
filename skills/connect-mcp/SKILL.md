@@ -5,6 +5,10 @@ description: Connect an outside service (Gmail, Notion, Canva, and similar) to t
 
 # Connect an outside service
 
+**Try `connect-app` first.** If this box has the `composio` tools, the app is very likely
+available there with no browser add-on and no MCP URL to find — use that skill. Use this
+skill only when the app is NOT a Composio toolkit and the user has an MCP server URL for it.
+
 Some services expose their tools over MCP and require the user to sign in first.
 The sign-in has to happen in the user's own browser — you cannot do it for them,
 and you never see their password or any authorization code.
