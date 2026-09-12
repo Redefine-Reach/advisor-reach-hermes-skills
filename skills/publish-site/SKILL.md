@@ -31,6 +31,8 @@ Because we already host the customer's DNS, publishing a site never involves a n
 
 None of this replaces or migrates anything: mail (MX, SPF, DKIM, DMARC), other subdomains, and any verification records the customer already has stay exactly as they are. There's no need to inventory the customer's DNS before proceeding, and no warning to deliver about moving control of the domain — that risk doesn't exist in this flow.
 
+Deleting a site (`DELETE /sites/{id}`) fully tears down its resources — the Cloudflare custom hostname, the `www` CNAME + apex A + `_acme-challenge` TXT in the customer's GCP zone, and the k8s Ingress + its TLS secret.
+
 ## Cloudflare-for-SaaS: the self-zone caveat (you cannot test on a subdomain of advisorreach.ai)
 
 A customer site is reverse-proxied by registering **`www.<customer-domain>`** (U.19) as a **custom hostname** on our
