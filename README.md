@@ -10,6 +10,13 @@ npx skills add Redefine-Reach/advisor-reach-hermes-skills
 Or add as a Claude Code plugin marketplace: `/plugin marketplace add Redefine-Reach/advisor-reach-hermes-skills`.
 
 ## Skills
+### connect-app
+Connects an outside app (Gmail, Google Calendar, Google Drive, Notion, Slack, HubSpot, LinkedIn,
+Canva) through the box's `composio` MCP tools: one `COMPOSIO_MANAGE_CONNECTIONS` call yields a
+single-use, 10-minute hosted sign-in link the agent texts the user; the agent then finds and runs
+the app's tools via `COMPOSIO_SEARCH_TOOLS` / `COMPOSIO_MULTI_EXECUTE_TOOL`. No browser add-on.
+Falls back to `connect-mcp` for apps Composio does not cover.
+
 ### browser-use
 Teaches the agent it has a **local** headless-Chromium browser (`browser_navigate`, `browser_snapshot`,
 `browser_click`, `browser_type`, …) — not a cloud provider — and when to prefer it over web search/scrape, with
