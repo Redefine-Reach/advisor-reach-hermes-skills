@@ -11,8 +11,8 @@ Or add as a Claude Code plugin marketplace: `/plugin marketplace add Redefine-Re
 
 ## Skills
 ### connect-app
-Connects an outside app (Gmail, Google Calendar, Google Drive, Notion, Slack, HubSpot, LinkedIn,
-Canva) through the box's `composio` MCP tools: one `COMPOSIO_MANAGE_CONNECTIONS` call yields a
+Connects any outside app Composio supports (Gmail, Calendar, Notion, Slack, HubSpot, Canva, GitHub, …)
+through the box's `composio` MCP tools: one `COMPOSIO_MANAGE_CONNECTIONS` call yields a
 single-use, 10-minute hosted sign-in link the agent texts the user; the agent then finds and runs
 the app's tools via `COMPOSIO_SEARCH_TOOLS` / `COMPOSIO_MULTI_EXECUTE_TOOL`. No browser add-on.
 Falls back to `connect-mcp` for apps Composio does not cover.

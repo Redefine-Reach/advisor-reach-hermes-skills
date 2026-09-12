@@ -1,6 +1,6 @@
 ---
 name: connect-app
-description: Connect an outside app (Gmail, Google Calendar, Google Drive, Notion, Slack, HubSpot, LinkedIn, Canva) to this box through Composio so its tools become available, and use those tools once connected. Use when the user asks to connect, link, hook up, or sign into an app, or when you need something from an app that is not connected yet. Sends the user one sign-in link they open in their own browser.
+description: Connect any outside app Composio supports (Gmail, Google Calendar, Notion, Slack, HubSpot, LinkedIn, Canva, GitHub, and hundreds more) to this box through Composio so its tools become available, and use those tools once connected. Use when the user asks to connect, link, hook up, or sign into an app, or when you need something from an app that is not connected yet. Sends the user one sign-in link they open in their own browser.
 ---
 
 # Connect an outside app (Composio)
@@ -21,10 +21,12 @@ see their password, a code, or a token, and neither does this box.
 
 ## Procedure — connecting
 
-1. Identify the app as a Composio toolkit slug. Known slugs on this fleet: `gmail`,
-   `googlecalendar`, `googledrive`, `notion`, `slack`, `hubspot`, `linkedin`, `canva`.
-   If the app is not one of these, say it is not available here and stop (or offer
-   `connect-mcp` if the user has an MCP server URL for it).
+1. Identify the app's Composio toolkit slug — the lowercase app name (`gmail`,
+   `googlecalendar`, `googledrive`, `notion`, `slack`, `hubspot`, `linkedin`, `canva`,
+   `github`, `outlook`, `googlesheets`, and hundreds more). Every Composio app is available
+   on this box. If unsure of the slug, call `COMPOSIO_SEARCH_TOOLS` with the app's name and
+   use the toolkit it returns; if `COMPOSIO_MANAGE_CONNECTIONS` says the slug is unknown,
+   tell the user the app is not available (or offer `connect-mcp` if they have an MCP URL).
 2. Call `COMPOSIO_MANAGE_CONNECTIONS` with `{"toolkits": ["<slug>"]}` **once**.
    - If the result for that toolkit says the connection is already **active**, tell the
      user it is connected and go to "Using the app".
