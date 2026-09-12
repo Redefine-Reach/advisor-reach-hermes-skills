@@ -1,6 +1,6 @@
 // Hermetic test for the retirement-calculator template's projection model.
 // Extracts the `// @calc-begin` … `// @calc-end` block from the shipped asset
-// (no DOM, no browser) and asserts the math. Run: node --test tests/
+// (no DOM, no browser) and asserts the math. Run: node --test tests/*.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
