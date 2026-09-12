@@ -26,7 +26,7 @@ import jsonschema
 
 SECTIONS = [
     "meta", "tiles", "verdict", "bio", "production", "how_scored",
-    "channels", "channels_note", "gbp", "plan", "targets", "donts", "sources",
+    "channels", "channels_note", "gbp", "plan", "targets", "donts", "sources", "research_log",
 ]
 HERE = Path(__file__).resolve().parent
 

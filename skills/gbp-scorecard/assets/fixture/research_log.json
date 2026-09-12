@@ -1,0 +1,18 @@
+[
+  { "step": "license-board", "query": "site:example-board.gov \"Avery\" \"Quinn\" license", "found": true, "url": "https://example-board.gov/entity/1", "name_checked": true, "note": "fixture" },
+  { "step": "license-individual-page", "query": "site:example-board.gov \"LIC-000000\"", "found": true, "url": "https://example-board.gov/individual/000000", "name_checked": true, "note": "fixture" },
+  { "step": "brokerage-directory", "query": "\"Avery Quinn\" \"Example Realty\" Example City", "found": true, "url": "https://example-realty.example/agents/avery-quinn", "name_checked": true, "note": "fixture" },
+  { "step": "shop-ratemyagent", "query": "site:ratemyagent.com \"Example Realty\" Example City", "found": false, "url": "", "name_checked": true, "note": "fixture: not found" },
+  { "step": "shop-google-card", "query": "\"Example Realty\" Example City google reviews rating", "found": true, "url": "https://example.com/maps/example-realty", "name_checked": true, "note": "fixture" },
+  { "step": "shop-instagram-recognition", "query": "\"Example Realty\" Example City instagram \"top producer\"", "found": false, "url": "", "name_checked": true, "note": "fixture: not found" },
+  { "step": "trade-press", "query": "\"Avery Quinn\" \"Example City Agent Magazine\"", "found": false, "url": "", "name_checked": true, "note": "fixture: not found" },
+  { "step": "listings", "query": "\"listed by Avery Quinn\"", "found": true, "url": "https://example.com/listings/123-main-st", "name_checked": true, "note": "fixture" },
+  { "step": "portal-cards", "query": "\"Avery Quinn\" site:zillow.com agent", "found": true, "url": "https://www.zillow.com/profile/avery-quinn", "name_checked": true, "note": "fixture" },
+  { "step": "social-instagram", "query": "\"Avery Quinn\" instagram Example City realtor", "found": true, "url": "https://instagram.com/averyquinnrealty", "name_checked": true, "note": "fixture" },
+  { "step": "social-youtube", "query": "\"Avery Quinn\" youtube Example City real estate", "found": false, "url": "", "name_checked": true, "note": "fixture: not found" },
+  { "step": "social-linkedin", "query": "\"Avery Quinn\" linkedin \"Example Realty\"", "found": true, "url": "https://linkedin.com/in/avery-quinn-example", "name_checked": true, "note": "fixture" },
+  { "step": "reviews", "query": "\"Avery Quinn\" \"Example Realty\" google reviews", "found": true, "url": "https://example.com/maps/avery-quinn", "name_checked": true, "note": "fixture" },
+  { "step": "homonym-bare-name", "query": "\"Avery Quinn\"", "found": true, "url": "https://example.com/wiki/Avery_Quinn_(fictional)", "name_checked": true, "note": "fixture: unrelated homonym found" },
+  { "step": "homonym-same-shop", "query": "\"Avery Quinn\" \"Example Realty\" agent directory", "found": false, "url": "", "name_checked": true, "note": "fixture: no same-shop namesake found" },
+  { "step": "website", "query": "\"Avery Quinn\" realtor site:example-realty.example", "found": true, "url": "https://example-realty.example/avery-quinn", "name_checked": true, "note": "fixture" }
+]

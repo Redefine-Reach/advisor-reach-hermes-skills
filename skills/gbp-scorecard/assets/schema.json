@@ -3,7 +3,7 @@
   "title": "gbp-scorecard report",
   "type": "object",
   "additionalProperties": false,
-  "required": ["meta", "tiles", "verdict", "bio", "production", "how_scored", "channels", "channels_note", "gbp", "plan", "targets", "donts", "sources"],
+  "required": ["meta", "tiles", "verdict", "bio", "production", "how_scored", "channels", "channels_note", "gbp", "plan", "targets", "donts", "sources", "research_log"],
   "$defs": {
     "score": { "type": "number", "minimum": 0, "maximum": 10 },
     "scoreOrNA": { "anyOf": [ { "$ref": "#/$defs/score" }, { "const": "N/A" } ] },
@@ -83,6 +83,37 @@
         "properties": { "signal": { "$ref": "#/$defs/text" }, "today": { "$ref": "#/$defs/text" }, "day90": { "$ref": "#/$defs/text" } } }
     },
     "donts": { "type": "array", "minItems": 3, "maxItems": 5, "items": { "$ref": "#/$defs/text" } },
-    "sources": { "$ref": "#/$defs/text" }
+    "sources": { "$ref": "#/$defs/text" },
+    "research_log": {
+      "type": "array", "minItems": 12,
+      "items": { "type": "object", "additionalProperties": false,
+        "required": ["step", "query", "found", "url", "name_checked", "note"],
+        "properties": {
+          "step": { "enum": ["license-board", "license-individual-page", "brokerage-directory", "shop-ratemyagent", "shop-google-card", "shop-instagram-recognition", "trade-press", "listings", "portal-cards", "realtrends", "social-instagram", "social-youtube", "social-linkedin", "social-facebook", "social-tiktok-x", "reviews", "homonym-bare-name", "homonym-same-shop", "website", "press"] },
+          "query": { "type": "string", "minLength": 3 },
+          "found": { "type": "boolean" },
+          "url": { "type": "string" },
+          "name_checked": { "type": "boolean" },
+          "note": { "type": "string" }
+        } },
+      "allOf": [
+        { "contains": { "properties": { "step": { "const": "license-board" } } } },
+        { "contains": { "properties": { "step": { "const": "license-individual-page" } } } },
+        { "contains": { "properties": { "step": { "const": "brokerage-directory" } } } },
+        { "contains": { "properties": { "step": { "const": "shop-ratemyagent" } } } },
+        { "contains": { "properties": { "step": { "const": "shop-google-card" } } } },
+        { "contains": { "properties": { "step": { "const": "shop-instagram-recognition" } } } },
+        { "contains": { "properties": { "step": { "const": "trade-press" } } } },
+        { "contains": { "properties": { "step": { "const": "listings" } } } },
+        { "contains": { "properties": { "step": { "const": "portal-cards" } } } },
+        { "contains": { "properties": { "step": { "const": "social-instagram" } } } },
+        { "contains": { "properties": { "step": { "const": "social-youtube" } } } },
+        { "contains": { "properties": { "step": { "const": "social-linkedin" } } } },
+        { "contains": { "properties": { "step": { "const": "reviews" } } } },
+        { "contains": { "properties": { "step": { "const": "homonym-bare-name" } } } },
+        { "contains": { "properties": { "step": { "const": "homonym-same-shop" } } } },
+        { "contains": { "properties": { "step": { "const": "website" } } } }
+      ]
+    }
   }
 }
