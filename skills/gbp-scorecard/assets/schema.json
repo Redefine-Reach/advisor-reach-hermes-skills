@@ -85,16 +85,17 @@
     "donts": { "type": "array", "minItems": 3, "maxItems": 5, "items": { "$ref": "#/$defs/text" } },
     "sources": { "$ref": "#/$defs/text" },
     "research_log": {
-      "type": "array", "minItems": 12,
+      "type": "array", "minItems": 20,
       "items": { "type": "object", "additionalProperties": false,
-        "required": ["step", "query", "found", "url", "name_checked", "note"],
+        "required": ["step", "query", "found", "url", "name_checked", "note", "result_snippet"],
         "properties": {
-          "step": { "enum": ["license-board", "license-individual-page", "brokerage-directory", "shop-ratemyagent", "shop-google-card", "shop-instagram-recognition", "trade-press", "listings", "portal-cards", "realtrends", "social-instagram", "social-youtube", "social-linkedin", "social-facebook", "social-tiktok-x", "reviews", "homonym-bare-name", "homonym-same-shop", "website", "press"] },
+          "step": { "enum": ["license-board", "license-individual-page", "brokerage-directory", "shop-ratemyagent", "shop-google-card", "shop-instagram-recognition", "trade-press", "listings", "portal-cards", "realtrends", "social-instagram", "social-youtube", "social-linkedin", "social-facebook", "social-tiktok-x", "reviews", "homonym-bare-name", "homonym-same-shop", "website", "press", "recognition-prior-shop", "trade-press-rookie", "shop-ratemyagent-prior", "shop-google-card-prior"] },
           "query": { "type": "string", "minLength": 3 },
           "found": { "type": "boolean" },
           "url": { "type": "string" },
           "name_checked": { "type": "boolean" },
-          "note": { "type": "string" }
+          "note": { "type": "string" },
+          "result_snippet": { "type": "string", "minLength": 40 }
         } },
       "allOf": [
         { "contains": { "properties": { "step": { "const": "license-board" } } } },
@@ -112,7 +113,11 @@
         { "contains": { "properties": { "step": { "const": "reviews" } } } },
         { "contains": { "properties": { "step": { "const": "homonym-bare-name" } } } },
         { "contains": { "properties": { "step": { "const": "homonym-same-shop" } } } },
-        { "contains": { "properties": { "step": { "const": "website" } } } }
+        { "contains": { "properties": { "step": { "const": "website" } } } },
+        { "contains": { "properties": { "step": { "const": "recognition-prior-shop" } } } },
+        { "contains": { "properties": { "step": { "const": "trade-press-rookie" } } } },
+        { "contains": { "properties": { "step": { "const": "shop-ratemyagent-prior" } } } },
+        { "contains": { "properties": { "step": { "const": "shop-google-card-prior" } } } }
       ]
     }
   }

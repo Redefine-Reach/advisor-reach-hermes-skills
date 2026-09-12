@@ -61,6 +61,14 @@ def main() -> None:
         print(f"render.py: report invalid at {path}: {e.message}", file=sys.stderr)
         sys.exit(2)
 
+    import re
+    joined = json.dumps(report, ensure_ascii=False)
+    for m in re.finditer(r"[≈~]\s*\$\s?[\d.,]+\s*[MK]?", joined):
+        window = joined[max(0, m.start() - 120): m.end() + 120]
+        if not re.search(r"\(\s*\d+\s+(sales|transactions|listings|closings)\b", window):
+            print(f"render.py: derived total {m.group(0)!r} has no '(N sales)' count within 120 chars — show the addend count or drop the figure", file=sys.stderr)
+            sys.exit(2)
+
     env = jinja2.Environment(
         loader=jinja2.FileSystemLoader(str(HERE)),
         autoescape=jinja2.select_autoescape(["html"]),
