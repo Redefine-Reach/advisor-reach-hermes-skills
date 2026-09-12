@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retirement Calculator — AdvisorReach</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
+<style>
+  /* Brand tokens — advisorreach-site/public/assets/company.css :root */
+  :root {
+    --night: #171411;
+    --night-soft: #211d19;
+    --paper-bright: #fffdf8;
+    --cream: #f4f0e7;
+    --cream-dim: #bcb3a5;
+    --gold: #c59a42;
+    --gold-soft: rgba(197, 154, 66, 0.12);
+    --gold-deep: #795d22;
+    --brand-mark-cream: #f4f1ea;
+    --brand-mark-gold: #d1a54a;
+    --rule-dark: #423a31;
+    --success: #496448;
+    --serif: "Source Serif 4", Georgia, serif;
+    --sans: "Archivo", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { color-scheme: dark; }
+  body {
+    margin: 0;
+    background: var(--night);
+    color: var(--cream);
+    font-family: var(--serif);
+    font-size: 1.0625rem;
+    line-height: 1.65;
+    padding: 0 16px;
+  }
+  a { color: inherit; }
+  h1, h2 { margin: 0; font-weight: 600; letter-spacing: -0.025em; line-height: 1.05; }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  /* Wordmark — advisorreach-site/public/index.html:48 + company.css .wordmark */
+  .site-header, .site-footer { display: flex; align-items: center; gap: 1rem; padding: 1.25rem 0; }
+  .site-header { border-bottom: 1px solid var(--rule-dark); }
+  .site-footer { border-top: 1px solid var(--rule-dark); margin-top: 3rem; flex-wrap: wrap; justify-content: space-between; }
+  .wordmark { display: inline-flex; align-items: center; gap: 0.55rem; color: var(--cream); font-size: 1.32rem; font-weight: 650; line-height: 1; text-decoration: none; }
+  .wordmark-name { color: var(--brand-mark-cream); }
+  .folio-index-mark { width: 1.65rem; height: 1.65rem; flex: none; overflow: visible; }
+  .folio-index-spine { fill: none; stroke: var(--brand-mark-cream); stroke-width: 6; stroke-linecap: square; }
+  .folio-index-index { fill: none; stroke: var(--brand-mark-gold); stroke-width: 8; stroke-linecap: square; }
+  .eyebrow { font: 600 0.76rem/1 var(--sans); letter-spacing: 0.065em; text-transform: uppercase; color: var(--gold); }
+  .hero { padding: 2.5rem 0 1.5rem; }
+  .hero h1 { font-size: clamp(2rem, 5vw, 3rem); margin-top: 0.5rem; }
+  .hero p { color: var(--cream-dim); max-width: 60ch; }
+  .grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 1.5rem; align-items: start; }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--night-soft); border: 1px solid var(--rule-dark); border-radius: 6px; padding: 1.5rem; }
+  .field { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 1.1rem; }
+  .field label { font: 600 0.76rem/1 var(--sans); letter-spacing: 0.065em; text-transform: uppercase; color: var(--cream-dim); }
+  .field input {
+    width: 100%; font: 500 1.15rem/1.2 var(--sans); color: var(--paper-bright); background: var(--night);
+    border: 1px solid var(--rule-dark); border-radius: 4px; padding: 0.6rem 0.75rem;
+  }
+  .field input:focus { outline: 2px solid var(--gold); outline-offset: 1px; border-color: var(--gold); }
+  .hint { font-size: 0.85rem; color: var(--cream-dim); margin: 0; }
+  .headline-label { font: 600 0.76rem/1 var(--sans); letter-spacing: 0.065em; text-transform: uppercase; color: var(--cream-dim); }
+  .headline { font-size: clamp(2.2rem, 6vw, 3.4rem); font-weight: 600; color: var(--gold); letter-spacing: -0.03em; line-height: 1.05; margin: 0.35rem 0 1rem; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }
+  .split .k { font: 600 0.72rem/1 var(--sans); letter-spacing: 0.065em; text-transform: uppercase; color: var(--cream-dim); }
+  .split .v { font-size: 1.35rem; font-weight: 600; }
+  .bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--rule-dark); margin-bottom: 1.25rem; }
+  .bar .contributed { background: var(--cream-dim); }
+  .bar .growth { background: var(--gold); }
+  .legend { display: flex; gap: 1.25rem; font: 500 0.8rem/1 var(--sans); color: var(--cream-dim); margin-bottom: 1rem; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 0.4rem; vertical-align: -1px; }
+  .error { color: #e0a08a; font-family: var(--sans); font-weight: 500; margin: 0 0 1rem; }
+  svg.chart { width: 100%; height: auto; display: block; }
+  .chart text { font: 500 11px var(--sans); fill: var(--cream-dim); }
+  .chart .grid-line { stroke: var(--rule-dark); stroke-width: 1; }
+  .chart .balance { fill: none; stroke: var(--gold); stroke-width: 2.5; stroke-linejoin: round; }
+  .chart .contrib { fill: none; stroke: var(--cream-dim); stroke-width: 1.5; stroke-dasharray: 4 4; }
+  .nudge { margin-top: 1.5rem; padding: 1rem 1.25rem; background: var(--gold-soft); border-left: 3px solid var(--gold); border-radius: 0 4px 4px 0; }
+  .nudge p { margin: 0; }
+  .disclaimer { color: var(--cream-dim); font-size: 0.85rem; margin: 1rem 0 0; }
+  .footer-note { color: var(--cream-dim); font-size: 0.9rem; margin: 0.35rem 0 0; }
+  .footer-links a { font: 600 0.76rem/1 var(--sans); letter-spacing: 0.065em; text-transform: uppercase; text-decoration: none; color: var(--cream-dim); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="site-header">
+    <a class="wordmark" href="https://advisorreach.ai/" aria-label="AdvisorReach home"><svg class="folio-index-mark" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><path class="folio-index-spine" d="M18 14V50"/><path class="folio-index-index" d="M29 31H50"/></svg><span class="wordmark-name">AdvisorReach</span></a>
+  </header>
+
+  <section class="hero">
+    <div class="eyebrow">Retirement calculator</div>
+    <h1>How much will you have when you retire?</h1>
+    <p>Five numbers, one honest projection. Change any input and the estimate updates as you type.</p>
+  </section>
+
+  <div class="grid">
+    <form class="card" id="calc-form" autocomplete="off">
+      <div class="field">
+        <label for="age">Current age</label>
+        <input id="age" name="age" type="number" inputmode="numeric" min="0" max="120" step="1" value="30">
+      </div>
+      <div class="field">
+        <label for="retireAge">Retirement age</label>
+        <input id="retireAge" name="retireAge" type="number" inputmode="numeric" min="0" max="120" step="1" value="65">
+      </div>
+      <div class="field">
+        <label for="savings">Current retirement savings ($)</label>
+        <input id="savings" name="savings" type="number" inputmode="decimal" min="0" step="100" value="25000">
+      </div>
+      <div class="field">
+        <label for="monthly">Monthly contribution ($)</label>
+        <input id="monthly" name="monthly" type="number" inputmode="decimal" min="0" step="25" value="500">
+      </div>
+      <div class="field">
+        <label for="rate">Expected annual return (%)</label>
+        <input id="rate" name="rate" type="number" inputmode="decimal" min="0" max="30" step="0.5" value="10">
+        <p class="hint">Dave Ramsey assumes 10–12% from growth-stock mutual funds. Use a lower number to be conservative.</p>
+      </div>
+    </form>
+
+    <section class="card" aria-live="polite">
+      <div class="headline-label">Projected nest egg at <span id="out-retire-age">65</span></div>
+      <div class="headline" id="out-total">$0</div>
+      <p class="error" id="out-error" hidden></p>
+      <div class="split">
+        <div><div class="k">You contributed</div><div class="v" id="out-contributed">$0</div></div>
+        <div><div class="k">Growth</div><div class="v" id="out-growth">$0</div></div>
+      </div>
+      <div class="bar" aria-hidden="true"><div class="contributed" id="bar-contributed" style="width:100%"></div><div class="growth" id="bar-growth" style="width:0%"></div></div>
+      <div class="legend"><span><i style="background:var(--cream-dim)"></i>Contributed</span><span><i style="background:var(--gold)"></i>Balance</span></div>
+      <svg class="chart" id="chart" viewBox="0 0 640 280" role="img" aria-label="Projected balance by age"></svg>
+    </section>
+  </div>
+
+  <div class="nudge">
+    <p><strong>Dave Ramsey's guideline:</strong> once you're debt-free with an emergency fund, invest 15% of your household income for retirement.</p>
+  </div>
+  <p class="disclaimer">Estimates only, before taxes and inflation. Not financial advice.</p>
+
+  <footer class="site-footer">
+    <div>
+      <a class="wordmark" href="https://advisorreach.ai/"><svg class="folio-index-mark" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><path class="folio-index-spine" d="M18 14V50"/><path class="folio-index-index" d="M29 31H50"/></svg><span class="wordmark-name">AdvisorReach</span></a>
+      <p class="footer-note">Real estate marketing for busy agents and small teams.</p>
+    </div>
+    <div class="footer-links"><a href="mailto:hello@advisorreach.ai">Email</a></div>
+  </footer>
+</div>
+
+<script>
+// @calc-begin — pure projection model; tests/retirement-calculator.test.mjs extracts this block verbatim.
+function project(input) {
+  var age = Math.max(0, Number(input.age) || 0);
+  var retireAge = Math.max(0, Number(input.retireAge) || 0);
+  var savings = Math.max(0, Number(input.savings) || 0);
+  var monthly = Math.max(0, Number(input.monthly) || 0);
+  var rate = Math.min(30, Math.max(0, Number(input.rate) || 0)) / 100;
+  if (retireAge <= age) {
+    return { ok: false, error: "Retirement age must be after your current age." };
+  }
+  var months = (retireAge - age) * 12;
+  var balance = savings;
+  var contributed = savings;
+  var series = [{ age: age, balance: balance, contributed: contributed }];
+  for (var m = 1; m <= months; m++) {
+    balance = balance * (1 + rate / 12) + monthly;
+    contributed += monthly;
+    if (m % 12 === 0) {
+      series.push({ age: age + m / 12, balance: balance, contributed: contributed });
+    }
+  }
+  return {
+    ok: true,
+    total: balance,
+    contributed: contributed,
+    growth: balance - contributed,
+    series: series
+  };
+}
+// @calc-end
+</script>
+<script>
+(function () {
+  var form = document.getElementById("calc-form");
+  var fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+  var $ = function (id) { return document.getElementById(id); };
+
+  function read() {
+    return {
+      age: $("age").value, retireAge: $("retireAge").value, savings: $("savings").value,
+      monthly: $("monthly").value, rate: $("rate").value
+    };
+  }
+
+  function drawChart(series) {
+    var svg = $("chart");
+    var W = 640, H = 280, L = 64, R = 12, T = 12, B = 32;
+    var maxY = Math.max.apply(null, series.map(function (p) { return p.balance; })) || 1;
+    var minX = series[0].age, maxX = series[series.length - 1].age;
+    var sx = function (a) { return L + ((a - minX) / Math.max(1, maxX - minX)) * (W - L - R); };
+    var sy = function (v) { return T + (1 - v / maxY) * (H - T - B); };
+    var out = [];
+    for (var i = 0; i <= 4; i++) {
+      var v = (maxY * i) / 4, y = sy(v);
+      out.push('<line class="grid-line" x1="' + L + '" x2="' + (W - R) + '" y1="' + y + '" y2="' + y + '"/>');
+      out.push('<text x="' + (L - 8) + '" y="' + (y + 4) + '" text-anchor="end">' + fmt.format(v) + '</text>');
+    }
+    var step = (maxX - minX) > 30 ? 10 : 5;
+    for (var a = Math.ceil(minX / step) * step; a <= maxX; a += step) {
+      out.push('<text x="' + sx(a) + '" y="' + (H - 10) + '" text-anchor="middle">' + a + '</text>');
+    }
+    var path = function (key) {
+      return series.map(function (p, i) { return (i ? "L" : "M") + sx(p.age).toFixed(1) + " " + sy(p[key]).toFixed(1); }).join(" ");
+    };
+    out.push('<path class="contrib" d="' + path("contributed") + '"/>');
+    out.push('<path class="balance" d="' + path("balance") + '"/>');
+    svg.innerHTML = out.join("");
+  }
+
+  function render() {
+    var r = project(read());
+    $("out-retire-age").textContent = $("retireAge").value;
+    if (!r.ok) {
+      $("out-error").textContent = r.error;
+      $("out-error").hidden = false;
+      $("out-total").textContent = "—";
+      $("out-contributed").textContent = "—";
+      $("out-growth").textContent = "—";
+      $("bar-contributed").style.width = "100%";
+      $("bar-growth").style.width = "0%";
+      $("chart").innerHTML = "";
+      return;
+    }
+    $("out-error").hidden = true;
+    $("out-total").textContent = fmt.format(r.total);
+    $("out-contributed").textContent = fmt.format(r.contributed);
+    $("out-growth").textContent = fmt.format(r.growth);
+    var pct = r.total > 0 ? Math.round((r.contributed / r.total) * 100) : 100;
+    $("bar-contributed").style.width = pct + "%";
+    $("bar-growth").style.width = (100 - pct) + "%";
+    drawChart(r.series);
+  }
+
+  form.addEventListener("input", render);
+  form.addEventListener("submit", function (e) { e.preventDefault(); });
+  render();
+})();
+</script>
+</body>
+</html>
