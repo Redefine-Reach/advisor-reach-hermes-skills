@@ -68,3 +68,13 @@ been read in the conversation. All four calls carry `Authorization: Bearer
 host runtime injects:
 - `ADVISORREACH_API_URL` — base URL of the AdvisorReach API.
 - `ADVISORREACH_API_KEY` — bearer key scoped to this customer.
+
+### retirement-calculator
+Gives the customer a simple retirement calculator web page — five inputs (ages, savings,
+monthly contribution, expected return), a live projected nest egg and a growth chart —
+from a locked AdvisorReach-branded template in `assets/`, delivered as a link via
+`present-file` under the fixed name `Retirement-Calculator.html` (or on the customer's
+own domain via `publish-site`). The agent then suggests concrete tweaks (defaults, an
+employer-match field, their own CTA, colors, their domain); change requests are edits to
+the agent's working copy, re-delivered under the same name so the link never changes.
+The template's math has a hermetic test: `node --test tests/`.
