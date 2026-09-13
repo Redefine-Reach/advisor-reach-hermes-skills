@@ -9,6 +9,24 @@ npx skills add Redefine-Reach/advisor-reach-hermes-skills
 ```
 Or add as a Claude Code plugin marketplace: `/plugin marketplace add Redefine-Reach/advisor-reach-hermes-skills`.
 
+## Merging here does not deploy
+
+This repo has no deploy workflow — only `.github/workflows/lint.yml`. AdvisorReach boxes bake these
+skills into the box image at **build time** at a pinned commit
+(`google-cloud-gke-customer-boxes/docker/sms-box/Dockerfile`, `ARG SKILLS_REF`), so a skill merged
+to `production` here reaches **zero** running boxes until that pin advances and the fleet rolls.
+
+To ship a change to the fleet:
+
+1. Merge and push to `production` here.
+2. In `google-cloud-gke-customer-boxes`, set `ARG SKILLS_REF` to this repo's new `production` HEAD
+   (`git -C ../advisor-reach-hermes-skills rev-parse production`) and push `production`.
+3. That triggers `deploy-sms-box.yml`, which builds a new `box-fleet` image and rolls **every box in
+   the fleet**.
+
+Consumers outside the fleet (`npx skills add …`, the Claude Code plugin marketplace) track this
+repo directly and do see a merge immediately. The pin applies only to the boxes.
+
 ## Skills
 ### connect-app
 Connects any outside app Composio supports (Gmail, Calendar, Notion, Slack, HubSpot, Canva, GitHub, …)
