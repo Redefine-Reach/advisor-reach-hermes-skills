@@ -17,10 +17,17 @@ This box's Circle community members are listed in the file named by
 A JSON array of `{"handle": ..., "email": ..., "name": ...}`. Read it to find
 the email for a person someone names.
 
-**If `CIRCLE_MEMBERS_FILE` is not set, this box has no Circle members declared.**
-Say so — do not guess an email address, and do not go looking for the file
-anyway. The variable is rendered only when members exist, so its absence is the
-answer, not a missing configuration.
+**Before saying this box has no Circle members, actually look.** Run
+`echo "${CIRCLE_MEMBERS_FILE:-<unset>}"` and `cat "$CIRCLE_MEMBERS_FILE"` and
+report what they printed. Do NOT assert "CIRCLE_MEMBERS_FILE is not configured"
+from memory or assumption — on 2026-09-14 two different boxes claimed exactly
+that while the variable was set and the file was present with the right member
+in it, and the same agent printed both correctly when asked to run the commands.
+A claim about configuration is a measurement, not a guess.
+
+If the variable really is unset, this box has no Circle members declared. Say
+so — do not guess an email address. The variable is rendered only when members
+exist, so its absence is the answer, not a missing configuration.
 
 ## Getting a token
 
@@ -75,12 +82,35 @@ member's own record:
 **The endpoint noun is `community_member`, singular.** `community_members`,
 `members`, and `members/me` are not endpoints — they do not exist on this API.
 
-**Rule: a non-JSON body from `app.circle.so` means the path is wrong, not that
-an edge or WAF is blocking you.** A bad path returns Circle's SPA HTML with a
-`404` status — it looks like a block if you don't check `content-type` first,
-but it isn't one. Check `content-type` before parsing the response. Never
-report a WAF/Cloudflare fault without first retrying the exact path documented
-above.
+### ALWAYS send a User-Agent header
+
+`app.circle.so` sits behind Cloudflare, which **bans Python's default
+`Python-urllib/…` signature** and answers `403` with error code `1010`
+("browser signature banned"). Any explicit User-Agent gets through. Measured on
+a live box, 2026-09-14, same token and same URL:
+
+| Request headers | Result |
+|---|---|
+| `Authorization` only (urllib default UA) | **403 / 1010** |
+| `Authorization` + `Origin` + `Referer` (still urllib default UA) | **403 / 1010** |
+| `Authorization` + any explicit `User-Agent` | **200** |
+| `curl` (sends its own UA) | **200** |
+
+So: `curl` works as-is. If you use Python, set the header explicitly —
+`{"User-Agent": "advisorreach-box/1.0"}` is enough. Origin and Referer make no
+difference; do not waste a retry on them.
+
+**A `403` with code `1010` is a REAL Cloudflare block and means your User-Agent
+was missing — it is not a permissions problem, not an expired token, and not an
+unaccepted invitation.** Add the header and retry before concluding anything
+about the member's account.
+
+**Rule: a non-JSON body from `app.circle.so` means the path is wrong.** A bad
+path returns Circle's SPA HTML with a `404` status — that one is not a block.
+Check `content-type` before parsing. Distinguish the two:
+
+- HTML body + `404` → wrong path. Re-read the endpoints above.
+- JSON/text + `403` + `1010` → missing User-Agent. Add it and retry.
 
 **Do not fall back to the Circle admin API.** The admin API is a different
 credential with different scope. Falling back to it when a member-scoped read
@@ -101,5 +131,6 @@ paper over it with admin access.
 | Status | Meaning | What to do |
 |---|---|---|
 | `404` | The email is not one of this box's members | Re-read `$CIRCLE_MEMBERS_FILE`; do not retry with a guessed address |
+| `403` + code `1010` | Cloudflare banned the default `Python-urllib` User-Agent | Set an explicit `User-Agent` and retry — this is NOT a permissions or account problem |
 | `502` | Circle rejected our credential | Report it — this is our configuration, not something you can fix |
 | `504` | Circle was slow | Retry once; minting has no side effects, so a retry is safe |
