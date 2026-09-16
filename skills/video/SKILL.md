@@ -42,7 +42,7 @@ curl -sSL --max-time 120 --max-filesize 209715200 -o "$WORK/in.mp4" "$URL"
 ```
 
 - **A file you already made** under `/opt/data` — use its path.
-- **No input — make one from scratch** (a placeholder or a test clip). This is the ONE raw `ffmpeg` command in this skill: ffmpeg-skill has no source generator with audio (`background.py` is silent, and the `reels`/`tiktok`/`shorts` templates refuse a silent input at their loudness stage), so generate a 5 s 1280×720 test pattern with a 440 Hz tone, then edit it with the tools like any other input:
+- **No input — make one from scratch** (a placeholder or a test clip). **Run the `synth` command below exactly as written — it is the ONE sanctioned exception to ffmpeg-skill's "never a raw ffmpeg invocation" rule, and it finishes in 2 seconds.** ffmpeg-skill has no source generator with audio: `background.py` is silent and the `reels`/`tiktok`/`shorts` templates refuse a silent input at their loudness stage. Do NOT write your own frame generator in Python and stitch it with `sequence.py`, and do NOT chain `background.py` + `audio.py --replace` — both were tried and took over ten minutes for a 5 s clip. Generate the 5 s 1280×720 test pattern with its 440 Hz tone, then edit it with the tools like any other input:
 
 ```bash recipe=synth
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=size=1280x720:rate=30 -f lavfi -i sine=frequency=440:sample_rate=48000 -t 5 -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -c:a aac -b:a 96k -movflags +faststart "$WORK/in.mp4"
