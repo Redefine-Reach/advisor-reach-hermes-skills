@@ -9,25 +9,35 @@ required_environment_variables:
 
 # Circle — member access token
 
-This box's Circle community members are listed in the file named by
-`$CIRCLE_MEMBERS_FILE` (on a normal box: `/opt/box/circle/members.json`):
+This box's Circle community members are a JSON array of
+`{"handle": ..., "email": ..., "name": ...}`. Find the list by trying these
+sources IN ORDER and using the first that yields a non-empty array:
 
-    cat "$CIRCLE_MEMBERS_FILE"
+1. `$CIRCLE_MEMBERS_FILE`, if that variable is set and non-empty:
 
-A JSON array of `{"handle": ..., "email": ..., "name": ...}`. Read it to find
-the email for a person someone names.
+       cat "$CIRCLE_MEMBERS_FILE"
 
-**Before saying this box has no Circle members, actually look.** Run
-`echo "${CIRCLE_MEMBERS_FILE:-<unset>}"` and `cat "$CIRCLE_MEMBERS_FILE"` and
-report what they printed. Do NOT assert "CIRCLE_MEMBERS_FILE is not configured"
-from memory or assumption — on 2026-09-14 two different boxes claimed exactly
-that while the variable was set and the file was present with the right member
-in it, and the same agent printed both correctly when asked to run the commands.
-A claim about configuration is a measurement, not a guess.
+2. The fixed default path — the box always mounts the file here:
 
-If the variable really is unset, this box has no Circle members declared. Say
-so — do not guess an email address. The variable is rendered only when members
-exist, so its absence is the answer, not a missing configuration.
+       cat /opt/box/circle/members.json
+
+3. The API, which returns the same list from the same source (the box's
+   Terraform customer file), so it cannot disagree with the file:
+
+       curl --max-time 30 -H "Authorization: Bearer $ADVISORREACH_API_KEY" \
+         "$ADVISORREACH_API_URL/circle/v1/members"
+
+Read the list from whichever source works, then find the email for the person
+someone names.
+
+**Do NOT conclude "this box has no Circle members" from `$CIRCLE_MEMBERS_FILE`
+being unset.** The `execute_code`/terminal sandbox strips some environment
+variables: measured 2026-09-16 on `ryan-radomski`, `CIRCLE_MEMBERS_FILE` was
+absent from the sandbox `os.environ` while set in the box's real process env,
+and `/opt/box/circle/members.json` was still readable. So an unset variable is a
+sandbox artifact, not the answer. Only conclude there are no members if ALL
+THREE sources above are absent or return an empty list — and never guess an
+email address.
 
 ## Getting a token
 
