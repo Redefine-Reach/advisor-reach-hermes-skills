@@ -17,6 +17,8 @@ r = subprocess.run(["bash", "-c", CMD], capture_output=True, text=True)
 print(r.returncode, r.stdout[-3000:], r.stderr[-1500:])
 ```
 
+**If `execute_code` is unavailable or comes back `BLOCKED`** (it is disabled in some sessions), use the `terminal` tool instead — with these three rules, because its security scan rejects anything else as a "nested executable body": **one plain command per call**, **literal absolute paths** (write `/opt/data/skills/ffmpeg-skill/scripts/cut.py`, `/opt/data/work/video/in.mp4`, `/opt/data/artifacts/Name.mp4` in full), and **no `VAR=…`, no `$(…)`, no `bash -c`, no `;`/`&&` chains**. Pass `FFMPEG_SKILL_NO_OVERWRITE=1` by re-running with `--overwrite` only when you mean it. Every recipe below works this way once its `$SK`/`$WORK`/`$ART`/`$NAME` are written out.
+
 Start every `CMD` with this preamble (the paths are literal on this box):
 
 ```bash recipe=vars
@@ -30,7 +32,13 @@ export FFMPEG_SKILL_NO_OVERWRITE=1 PYTHONWARNINGS=ignore
 - `WORK` is your scratch (persistent disk). `ART` is `ARTIFACT_DIR` — files written there are served publicly at `ARTIFACT_BASE_URL/<name>` (both values are in your operating context, `SOUL.md`). Write the FINAL file straight into `ART`.
 - `FFMPEG_SKILL_NO_OVERWRITE=1` is the setting ffmpeg-skill recommends for agents (an existing output is refused instead of clobbered; `--overwrite` is the one way to replace). `PYTHONWARNINGS=ignore` silences a harmless `SyntaxWarning` the scripts print on Python 3.13.
 - Prefer `--json-brief` on every writing step and read `status`/`summary` from it; never parse the human summary line.
-- Before a job, check free space: `df -P /opt/data | awk 'NR==2{print $4}'` prints free KB. Below `512000` (500 MB), stop and tell the user the box is out of space.
+- Before a job, check free space with exactly this (it prints the verdict, so you never compare numbers yourself):
+
+```bash recipe=disk
+df -P /opt/data | awk 'NR==2{print ($4>=512000)?"DISK-OK":"DISK-LOW"}'
+```
+
+  `DISK-OK` → go. `DISK-LOW` (under 500 MB free) → stop and tell the user the box is out of space.
 
 ## 1. Get the input
 

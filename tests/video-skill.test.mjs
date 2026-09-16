@@ -23,7 +23,7 @@ function recipe(name) {
   assert.ok(m, `recipe=${name} block must exist`);
   return m[1].trim();
 }
-const RECIPES = ["vars", "download", "synth", "probe", "reels", "trim", "join", "overlay", "caption", "gif", "audio", "thumbnail", "export", "check"];
+const RECIPES = ["vars", "disk", "download", "synth", "probe", "reels", "trim", "join", "overlay", "caption", "gif", "audio", "thumbnail", "export", "check"];
 const TOOL_RECIPES = ["probe", "reels", "trim", "join", "overlay", "caption", "gif", "audio", "thumbnail", "export", "check"];
 const PINNED = "cecf37ca8194a83bacf5a564700112f73656c26d";
 const MANIFEST_SHA = "7a63856a6499b232264095573f875db4af90a36e300912af79fca06649934fc6";
@@ -58,6 +58,7 @@ test("every editing recipe goes through ffmpeg-skill's scripts; synth is the onl
   }
   assert.match(recipe("synth"), /^ffmpeg -hide_banner -loglevel error -y -f lavfi /, "synth is the lavfi generator");
   assert.match(recipe("download"), /^curl -sSL --max-time 120 --max-filesize 209715200 -o "\$WORK\/in\.mp4" "\$URL"$/);
+  assert.equal(recipe("disk"), `df -P /opt/data | awk 'NR==2{print ($4>=512000)?"DISK-OK":"DISK-LOW"}'`, "disk check prints a verdict, not a number");
   const rawLines = skill.split("\n").filter((l) => /^ffmpeg /.test(l));
   assert.equal(rawLines.length, 1, "exactly one raw ffmpeg command line in the whole skill");
 });
@@ -68,6 +69,12 @@ test("writing recipes ask for --json-brief and write into $ART", () => {
     assert.ok(body.includes("--json-brief"), `${r}: --json-brief`);
     assert.ok(body.includes('-o "$ART/$NAME.'), `${r}: -o "$ART/$NAME.<ext>"`);
   }
+});
+
+test("the terminal fallback is spelled out (execute_code is blocked in hermes chat -q)", () => {
+  assert.ok(skill.includes("**If `execute_code` is unavailable or comes back `BLOCKED`**"), "names the fallback");
+  assert.ok(skill.includes("**one plain command per call**"), "one command per call");
+  assert.ok(skill.includes("**no `VAR=…`, no `$(…)`, no `bash -c`, no `;`/`&&` chains**"), "no nesting");
 });
 
 test("no install instructions leak into the box skill", () => {
