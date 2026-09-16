@@ -64,6 +64,19 @@ via the box's Exa search): bio, 24-month production as published, 15 channel sco
 Profile field-by-field, and a 90-day game plan. Locked template (`assets/template.html`) rendered by
 `assets/render.py` (jinja2 + weasyprint) from small per-section JSON files; delivered via `present-file`.
 
+### video
+Makes or edits a video on the box with the `ffmpeg` that ships in the box image (7.1, libx264/AAC/
+MP3/GIF/drawtext) and hands back a link: trim, compress, vertical 9:16 for Reels/TikTok/Shorts, GIF,
+thumbnail, audio extraction, caption/name overlay, join clips, or a clip from scratch. Input is an
+MMS-texted video (the Telnyx plugin saves it under `/tmp/telnyx_mms_*`, ≤ 5 MB), a link (`curl`,
+200 MB cap), or a file already on the box. Runs ffmpeg from `execute_code` via `subprocess` (never
+the file tools on media), writes the final H.264/AAC `+faststart` MP4 straight into `ARTIFACT_DIR`
+and replies with `ARTIFACT_BASE_URL/<Name>.mp4` per `present-file`. Anything beyond its nine
+recipes comes from `references/ffmpeg-usage.md` — a verbatim copy of
+[ychoi-kr/claude-ffmpeg-skill](https://github.com/ychoi-kr/claude-ffmpeg-skill) at `b88cb5c` (MIT,
+`references/LICENSE-ffmpeg-usage`). Hermetic contract test: `node --test tests/*.test.mjs`; the
+box-image and kind tests live in `google-cloud-gke-customer-boxes/tests/test_video_skill_*.sh`.
+
 ### publish-site
 Puts a real website live on a customer's own domain, with a real SSL certificate, via the
 AdvisorReach API. A two-turn skill: turn 1 stages the site, gathers the customer's existing
