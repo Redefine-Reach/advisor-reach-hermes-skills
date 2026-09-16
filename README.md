@@ -65,17 +65,26 @@ Profile field-by-field, and a 90-day game plan. Locked template (`assets/templat
 `assets/render.py` (jinja2 + weasyprint) from small per-section JSON files; delivered via `present-file`.
 
 ### video
-Makes or edits a video on the box with the `ffmpeg` that ships in the box image (7.1, libx264/AAC/
-MP3/GIF/drawtext) and hands back a link: trim, compress, vertical 9:16 for Reels/TikTok/Shorts, GIF,
-thumbnail, audio extraction, caption/name overlay, join clips, or a clip from scratch. Input is an
-MMS-texted video (the Telnyx plugin saves it under `/tmp/telnyx_mms_*`, ≤ 5 MB), a link (`curl`,
-200 MB cap), or a file already on the box. Runs ffmpeg from `execute_code` via `subprocess` (never
-the file tools on media), writes the final H.264/AAC `+faststart` MP4 straight into `ARTIFACT_DIR`
-and replies with `ARTIFACT_BASE_URL/<Name>.mp4` per `present-file`. Anything beyond its nine
-recipes comes from `references/ffmpeg-usage.md` — a verbatim copy of
-[ychoi-kr/claude-ffmpeg-skill](https://github.com/ychoi-kr/claude-ffmpeg-skill) at `b88cb5c` (MIT,
-`references/LICENSE-ffmpeg-usage`). Hermetic contract test: `node --test tests/*.test.mjs`; the
-box-image and kind tests live in `google-cloud-gke-customer-boxes/tests/test_video_skill_*.sh`.
+The box side of video work: where the input is (an MMS-texted video the Telnyx plugin saves under
+`/tmp/telnyx_mms_*`, ≤ 5 MB; a link via `curl` with a 200 MB cap; a file on the box; or a 5 s
+test-pattern clip generated from scratch), how to run the tools on this box (`execute_code` +
+`subprocess`, `python3 /opt/data/skills/ffmpeg-skill/scripts/<name>.py`, `FFMPEG_SKILL_NO_OVERWRITE=1`),
+the calls customers ask for most (Reels 9:16 via `render.py --template reels`, trim, join, text
+overlay, SRT captions, GIF, MP3, thumbnail, YouTube export, `check.py`), and delivery: the final
+file is written straight into `ARTIFACT_DIR` and the reply is `ARTIFACT_BASE_URL/<Name>.mp4` per
+`present-file`. The editing engine is the `ffmpeg-skill` skill below. Hermetic contract test:
+`node --test tests/*.test.mjs`; the box-image and kind tests live in
+`google-cloud-gke-customer-boxes/tests/test_video_skill_*.sh`.
+
+### ffmpeg-skill
+A verbatim copy of [kajisho5/ffmpeg-skill](https://github.com/kajisho5/ffmpeg-skill) v1.17.3 at
+commit `cecf37ca8194a83bacf5a564700112f73656c26d` (MIT, © kajisho5): `SKILL.md`, `scripts/` (42
+local FFmpeg tools with a machine-readable contract — cut, join, fit/reframe, captions, overlays,
+graphics, loudness, HDR→SDR, platform exports, `check.py`, `look.py`, `render.py` project files),
+`templates/`, `references/`, `LICENSE`. Python 3 standard library only, no cloud, no API keys — it
+needs nothing the box image does not already have. Do not edit it here; update by re-copying the
+same five items from a newer commit and bumping the commit recorded in `skills/video/SKILL.md` and
+`tests/video-skill.test.mjs` (which hashes every vendored file).
 
 ### publish-site
 Puts a real website live on a customer's own domain, with a real SSL certificate, via the
