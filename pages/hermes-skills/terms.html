@@ -2,4 +2,6 @@
 <dl>
   <dt><strong>Hermes Skills</strong></dt>
   <dd>The public, portable SKILL.md-format skills a customer's Hermes agent loads to operate AdvisorReach software — this repo, <code>advisor-reach-hermes-skills</code> (browser-use, circle-member-token, computer-use, connect-app, connect-mcp, email-outreach, ffmpeg-skill, gbp-scorecard, listing-presentation, mab-design-iteration, present-file, publish-site, retirement-calculator, video). Grounded in this repo's <code>README.md</code> ("Public, portable skills in the open SKILL.md format — usable by Hermes, Claude Code, Codex, Cursor, and any SKILL.md-compatible agent").</dd>
+  <dt><strong>Circle Member Token</strong></dt>
+  <dd>The one-hour Circle Member API <code>access_token</code> that a box mints for one of its own declared Circle members (<code>POST {ADVISORREACH_API_URL}/circle/v1/auth-token</code> with the member's email) and then presents as <code>Authorization: Bearer</code> to <code>https://app.circle.so/api/headless/v1/...</code> to read, find, and comment as that person. Minted on demand by the <code>circle-member-token</code> skill, never stored. Grounded in <code>skills/circle-member-token/SKILL.md</code> ("Getting a token", "Finding a post", "Commenting on a post").</dd>
 </dl>

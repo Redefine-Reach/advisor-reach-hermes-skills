@@ -1,6 +1,6 @@
 ---
 name: circle-member-token
-description: Get a Circle access token that acts as one of this box's team members, so you can read or post in the Circle community as that person. Use when asked to do something in Circle on behalf of a named teammate.
+description: "Circle community (circle.so): read, search, post, comment as a box member — mint a member token, find a post, comment on it. Use for ANY Circle request; Circle is AdvisorReach's own community, NOT a Composio/connect-app app."
 required_environment_variables:
   - ADVISORREACH_API_URL
   - ADVISORREACH_API_KEY
@@ -8,6 +8,12 @@ required_environment_variables:
 ---
 
 # Circle — member access token
+
+**Circle is AdvisorReach's own community at `https://advisorreach.circle.so`
+(circle.so), and this skill is the ONLY way to reach it.** It is not a Composio
+app: do not open `connect-app`, do not call `COMPOSIO_SEARCH_TOOLS` for it, and
+do not ask the user for a link before you have looked. When someone says
+"Circle", "the community", "Ryan's post", or "comment on the post", start here.
 
 This box's Circle community members are a JSON array of
 `{"handle": ..., "email": ..., "name": ...}`. Find the list by trying these
@@ -127,6 +133,71 @@ credential with different scope. Falling back to it when a member-scoped read
 fails silently defeats the point of a member-scoped token and makes the
 feature untestable — if a member-scoped read fails, report the failure, don't
 paper over it with admin access.
+
+## Finding a post
+
+Every call below is `https://app.circle.so/api/headless/v1/...` with
+`Authorization: Bearer {access_token}` and an explicit `User-Agent`. Endpoint
+paths are from Circle's Member API spec
+(`https://api-headless.circle.so/api/headless_client/v1/swagger.yaml`).
+
+1. **Resolve the author** (a name like "Ryan"):
+
+       curl --max-time 30 -H "Authorization: Bearer {access_token}" \
+         -H "User-Agent: advisorreach-box/1.0" -H "Content-Type: application/json" \
+         -X POST https://app.circle.so/api/headless/v1/search/community_members \
+         -d '{"search_text": "Ryan", "per_page": 10}'
+
+   Read `records[].id` (the `community_member_id`) and `records[].name`.
+
+2. **List that author's posts** and pick the one the user means:
+
+       curl --max-time 30 -H "Authorization: Bearer {access_token}" \
+         -H "User-Agent: advisorreach-box/1.0" \
+         "https://app.circle.so/api/headless/v1/community_members/{community_member_id}/posts?per_page=50"
+
+   Each record has `id`, `name` (the title), `body_plain_text`, `space.slug`,
+   `url`. **Match on meaning, not on the literal words** — a request like
+   "Ryan's post about Total Expert" usually means the post that *asks* about
+   CRMs ("Share your CRMS!"), because Total Expert is the user's answer, not
+   the title. Read `body_plain_text` before deciding.
+
+3. **Fallback — browse by space** when the author is unknown:
+
+       curl --max-time 30 -H "Authorization: Bearer {access_token}" \
+         -H "User-Agent: advisorreach-box/1.0" https://app.circle.so/api/headless/v1/spaces
+
+   then, per space (`slug` or `id`):
+
+       curl --max-time 30 -H "Authorization: Bearer {access_token}" \
+         -H "User-Agent: advisorreach-box/1.0" \
+         "https://app.circle.so/api/headless/v1/spaces/{space_slug}/posts?per_page=50"
+
+4. **Search is title-only and is a helper, not the primary path.**
+   `GET /api/headless/v1/search?search_text={words}` matches post titles;
+   measured 2026-09-17: `total expert` → 0 results while the intended post was
+   "Share your CRMS!"; `CRMS` → 1. Use it to confirm, never to conclude "no
+   such post".
+
+If nothing matches, reply with the titles you found (step 2) and ask which one.
+Never invent a post, and never ask for a link before you have listed the posts.
+
+## Commenting on a post
+
+1. Draft the comment and show it to the user with the post title and URL.
+   **Post only after they say yes** — a comment is visible to the whole
+   community and is written as the member, not as you.
+2. Create it:
+
+       curl --max-time 30 -H "Authorization: Bearer {access_token}" \
+         -H "User-Agent: advisorreach-box/1.0" -H "Content-Type: application/json" \
+         -X POST "https://app.circle.so/api/headless/v1/posts/{post_id}/comments" \
+         -d '{"comment": {"body": "We use Total Expert."}}'
+
+   A `200` returns the `comment` (`id`, `post_id`, `body_text`, …). Reply with
+   the post `url` so the user can see it. To answer an existing comment instead
+   of the post, `POST /api/headless/v1/comments/{comment_id}/replies` with the
+   same body shape.
 
 ## What this does NOT do
 

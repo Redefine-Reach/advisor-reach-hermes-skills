@@ -5,6 +5,8 @@ description: Connect any outside app Composio supports (Gmail, Google Calendar, 
 
 # Connect an outside app (Composio)
 
+**Not for Circle.** Circle (circle.so) is AdvisorReach's own community, not a Composio app — use the `circle-member-token` skill for anything in Circle.
+
 This box has a `composio` MCP server. It gives you four tools:
 
 - `COMPOSIO_MANAGE_CONNECTIONS` — check whether an app is connected, or start connecting it.
