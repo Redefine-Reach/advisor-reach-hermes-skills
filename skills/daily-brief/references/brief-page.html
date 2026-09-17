@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<style>
+  :root { --ink:#141414; --paper:#f7f5f2; --gold:#b8892b; --muted:#6b6560; --line:#e4dfd7; }
+  html,body { margin:0; background:var(--paper); color:var(--ink); font:16px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width:640px; margin:0 auto; padding:20px 16px 40px; }
+  header { border-bottom:2px solid var(--gold); padding-bottom:12px; margin-bottom:20px; }
+  header h1 { font-size:22px; margin:0 0 4px; }
+  header p { margin:0; color:var(--muted); font-size:14px; }
+  section { margin:0 0 22px; }
+  section h2 { font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(--gold); margin:0 0 8px; }
+  ul { margin:0; padding-left:18px; }
+  li { margin:0 0 8px; }
+  li b { font-weight:600; }
+  .next { display:block; color:var(--muted); font-size:14px; }
+  .empty { color:var(--muted); font-style:italic; }
+  footer { border-top:1px solid var(--line); margin-top:28px; padding-top:10px; color:var(--muted); font-size:12px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>{{title}}</h1>
+    <p>{{local_date_long}} · {{timezone_label}}</p>
+  </header>
+
+  <section>
+    <h2>Top priorities</h2>
+    <ul>
+      <li><b>{{priority_1}}</b><span class="next">Next: {{priority_1_next}}</span></li>
+      <li><b>{{priority_2}}</b><span class="next">Next: {{priority_2_next}}</span></li>
+      <li><b>{{priority_3}}</b><span class="next">Next: {{priority_3_next}}</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Today's calendar</h2>
+    <ul>{{calendar_items_or_empty_li}}</ul>
+  </section>
+
+  <section>
+    <h2>Replies owed</h2>
+    <ul>{{replies_items_or_empty_li}}</ul>
+  </section>
+
+  <section>
+    <h2>Pipeline &amp; deadlines</h2>
+    <ul>{{pipeline_items_or_empty_li}}</ul>
+  </section>
+
+  <section>
+    <h2>Market</h2>
+    <p>{{market_line_or_not_connected}}</p>
+  </section>
+
+  <footer>AdvisorReach · Arin · Sources not connected are marked. Reply CONNECT to link an app.</footer>
+</main>
+</body>
+</html>
