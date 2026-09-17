@@ -64,6 +64,17 @@ via the box's Exa search): bio, 24-month production as published, 15 channel sco
 Profile field-by-field, and a 90-day game plan. Locked template (`assets/template.html`) rendered by
 `assets/render.py` (jinja2 + weasyprint) from small per-section JSON files; delivered via `present-file`.
 
+### circle-member-token
+Everything in AdvisorReach's own Circle community (`https://advisorreach.circle.so`) as one of the
+box's declared members: finds the member in `/opt/box/circle/members.json` (fallbacks: the fixed
+path, then `GET $ADVISORREACH_API_URL/circle/v1/members`), mints a one-hour Member Token via
+`POST $ADVISORREACH_API_URL/circle/v1/auth-token`, then uses Circle's Member API directly
+(`https://app.circle.so/api/headless/v1/...`, always with a `User-Agent`) to resolve an author,
+list their posts, browse spaces, and comment on a post after the user's explicit yes. Its
+description's first 57 characters are the routing contract (Hermes truncates the system-prompt
+skill index there) and are pinned by `tests/circle-member-token.test.mjs`. Circle is NOT a
+Composio app — `connect-app` hands it off here.
+
 ### video
 The box side of video work: where the input is (an MMS-texted video the Telnyx plugin saves under
 `/tmp/telnyx_mms_*`, ≤ 5 MB; a link via `curl` with a 200 MB cap; a file on the box; or a 5 s
