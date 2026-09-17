@@ -75,6 +75,28 @@ description's first 57 characters are the routing contract (Hermes truncates the
 skill index there) and are pinned by `tests/circle-member-token.test.mjs`. Circle is NOT a
 Composio app — `connect-app` hands it off here.
 
+### schedule-text
+Reminders and scheduled texts that actually arrive, at the right hour. Every box's scheduler runs
+in UTC with no configured timezone, and a job created from a CLI session (or with `deliver: local`)
+runs on schedule and texts nobody; this skill makes the agent ask the user's timezone once (clock
+times only — "in 20 minutes" is passed as `in 20m`), convert the requested time to a UTC cron
+expression (`references/timezones.md`, with the DST windows), create the job with
+`failure_deliver: local` and the fire-time `skills`, leave `deliver` unset so the conversation is
+captured as the Delivery Target, then verify with `list` that it is `origin`/`telnyx_sms:` — never
+`local`. Edits, pause/resume/stop and "send it now" (`action: run`) live here too. A brief is a
+scheduled text whose content `daily-brief` defines. Routing prefix pinned by
+`tests/schedule-text.test.mjs`.
+
+### daily-brief
+The morning brief / daily update: what a Brief Job's prompt says (first line `User timezone: <IANA>`,
+the DELIVERY FORMAT paragraph) and what the fire-time run does — gather honestly from what is
+connected (`references/gathering.md`, distilled from an advisor's real runs), build the branded
+mobile page (`references/brief-page.html`, AdvisorReach palette, no scripts), publish it through
+`present-file`, and text under 550 plain characters ending `Full brief: <link>`. Scheduling the
+job is `schedule-text`'s work — this skill defers to it the way `video` defers delivery to
+`present-file`. Contract: `tests/daily-brief.test.mjs`; the image and cold-start kind tests live
+in `google-cloud-gke-customer-boxes/tests/test_daily_brief_{box,kind}.sh`.
+
 ### video
 The box side of video work: where the input is (an MMS-texted video the Telnyx plugin saves under
 `/tmp/telnyx_mms_*`, ≤ 5 MB; a link via `curl` with a 200 MB cap; a file on the box; or a 5 s
