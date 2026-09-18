@@ -1,10 +1,3 @@
-// Hermetic contract test for the `schedule-text` skill (no network, no docker).
-// Guards the failure modes seen on the fleet on 2026-09-17 (box mackenzie-rasmus, job
-// 710335da64d6): a job born with deliver=local (texted nobody) and a schedule written in the
-// customer's local time on a UTC box (fired at 02:30 Central). Hermes puts only the first 57
-// characters of a skill description into the system-prompt index (agent/skill_utils.py
-// SKILL_PROMPT_DESC_LIMIT = 60), so the routing words must sit inside that window.
-// Run: node --test tests/*.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -16,66 +9,49 @@ const dir = join(here, "..", "skills", "schedule-text");
 const skill = readFileSync(join(dir, "SKILL.md"), "utf8");
 const zones = readFileSync(join(dir, "references", "timezones.md"), "utf8");
 
-const SKILL_PROMPT_DESC_LIMIT = 60; // hermes agent/skill_utils.py — desc[:57] + "..."
-
-function frontmatter(text) {
-  const m = text.match(/^---\n([\s\S]*?)\n---\n/);
-  assert.ok(m, "frontmatter present");
-  return m[1];
-}
-function description(fm) {
-  const m = fm.match(/^description: "(.*)"$/m);
-  assert.ok(m, 'description is a double-quoted single line');
-  return m[1];
-}
-
-test("index prefix (first 57 chars) names reminders and scheduled texts", () => {
-  const desc = description(frontmatter(skill));
-  const shown = desc.slice(0, SKILL_PROMPT_DESC_LIMIT - 3);
-  assert.equal(shown, "Reminders and scheduled texts: later, daily, weekly. Use ");
+test("discovery is limited to explicit scheduler operations", () => {
+  assert.match(skill, /^name: schedule-text$/m);
+  assert.match(skill, /explicit create, update, run, pause, or remove request/);
+  assert.match(skill, /ordinary brief, draft, or current update does not create a job/);
 });
 
-test("description carries the plain-English triggers, the change/stop cases, and the brief hand-off", () => {
-  const desc = description(frontmatter(skill));
-  for (const t of ["remind me in 20 minutes", "every weekday at 7:30", "stop the reminders", "daily-brief skill"]) {
-    assert.ok(desc.includes(t), `description mentions '${t}'`);
-  }
+test("delays remain scheduler-native while clock times use verified scheduler timezone", () => {
+  assert.match(skill, /`in 20m`, `in 2h`/);
+  assert.match(skill, /timezone from trusted preferences or known context; otherwise ask once/);
+  assert.match(skill, /Inspect the actual configured scheduler timezone/);
+  assert.match(skill, /verified IANA local walltime/);
+  assert.doesNotMatch(skill, /convert to a UTC cron expression/);
+  assert.doesNotMatch(zones, /America\/Chicago/);
 });
 
-test("delivery rule: never local, verify with list, origin captured when deliver is omitted", () => {
-  assert.match(skill, /Do NOT include `deliver` in a text conversation/);
-  assert.match(skill, /Its `deliver` must be\n\s+`origin` or start with `telnyx_sms:`/);
-  assert.match(skill, /^- Never create a job that is left with `deliver: local`/m);
-  assert.match(skill, /`failure_deliver`: `local`/);
+test("timezone mismatch is a migration assessment, not a global mutation", () => {
+  assert.match(skill, /do not change it globally/);
+  assert.match(skill, /Assess affected jobs/);
+  assert.match(skill, /coherent migration authority/);
 });
 
-test("timezone rule: UTC box, ask once, convert to a UTC cron expression, delays untouched", () => {
-  assert.match(skill, /The box's clock is UTC/);
-  assert.match(skill, /which time zone are you in\?/);
-  assert.match(skill, /`30 12 \* \* 1-5`/);
-  assert.match(skill, /`30 13 \* \* 1-5`/);
-  assert.match(skill, /^- Never write a clock-time schedule without converting/m);
-  assert.match(skill, /Never hand-compute an absolute timestamp/);
-  assert.match(skill, /pass the tool's own form \(`in 20m`, `in 2h`\)/);
+test("brief jobs omit schedule-text and fire only a final response", () => {
+  assert.match(skill, /`daily-brief` plus `day-open-rollcall` or `day-close-debrief`, never `schedule-text`/);
+  assert.match(skill, /returns only its final response/);
 });
 
-test("fire-time: the job loads this skill; reminders stay short and plain; briefs go to daily-brief", () => {
-  assert.match(skill, /`\["schedule-text"\]` for a plain reminder/);
-  assert.match(skill, /`\["schedule-text", "daily-brief"\]` for a brief/);
-  assert.match(skill, /under 300 characters for a reminder/);
-  assert.match(skill, /^- A brief is a scheduled text whose content the `daily-brief` skill defines — load both\./m);
+test("creation and verification require persisted delivery recipient and local schedule", () => {
+  assert.match(skill, /List before create, update, run, pause, resume, or remove/);
+  assert.match(skill, /update it instead of creating a duplicate/);
+  assert.match(skill, /verified gateway context/);
+  assert.match(skill, /explicit verified authorized SMS target/);
+  assert.match(skill, /Never leave a user SMS job with `deliver: local`/);
+  assert.match(skill, /platform and recipient/);
+  assert.match(skill, /next run and selected days/);
+  assert.match(skill, /`deliver: origin` alone is not proof/);
+  assert.match(skill, /CLI session without an origin cannot claim SMS success/);
+  assert.match(skill, /`failure_deliver: local`/);
 });
 
-test("edits: list first; send-now is action run", () => {
-  assert.match(skill, /Always `list` first, match by name, then `update`/);
-  assert.match(skill, /"Send me one now" = `action: run` on the existing job/);
-});
-
-test("timezone table covers the seven US zones with both offsets and the DST windows", () => {
-  for (const z of ["America/New_York", "America/Chicago", "America/Denver", "America/Phoenix", "America/Los_Angeles", "America/Anchorage", "Pacific/Honolulu"]) {
-    assert.match(zones, new RegExp("^\\| " + z.replace("/", "\\/") + " \\|", "m"), z);
-  }
-  assert.match(zones, /\| America\/Chicago \|[^|]*\| 6 \| 5 \|/);
-  assert.match(zones, /2026-03-08 → 2026-11-01, 2027-03-14 → 2027-11-07/);
-  assert.match(zones, /`30 12 \* \* 1-5`/);
+test("reminder runs stay final-only and send-now does not create a missing Brief Job", () => {
+  assert.match(skill, /requested reminder as plain text under 300 characters/);
+  assert.match(skill, /Do not make an extra send or job-management request while firing/);
+  assert.match(skill, /Use `update`, `pause`, resume, or remove/);
+  assert.match(skill, /run an existing matching authorized Brief Job after listing it/);
+  assert.match(skill, /If none exists, compose the current requested brief; do not create or assume a job/);
 });

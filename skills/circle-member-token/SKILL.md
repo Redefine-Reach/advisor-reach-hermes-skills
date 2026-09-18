@@ -137,14 +137,16 @@ paper over it with admin access.
 ## Finding a post
 
 **You read Circle by acting AS one of this box's members.** The members list is
-ONLY the people this box may act as (mint a token for) — it is NOT a limit on what
-you can READ. A member access token reads the ENTIRE community: every space and
-every post, by ANY author, including people who are not in this box's members
-list. So to find "Ryan's post" you do NOT need Ryan to be a member of this box —
+ONLY the people this box may act as (mint a token for) — it is NOT an author
+allowlist. A member access token can read content accessible to that member,
+including posts by authors who are not in this box's members list. It does not
+establish access to every private space or every post. To find "Ryan's post"
+you do NOT need Ryan to be a member of this box —
 you mint a token AS your own member (e.g. the box's member from `members.json`)
 and read Ryan's posts with it. **Never reply that you can't access someone's
-posts because they aren't a member of this box — that is wrong; your own member
-token sees everyone.** And do it now, in this turn: mint the token and search —
+posts solely because they aren't a member of this box.** Use the returned
+member-scoped results and report any actual access limitation. For an authorized
+read, do it now, in this turn: mint the token and search —
 do not answer that you "will find it first".
 
 Every call below is `https://app.circle.so/api/headless/v1/...` with

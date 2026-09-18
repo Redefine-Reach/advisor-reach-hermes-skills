@@ -25,8 +25,9 @@ see their password, a code, or a token, and neither does this box.
 
 1. Identify the app's Composio toolkit slug — the lowercase app name (`gmail`,
    `googlecalendar`, `googledrive`, `notion`, `slack`, `hubspot`, `linkedin`, `canva`,
-   `github`, `outlook`, `googlesheets`, and hundreds more). Every Composio app is available
-   on this box. If unsure of the slug, call `COMPOSIO_SEARCH_TOOLS` with the app's name and
+   `github`, `outlook`, `googlesheets`, and hundreds more). Use the Composio tool
+   results to establish availability. If unsure of the slug, call
+   `COMPOSIO_SEARCH_TOOLS` with the app's name and
    use the toolkit it returns; if `COMPOSIO_MANAGE_CONNECTIONS` says the slug is unknown,
    tell the user the app is not available (or offer `connect-mcp` if they have an MCP URL).
 2. Call `COMPOSIO_MANAGE_CONNECTIONS` with `{"toolkits": ["<slug>"]}` **once**.
@@ -62,7 +63,9 @@ see their password, a code, or a token, and neither does this box.
 - Never reveal the link to anyone but the user who asked.
 - Anything that sends, posts, deletes, or changes data in the user's account
   (send an email, post to Slack, create a calendar event, update a HubSpot record)
-  needs the user's explicit "yes" first, with a one-line summary of exactly what will
-  be sent or changed. Reading is fine without asking.
+  requires explicit authorization for that exact action and scope. Reuse valid,
+  current authorization for the named action. Confirm only when authorization is
+  missing or the scope has materially changed, summarizing exactly what will be
+  sent or changed. Reading relevant information is fine without asking.
 - If `COMPOSIO_MANAGE_CONNECTIONS` says a toolkit slug is unknown, do not guess another
   spelling — tell the user the app is not available.
