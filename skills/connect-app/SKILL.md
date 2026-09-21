@@ -29,29 +29,43 @@ see their password, a code, or a token, and neither does this box.
    on this box. If unsure of the slug, call `COMPOSIO_SEARCH_TOOLS` with the app's name and
    use the toolkit it returns; if `COMPOSIO_MANAGE_CONNECTIONS` says the slug is unknown,
    tell the user the app is not available (or offer `connect-mcp` if they have an MCP URL).
-2. Call `COMPOSIO_MANAGE_CONNECTIONS` with `{"toolkits": ["<slug>"]}` **once**.
-   - If the result for that toolkit says the connection is already **active**, tell the
-     user it is connected and go to "Using the app".
-   - Otherwise it returns a `redirect_url` like `https://connect.composio.dev/link/lk_…`
-     with status `initiated`.
-3. Text the user that one link, in one message, e.g.
-   "Tap this to sign in to Gmail — it works once and expires in 10 minutes:
+2. See what is already connected: `COMPOSIO_MANAGE_CONNECTIONS` with
+   `{"toolkits": [{"name": "<slug>", "action": "list"}]}`. It returns each connected account's
+   id, alias and status, and has no side effects.
+   - One ACTIVE account and the user wants to use the app → go to "Using the app".
+   - The user wants to add ANOTHER account of the same app (a second Gmail, a personal
+     calendar) → ask what to call it if they did not say ("work"? "personal"?), then step 3
+     with that alias. If the existing account has no alias yet, first name it:
+     `{"toolkits": [{"name": "<slug>", "action": "rename", "account_id": "<id from list>", "alias": "work"}]}`.
+   - Nothing connected → step 3 (an alias is optional for the first account; use one if the
+     user gave a name).
+3. Start the connection **once**: `COMPOSIO_MANAGE_CONNECTIONS` with
+   `{"toolkits": [{"name": "<slug>", "action": "add", "alias": "<alias or omit>"}]}`.
+   It returns a `redirect_url` like `https://connect.composio.dev/link/lk_…` with status
+   `initiated`. (Boxes can hold up to 3 accounts per app; a 4th `add` is refused — offer to
+   `remove` one first, with the user's explicit yes.)
+4. Text the user that one link, in one message, e.g.
+   "Tap this to sign in to Gmail as your personal account — it works once and expires in 10 minutes:
    https://connect.composio.dev/link/lk_…"
    Tell them to sign in with the account they want connected and to reply here when done.
-4. Wait for them to say they finished. **Do not call `COMPOSIO_MANAGE_CONNECTIONS`
-   again to "check"** — each call mints a NEW link and invalidates nothing; the user
-   would end up with a pile of links. Check by using the app (step 5).
-5. When they say it is done, do the task they asked for (see "Using the app"). If the
-   tool call fails because the app is not connected, the sign-in did not complete:
-   call `COMPOSIO_MANAGE_CONNECTIONS` once more for a fresh link and repeat step 3.
-   If it fails twice, say so plainly and stop — do not keep sending links.
+5. Wait for them to say they finished. Then confirm with ONE `action: "list"` call that the new
+   account is ACTIVE (this is the only "check" — never repeat `add` to check; each `add` mints a
+   new link). If it is not active, `add` once more for a fresh link and repeat step 4. If it
+   fails twice, say so plainly and stop — do not keep sending links.
 
 ## Using the app
 
 1. `COMPOSIO_SEARCH_TOOLS` with a plain description of the task and the toolkit.
 2. `COMPOSIO_GET_TOOL_SCHEMAS` for the tool(s) you will call, if the search result did
    not already include arguments.
-3. `COMPOSIO_MULTI_EXECUTE_TOOL` with properly formed `arguments`.
+3. `COMPOSIO_MULTI_EXECUTE_TOOL` with properly formed `arguments` — and, when the app has
+   more than one connected account, `"account": "<alias or id>"` on each tool:
+   - the user named one ("my personal gmail", "the work calendar") → use that alias;
+   - they did not, and the request only makes sense for one → ask once, briefly ("Work or
+     personal Gmail?"), then pass it;
+   - they did not and either would do (e.g. "do I have any unread mail") → run the tool once
+     per account and label the results.
+   With a single connected account, omit `account`.
 4. Reply to the user in plain text — they are reading a text message. Summarize; do not
    paste raw JSON.
 
@@ -63,6 +77,12 @@ see their password, a code, or a token, and neither does this box.
 - Anything that sends, posts, deletes, or changes data in the user's account
   (send an email, post to Slack, create a calendar event, update a HubSpot record)
   needs the user's explicit "yes" first, with a one-line summary of exactly what will
-  be sent or changed. Reading is fine without asking.
+  be sent or changed **and which account it goes from** when there are several. Reading
+  is fine without asking.
+- `action: "remove"` deletes a connected account — only with the user's explicit yes, and
+  never to "fix" a failed sign-in.
 - If `COMPOSIO_MANAGE_CONNECTIONS` says a toolkit slug is unknown, do not guess another
   spelling — tell the user the app is not available.
+- If the tool call is rejected because `toolkits` must be a list of strings, this box has not
+  been restarted since multi-account was switched on: use `{"toolkits": ["<slug>"]}` for
+  this session and tell the user a second account will be possible after the next update.

@@ -33,7 +33,10 @@ Connects any outside app Composio supports (Gmail, Calendar, Notion, Slack, HubS
 through the box's `composio` MCP tools: one `COMPOSIO_MANAGE_CONNECTIONS` call yields a
 single-use, 10-minute hosted sign-in link the agent texts the user; the agent then finds and runs
 the app's tools via `COMPOSIO_SEARCH_TOOLS` / `COMPOSIO_MULTI_EXECUTE_TOOL`. No browser add-on.
-Falls back to `connect-mcp` for apps Composio does not cover.
+Falls back to `connect-mcp` for apps Composio does not cover. Since 2026-09-21 a box holds up to
+three accounts per app (a work and a personal Gmail): the skill lists before adding, names a second
+account with an alias (`action: add|rename|list|remove`), and passes `account` on
+`COMPOSIO_MULTI_EXECUTE_TOOL` when several exist. Contract: `tests/connect-app.test.mjs`.
 
 ### browser-use
 Teaches the agent it has a **local** headless-Chromium browser (`browser_navigate`, `browser_snapshot`,
