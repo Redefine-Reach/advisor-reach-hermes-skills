@@ -1,65 +1,32 @@
 ---
 name: daily-brief
-description: "Morning brief, daily update: a scheduled text + page. Use when the user asks for a morning brief, a daily or weekly update/summary/rundown, 'what's on today' every day, or to change what their brief contains. Scheduling itself (timezone, UTC conversion, delivery check, edits, pause/stop) is the schedule-text skill — this skill defines what a Brief Job's prompt says and, when the job fires, how the brief is gathered and delivered: a branded mobile HTML page via present-file plus a plain text under 550 characters ending with the link. Loaded by every Brief Job when it fires."
+description: "Morning brief or daily update: coordinate the requested content and authorized delivery. Use for a current, on-demand, or scheduled brief; use schedule-text only when the user explicitly asks to create, change, run, pause, or remove a job."
 ---
 
-# Daily brief — a short text plus a page, built honestly from what is connected
+# Daily Brief
 
-A brief is a scheduled text. **Creating, changing, pausing or stopping the schedule is the
-`schedule-text` skill's job** — open it and follow its sections A–D (timezone, UTC cron, create,
-verify the Delivery Target). This skill tells you what the job's prompt must say (section 1) and
-what to do when the job fires (section 2). The same division as `present-file`: the `video` and
-`gbp-scorecard` skills make the file; `present-file` delivers it.
+Coordinate one useful current or scheduled brief. The customer's existing customized workflow and authorized output preference remain authoritative. Load the matching day skill for composition: `day-open-rollcall` for a start-of-day brief and `day-close-debrief` for a wrap-up. Reuse its source rules, preference handling, source limits, and evidence labels; this skill does not duplicate gathering or invent a market or community section.
 
-## 1. Creating a Brief Job (with `schedule-text`)
+## Compose and deliver
 
-When `schedule-text` section C asks for the `prompt` and `skills`:
+1. Determine whether the request is on-demand, an existing authorized scheduled brief, or an explicit job-management request. Only the last routes to `schedule-text`.
+2. For `send one now`, list existing jobs and run the matching authorized Brief Job. Do not create or assume a job. If none exists, compose the currently requested brief without scheduling it.
+3. Use the selected day skill's concise advisor-facing content. Its bounded Composio, exact calendar window, one member-scoped Circle read, native history/Mem0 separation, and document-coverage rules govern evidence. Keep the useful source-neutral checks in [gathering](references/gathering.md): priority, current local dates, pipeline parsing, and last-touch honesty.
+4. Deliver the requested, authorized format. Default SMS is plain text below 550 characters with the priority and a useful next step. For an unresolved customer request, retain the concrete answer, relevant returned resource, or a short grounded reply draft that advances it. Drop lower-priority recaps before dropping that action; a list of unresolved statuses alone is not a useful brief. Preserve at most one optional `Try in ARIN:` line when the day skill allows it.
+   For SMS, compose directly for a target of 350-450 characters, with 549 as the hard maximum. Lead with the imminent consequential action and the most useful client next step. If a returned Circle resource materially advances that next step, name its topic and how to use it in that same sentence; listing Circle in a source-coverage note does not use the resource. Prefer that concrete help over a generic offer to help.
+   Compress a follow-up draft to one short clause when needed. The day skill's longer draft and section list are working material, not a requirement to include them all in SMS. Drop routine meeting recaps, full reply drafts, exhaustive coverage notes, and the optional education tip before removing the useful action or relevant resource. Mention a source gap only when it changes the recommendation.
+   In quoted drafts, remove first-person future promises such as "I'll" or "I will" unless the supplied source records that advisor commitment. A customer question is not evidence of a promise; give the factual explanation or a useful proposed next step without pledging future work.
+   Before returning, check priority, grounding, useful resource inclusion, and length in this same turn. Use an available local character counter if needed; otherwise stay comfortably within the 350-450-character target. Never send an over-limit draft or solve length by cutting a sentence mid-thought. Do not add another reviewer or a separate public page to perform this check.
+5. Make a page only when the requested format and valid public-sharing authority both permit it. Use the branded [page template](references/brief-page.html), HTML-escape every inserted source value, add no scripts or external assets, and publish through `present-file` under an opaque unique `.html` filename. Do not publish, force a connection, use a predictable filename, or overwrite an existing page when that authority is absent.
 
-- `skills`: `["schedule-text", "daily-brief"]`
-- `prompt`: the template below, filled in (`<…>` parts); keep everything else word for word:
+A scheduled agent produces only its final response. It does not request scheduler or send tools while firing. A draft or composed brief is not an external send, page, record, or schedule.
 
-```
-User timezone: <IANA zone>. Local send time: <h:mm AM/PM> <every weekday|every day|every Monday…>.
-You are sending <the user's first name, or "the user">'s <morning|daily|weekly> brief. Load and follow the daily-brief skill's section "2. When the job fires" exactly.
-Include, in this order and only what is actually connected: today's calendar (conflicts first), replies owed, pipeline deadlines, one market line. If nothing is connected, say so plainly and how to connect (reply CONNECT). Never invent an item.
-DELIVERY FORMAT (mandatory): write the full brief as a mobile-friendly HTML page named Morning-Brief-<YYYY-MM-DD>.html built from the daily-brief skill's references/brief-page.html and publish it with the present-file skill; then your FINAL RESPONSE is under 550 characters of plain text — the top 2–3 items with next actions, then the line "Full brief: <link>". Nothing else. No markdown, no bullets, no headings.
-```
+## Explicit Brief Job requests
 
-Then finish `schedule-text` section D (verify with `list`; confirm in local time: "Morning brief
-set: weekdays at 7:30 AM Central. Reply 'send one now' to see it.").
+When the user explicitly asks to create, update, pause, remove, or run a Brief Job, load `schedule-text`. Its job must load `daily-brief` plus the appropriate day skill (`day-open-rollcall` or `day-close-debrief`), never `schedule-text`; that is workflow routing, while runtime cron policy controls tool permissions. The self-contained job prompt names the IANA timezone, intended local time/days, chosen day skill, existing authorized output preference, and this rule: compose from the day skill and return only the final response.
 
-"Send me one now" = `cronjob_manage` `action: run` on the existing Brief Job (list first). Do not
-write a second brief by hand in the conversation.
+Do not create, edit, pause, or remove a job from an ordinary brief request. Do not claim a scheduled delivery succeeded without the persisted platform, recipient, next local run, and days verified by `schedule-text`.
 
-## 2. When the job fires (a Brief Job loads this skill; this section is for that run)
+## Failure handling
 
-You are in a fresh session with no chat context. The prompt tells you the timezone and what to
-include. Do this, in order:
-
-1. Gather only from what is connected on this box — calendar and email through the apps the
-   user connected (`connect-app`), the Circle community through `circle-member-token`, memory
-   if enabled — following `references/gathering.md` (priority order, per-source rules, honest
-   failure wording). A source that is not connected gets one honest line ("Calendar: not
-   connected"). Do not invent an appointment, a lead, a deadline, or a number.
-2. Build the page: copy `references/brief-page.html`, replace the `{{…}}` fields, keep the
-   inline CSS, add no `<script>`, no external fonts, no images. Name it
-   `Morning-Brief-<YYYY-MM-DD>.html` (the local date from the prompt's timezone).
-3. Publish it with the `present-file` skill (copy into `ARTIFACT_DIR`, link is
-   `ARTIFACT_BASE_URL/<name>`).
-4. Your FINAL RESPONSE — the text that is sent by SMS — is under 550 characters of plain text:
-   the top 2–3 items each with a next action, then the last line `Full brief: <link>`. No markdown
-   (`**`, `#`, `-` bullets), no greeting, no sign-off. Nothing connected? Then:
-   `Morning brief: nothing is connected yet, so there is nothing to report. Reply CONNECT and I will link your calendar and email. Full brief: <link>`
-
-## 3. Changing what the brief contains
-
-"Add the weather", "drop the market line": `schedule-text` section F — `list`, then `update` the
-job's `prompt` (keep the `User timezone:` first line and the DELIVERY FORMAT paragraph intact).
-Time/day changes are `schedule-text` too.
-
-## Hard rules
-
-- Never text more than 550 characters from a Brief Job; the page carries the rest.
-- Never invent brief content; unconnected sources are reported as unconnected.
-- Never create or edit the schedule here — that is `schedule-text` (it verifies delivery is not `local`).
-- The prompt's first line is always `User timezone: <IANA zone>.` and the DELIVERY FORMAT paragraph is never dropped.
+Finish from available evidence when a source is absent or partial. State the specific gap; do not manufacture urgency, completion, owners, deadlines, delivery, or public authority. `failure_deliver: local` keeps raw failures out of SMS.
