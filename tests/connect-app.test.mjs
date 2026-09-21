@@ -45,3 +45,10 @@ test("removing an account needs an explicit yes; writes name the source account"
   assert.match(skill, /^- `action: "remove"` deletes a connected account — only with the user's explicit yes/m);
   assert.match(skill, /and which account it goes from/);
 });
+
+test("an un-restarted box falls back to string toolkits for the session and says when a second account becomes possible", () => {
+  const rule = skill.split("\n").filter((l) => l.includes("must be a list of strings")).length;
+  assert.equal(rule, 1, "exactly one fallback rule for the pre-restart tool shape");
+  assert.match(skill, /use `\{"toolkits": \["<slug>"\]\}` for\n\s+this session/);
+  assert.match(skill, /a second account will be possible after the next update/);
+});
