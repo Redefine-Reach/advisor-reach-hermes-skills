@@ -7,6 +7,7 @@
 <h2>Skills with a documented contract</h2>
 <ul>
   <li><code>circle-member-token</code> — the Circle Member Token flow; routing prefix pinned by <code>tests/circle-member-token.test.mjs</code>.</li>
+  <li><code>connect-app</code> — connecting outside apps through Composio; since 2026-09-21 multi-account (list → add with alias → confirm with list; <code>account</code> per tool call). Contract: <code>tests/connect-app.test.mjs</code>.</li>
   <li><code>schedule-text</code> — reminders and scheduled texts: the user's timezone converted to a UTC cron expression (the box runs in UTC), the Delivery Target verified after every create (never <code>local</code>), edits/pause/stop, "send it now". Contract: <code>tests/schedule-text.test.mjs</code>.</li>
   <li><code>daily-brief</code> — the morning brief as a Brief Job: the prompt template and the fire-time format (honest gathering, branded HTML page via <code>present-file</code>, a plain text under 550 characters ending <code>Full brief: &lt;link&gt;</code>); scheduling defers to <code>schedule-text</code>. Contract: <code>tests/daily-brief.test.mjs</code>; image + cold-start kind proofs: <code>google-cloud-gke-customer-boxes/tests/test_daily_brief_box.sh</code>, <code>test_daily_brief_kind.sh</code>.</li>
 </ul>
