@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-"""Owner-confirmed third-party SMS (RED-390 PR1).
+"""Owner-confirmed third-party SMS (RED-390).
 
 One staged draft plus one explicit confirm becomes one send through the
-existing Hermes Telnyx adapter (``hermes send --to telnyx_sms:<E.164>``),
-which is ``team-telnyx/telnyx-hermes-sms`` @ a7d209f on the box
-(``TelnyxSmsAdapter.send(chat_id=E.164)``, From = ``TELNYX_SMS_FROM_NUMBER``).
+box Telnyx adapter (``team-telnyx/telnyx-hermes-sms`` @ a7d209f). Delivery
+calls that plugin's ``standalone_sender_fn`` after Hermes resolves
+``telnyx_sms``. From is ``TELNYX_SMS_FROM_NUMBER``. This script does not
+talk to Telnyx itself and does not accept a From override.
 
-This script does not talk to Telnyx itself and does not accept a From override.
+A successful send writes a time-boxed session file. An inbound from that
+destination becomes an owner event. It does not start a chat with them.
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
 import os
@@ -26,12 +29,41 @@ from pathlib import Path
 from typing import Mapping
 from urllib.parse import urlparse
 
+# Hermes is on the box interpreter only. A top-level import would make the
+# gate unusable in CI and in any python that is not the gateway venv.
+try:
+    from gateway.config import Platform as _GatewayPlatform
+    from gateway.config import PlatformConfig as _GatewayPlatformConfig
+    from gateway.config import load_gateway_config as _load_gateway_config
+    from gateway.platform_registry import platform_registry as _platform_registry
+    from hermes_cli.plugins import discover_plugins as _discover_plugins
+except ImportError:
+    _GatewayPlatform = None
+    _GatewayPlatformConfig = None
+    _load_gateway_config = None
+    _platform_registry = None
+    _discover_plugins = None
+
 ATTESTATION_VERSION = "red-390-v1"
 SPIKE_BOX_ID = "advisor-reach-internal"
 DEFAULT_MAX_BODY_CHARS = 640
 DEFAULT_DRAFT_TTL_SECONDS = 1800
+DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
 CONFIRM_TOKENS = frozenset({"send", "/approve"})
 ATTEST_YES = frozenset({"yes", "y", "true", "1"})
+STOP_BODIES = frozenset({"stop", "stopall", "unsubscribe", "cancel", "end", "quit"})
+SUGGESTED_NEXT = ("call", "draft reply", "dismiss")
+HYDRATE_KEYS = (
+    "TELNYX_API_KEY",
+    "TELNYX_SMS_API_BASE",
+    "TELNYX_SMS_FROM_NUMBER",
+    "TELNYX_SMS_ALLOWED_USERS",
+    "TELNYX_SMS_ALLOW_ALL_USERS",
+    "TELNYX_MESSAGING_PROFILE_ID",
+    "TELNYX_PUBLIC_KEY",
+    "TELNYX_SMS_REQUIRE_SIGNATURE",
+    "TELEGRAM_ALLOWED_USERS",
+)
 CRON_ENVS = (
     "HERMES_CRON_JOB_ID",
     "HERMES_CRON_JOB_NAME",
@@ -54,9 +86,12 @@ AUDIT_KEYS = (
     "reason",
     "draft_id",
     "provider_called",
+    "session_ttl_expires_at",
 )
 POD_NAME = re.compile(r"^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)-\d+$")
 E164_RE = re.compile(r"^\+[1-9]\d{1,14}$")
+TELEGRAM_ID_RE = re.compile(r"^[0-9]{5,20}$")
+EVENT_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,80}")
 PHONE_CHARS = re.compile(r"^[\d+\s().-]+$")
 MULTI_DEST = re.compile(r"[,;\n|&]|\band\b", re.IGNORECASE)
 LISTISH = re.compile(
@@ -91,6 +126,13 @@ class GateFailure(Exception):
 
 
 def utc_now() -> datetime:
+    if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
+        raw = str(os.environ.get("SMS_NOW", "")).strip()
+        if raw:
+            parsed = datetime.fromisoformat(raw)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed
     return datetime.now(timezone.utc)
 
 
@@ -188,7 +230,15 @@ def paths(environ: Mapping[str, str] | None = None) -> dict[str, Path]:
     audit = Path(env.get("SMS_AUDIT_PATH", "/opt/data/audit/sms-outbound.jsonl"))
     opt_out = Path(env.get("SMS_OPT_OUT_FILE", "/opt/data/audit/sms-opt-out.txt"))
     drafts = Path(env.get("SMS_DRAFT_DIR", "/opt/data/audit/sms-drafts"))
-    return {"audit": audit, "opt_out": opt_out, "drafts": drafts}
+    sessions = Path(env.get("SMS_SESSION_DIR", "/opt/data/sms-sessions"))
+    events = Path(env.get("SMS_EVENT_DIR", "/opt/data/sms-events"))
+    return {
+        "audit": audit,
+        "opt_out": opt_out,
+        "drafts": drafts,
+        "sessions": sessions,
+        "events": events,
+    }
 
 
 def max_body_chars(environ: Mapping[str, str] | None = None) -> int:
@@ -213,31 +263,150 @@ def draft_ttl(environ: Mapping[str, str] | None = None) -> timedelta:
     return timedelta(seconds=max(0, seconds))
 
 
-def allowlist(environ: Mapping[str, str] | None = None) -> set[str]:
+def session_ttl(environ: Mapping[str, str] | None = None) -> timedelta:
     env = os.environ if environ is None else environ
-    if truthy(env.get("TELNYX_SMS_ALLOW_ALL_USERS")):
+    raw = str(env.get("SMS_SESSION_TTL_SECONDS", str(DEFAULT_SESSION_TTL_SECONDS))).strip()
+    try:
+        seconds = int(raw)
+    except ValueError:
+        seconds = DEFAULT_SESSION_TTL_SECONDS
+    return timedelta(seconds=max(0, seconds))
+
+
+def _env_file_values(path: Path) -> dict[str, str]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[len("export ") :].strip()
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        if key:
+            values[key] = value
+    return values
+
+
+def _proc_environ_values(path: Path) -> dict[str, str]:
+    try:
+        blob = path.read_bytes()
+    except OSError:
+        return {}
+    values: dict[str, str] = {}
+    for item in blob.split(b"\0"):
+        if b"=" not in item:
+            continue
+        key_b, value_b = item.split(b"=", 1)
+        try:
+            key = key_b.decode("utf-8")
+            value = value_b.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        if key:
+            values[key] = value
+    return values
+
+
+def hydrate_sms_env() -> list[str]:
+    """Fill missing Telnyx keys from the skill runtime.env file, then pid 1.
+
+    ``execute_code`` strips ``TELNYX_*`` before this process starts. Values
+    already set are left alone, so a session dest is never appended to
+    ``TELNYX_SMS_ALLOWED_USERS``.
+    """
+    if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1" and os.environ.get("SMS_HYDRATE_IN_TEST") != "1":
+        return []
+    runtime_path = Path(
+        os.environ.get("SMS_RUNTIME_ENV_FILE") or (Path(__file__).resolve().parents[1] / "runtime.env")
+    )
+    proc_path = Path(os.environ.get("SMS_PROC_ENVIRON") or "/proc/1/environ")
+    runtime_vals = _env_file_values(runtime_path)
+    proc_vals = _proc_environ_values(proc_path)
+    filled: list[str] = []
+    for key in HYDRATE_KEYS:
+        if str(os.environ.get(key, "")).strip():
+            continue
+        value = runtime_vals.get(key, "").strip() or proc_vals.get(key, "").strip()
+        if not value:
+            continue
+        os.environ[key] = value
+        filled.append(key)
+    return filled
+
+
+def phone_allowlist(environ: Mapping[str, str] | None = None, *, enforce_closed: bool = True) -> set[str]:
+    env = os.environ if environ is None else environ
+    if enforce_closed and truthy(env.get("TELNYX_SMS_ALLOW_ALL_USERS")):
         raise GateFailure(
             "refused_autonomous",
             "TELNYX_SMS_ALLOW_ALL_USERS is set; third-party send stays closed",
         )
     raw = str(env.get("TELNYX_SMS_ALLOWED_USERS", "")).strip()
-    if not raw:
-        raise GateFailure(
-            "refused_not_owner",
-            "owner allowlist is empty; refusing third-party send",
-        )
     owners: set[str] = set()
     for part in raw.split(","):
         if not part.strip():
             continue
-        number = require_phone(part, "approver")
-        owners.add(number)
-    if not owners:
+        owners.add(require_phone(part, "approver"))
+    return owners
+
+
+def telegram_allowlist(environ: Mapping[str, str] | None = None) -> set[str]:
+    env = os.environ if environ is None else environ
+    raw = str(env.get("TELEGRAM_ALLOWED_USERS", "")).strip()
+    ids: set[str] = set()
+    for part in raw.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        if not TELEGRAM_ID_RE.fullmatch(token):
+            raise GateFailure(
+                "error",
+                "TELEGRAM_ALLOWED_USERS has an entry that is not a numeric user id",
+                field="approver",
+                status=EXIT_ERROR,
+            )
+        ids.add(token)
+    return ids
+
+
+def resolve_approver(raw: str, phones: set[str], telegram_ids: set[str]) -> str:
+    text = str(raw or "").strip()
+    if text in telegram_ids:
+        return text
+    kind, number = classify_phone(text)
+    if kind == "ok" and number and number in phones:
+        return number
+    if not phones and not telegram_ids:
         raise GateFailure(
             "refused_not_owner",
             "owner allowlist is empty; refusing third-party send",
+            field="approver",
         )
-    return owners
+    raise GateFailure(
+        "refused_not_owner",
+        "approver is not an allowlisted owner of this box",
+        field="approver",
+    )
+
+
+def same_principal(approver: str, dest: str) -> bool:
+    if approver == dest:
+        return True
+    approver_digits = re.sub(r"\D", "", approver)
+    dest_digits = re.sub(r"\D", "", dest)
+    return bool(approver_digits) and approver_digits == dest_digits
+
+
+def is_stop_body(body: str) -> bool:
+    return str(body or "").strip().lower() in STOP_BODIES
 
 
 def from_number(environ: Mapping[str, str] | None = None) -> str:
@@ -337,6 +506,7 @@ def audit(
     telnyx_message_id: str | None = None,
     provider_status: str | None = None,
     provider_called: bool = False,
+    session_ttl_expires_at: str | None = None,
 ) -> None:
     append_audit(
         store["audit"],
@@ -356,6 +526,7 @@ def audit(
             "reason": reason.replace("\n", " ")[:500],
             "draft_id": draft_id,
             "provider_called": provider_called,
+            "session_ttl_expires_at": session_ttl_expires_at,
         },
     )
 
@@ -471,20 +642,6 @@ def is_attest(token: str) -> bool:
     return str(token or "").strip().lower() in ATTEST_YES
 
 
-def build_hermes_argv(dest: str, body_file: str, environ: Mapping[str, str] | None = None) -> list[str]:
-    env = os.environ if environ is None else environ
-    binary = str(env.get("HERMES_BIN", "hermes")).strip() or "hermes"
-    return [
-        binary,
-        "send",
-        "--to",
-        f"telnyx_sms:{dest}",
-        "--json",
-        "--file",
-        body_file,
-    ]
-
-
 def parse_provider_stdout(stdout: str, stderr: str, code: int) -> dict:
     payload: dict = {}
     raw = stdout.strip()
@@ -518,8 +675,66 @@ def parse_provider_stdout(stdout: str, stderr: str, code: int) -> dict:
     }
 
 
+def normalize_sender_result(result: object) -> dict:
+    if isinstance(result, dict) and result.get("success") and result.get("message_id"):
+        return {
+            "success": True,
+            "message_id": str(result["message_id"]),
+            "provider_status": str(result.get("provider_status") or "accepted"),
+            "error": "",
+        }
+    error = ""
+    message_id = ""
+    if isinstance(result, dict):
+        error = str(result.get("error") or "")
+        message_id = str(result.get("message_id") or "")
+    if not error:
+        error = "provider rejected the send"
+    return {
+        "success": False,
+        "message_id": message_id,
+        "provider_status": "error",
+        "error": error.replace("\n", " ")[:500],
+    }
+
+
+def platform_config_for_send(load_config, platform_type, config_type):
+    """Gateway platform config after plugin resolve, else an enabled empty config."""
+    pconfig = None
+    if load_config is not None and platform_type is not None:
+        try:
+            config = load_config()
+            platform = platform_type("telnyx_sms")
+            platforms = getattr(config, "platforms", {}) or {}
+            if platform is not None:
+                pconfig = platforms.get(platform)
+        except Exception:
+            pconfig = None
+    if pconfig is None and config_type is not None:
+        try:
+            pconfig = config_type(enabled=True)
+        except Exception:
+            pconfig = None
+    return pconfig
+
+
+def resolve_standalone_sender(discover, resolve_all, get_entry, load_config, platform_type, config_type):
+    """Materialize ``telnyx_sms`` and return ``(sender, pconfig, error)``."""
+    hydrate_sms_env()
+    try:
+        discover()
+        resolve_all()
+        entry = get_entry("telnyx_sms")
+    except Exception as exc:
+        return None, None, f"telnyx plugin resolve failed ({exc.__class__.__name__})"
+    sender = getattr(entry, "standalone_sender_fn", None) if entry is not None else None
+    if sender is None:
+        return None, None, "telnyx_sms standalone_sender_fn is not registered"
+    return sender, platform_config_for_send(load_config, platform_type, config_type), ""
+
+
 def deliver(dest: str, body: str) -> dict:
-    """One adapter send. Test mode never falls through to Hermes."""
+    """One adapter send. Test mode never falls through to the plugin."""
     if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
         transport = os.environ.get("SMS_SEND_TRANSPORT", "").strip()
         if not transport:
@@ -539,41 +754,38 @@ def deliver(dest: str, body: str) -> dict:
         )
         return parse_provider_stdout(proc.stdout, proc.stderr, proc.returncode)
 
-    fd = -1
-    body_file = ""
+    if _discover_plugins is None or _platform_registry is None:
+        return {
+            "success": False,
+            "message_id": "",
+            "provider_status": "error",
+            "error": "telnyx plugin loader unavailable",
+        }
+    sender, pconfig, error = resolve_standalone_sender(
+        _discover_plugins,
+        _platform_registry._resolve_all,
+        _platform_registry.get,
+        _load_gateway_config,
+        _GatewayPlatform,
+        _GatewayPlatformConfig,
+    )
+    if error or sender is None or pconfig is None:
+        return {
+            "success": False,
+            "message_id": "",
+            "provider_status": "error",
+            "error": error or "telnyx_sms standalone_sender_fn is not registered",
+        }
     try:
-        fd, body_file = tempfile.mkstemp(prefix="sms-body-", suffix=".txt")
-        os.write(fd, body.encode("utf-8"))
-        os.fsync(fd)
-        os.close(fd)
-        fd = -1
-        proc = subprocess.run(
-            build_hermes_argv(dest, body_file),
-            text=True,
-            capture_output=True,
-            timeout=45,
-            check=False,
-        )
-        return parse_provider_stdout(proc.stdout, proc.stderr, proc.returncode)
-    except FileNotFoundError:
+        result = asyncio.run(sender(pconfig, dest, body))
+    except Exception as exc:
         return {
             "success": False,
             "message_id": "",
             "provider_status": "error",
-            "error": "hermes send is not available",
+            "error": exc.__class__.__name__,
         }
-    except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "message_id": "",
-            "provider_status": "error",
-            "error": "hermes send timed out; this draft will not be retried",
-        }
-    finally:
-        if fd >= 0:
-            os.close(fd)
-        if body_file and os.path.exists(body_file):
-            os.unlink(body_file)
+    return normalize_sender_result(result)
 
 
 def emit(payload: dict, status: int) -> int:
@@ -582,13 +794,27 @@ def emit(payload: dict, status: int) -> int:
 
 
 def context() -> dict:
+    hydrate_sms_env()
     box_id = resolve_box_id()
     assert_spike_box(box_id)
     assert_not_cron()
-    owners = allowlist()
+    phones = phone_allowlist()
+    telegram = telegram_allowlist()
+    if not phones and not telegram:
+        raise GateFailure(
+            "refused_not_owner",
+            "owner allowlist is empty; refusing third-party send",
+        )
     sender = from_number()
     store = paths()
-    return {"box_id": box_id, "owners": owners, "from": sender, "store": store}
+    return {
+        "box_id": box_id,
+        "phones": phones,
+        "telegram": telegram,
+        "owners": phones | telegram,
+        "from": sender,
+        "store": store,
+    }
 
 
 def refuse_context(failure: GateFailure, *, approver: str = "", dest: str = "", body: str = "") -> int:
@@ -618,6 +844,7 @@ def refuse_context(failure: GateFailure, *, approver: str = "", dest: str = "", 
         "outcome": failure.outcome,
         "reason": failure.reason,
         "provider_called": False,
+        "auto_reply": False,
     }
     if failure.field:
         payload["field"] = failure.field
@@ -628,15 +855,9 @@ def refuse_context(failure: GateFailure, *, approver: str = "", dest: str = "", 
 def stage(approver_raw: str, dest_raw: str, body_raw: str) -> int:
     try:
         ctx = context()
-        approver = require_phone(approver_raw, "approver")
-        if approver not in ctx["owners"]:
-            raise GateFailure(
-                "refused_not_owner",
-                "approver is not an allowlisted owner of this box",
-                field="approver",
-            )
+        approver = resolve_approver(approver_raw, ctx["phones"], ctx["telegram"])
         dest = require_phone(dest_raw, "dest")
-        if dest == approver or dest == ctx["from"]:
+        if same_principal(approver, dest) or dest == ctx["from"]:
             raise GateFailure(
                 "refused_not_third_party",
                 "that number is the owner thread or the box number; reply normally",
@@ -825,6 +1046,21 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                     draft["approved_at"] = approved_at
                     draft["body"] = ""
                     write_draft(path, draft)
+                    sent_dt = utc_now()
+                    sent_at = iso(sent_dt)
+                    ttl_expires_at = iso(sent_dt + session_ttl())
+                    session_recorded = write_sent_session(
+                        ctx["store"]["sessions"],
+                        dest=dest,
+                        sent_at=sent_at,
+                        ttl_expires_at=ttl_expires_at,
+                        telnyx_message_id=message_id,
+                        approver=approver,
+                        draft_id=draft_id,
+                        from_number_value=ctx["from"],
+                        body=body,
+                        box_id=ctx["box_id"],
+                    )
                     audit(
                         ctx["store"],
                         box_id=ctx["box_id"],
@@ -839,6 +1075,7 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                         telnyx_message_id=message_id,
                         provider_status=result.get("provider_status") or "accepted",
                         provider_called=True,
+                        session_ttl_expires_at=ttl_expires_at if session_recorded else None,
                     )
                     return emit(
                         {
@@ -851,6 +1088,9 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                             "telnyx_message_id": message_id,
                             "provider_status": result.get("provider_status") or "accepted",
                             "provider_called": True,
+                            "auto_reply": False,
+                            "session_recorded": session_recorded,
+                            "session_ttl_expires_at": ttl_expires_at if session_recorded else None,
                         },
                         EXIT_OK,
                     )
@@ -954,28 +1194,360 @@ def cancel(draft_id: str) -> int:
         return refuse_context(failure)
 
 
+def session_file(directory: Path, dest: str) -> Path:
+    if not E164_RE.fullmatch(dest or ""):
+        raise GateFailure("error", "dest is not one E.164 number", field="dest", status=EXIT_ERROR)
+    return directory / f"{dest}.json"
+
+
+def write_sent_session(
+    directory: Path,
+    *,
+    dest: str,
+    sent_at: str,
+    ttl_expires_at: str,
+    telnyx_message_id: str,
+    approver: str,
+    draft_id: str,
+    from_number_value: str,
+    body: str,
+    box_id: str,
+) -> bool:
+    record = {
+        "dest": dest,
+        "sent_at": sent_at,
+        "ttl_expires_at": ttl_expires_at,
+        "telnyx_message_id": telnyx_message_id,
+        "approver": approver,
+        "draft_id": draft_id,
+        "from": from_number_value,
+        "body_hash": body_hash(body),
+        "box_id": box_id,
+    }
+    try:
+        write_draft(session_file(directory, dest), record)
+    except Exception:
+        return False
+    return True
+
+
+def load_session_state(directory: Path, dest: str, now: datetime) -> tuple[str, dict]:
+    path = session_file(directory, dest)
+    if not path.exists():
+        return "missing", {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "unreadable", {}
+    if not isinstance(data, dict):
+        return "unreadable", {}
+    try:
+        expires = datetime.fromisoformat(str(data.get("ttl_expires_at") or ""))
+    except ValueError:
+        return "unreadable", {}
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if now >= expires:
+        return "expired", data
+    return "active", data
+
+
+def record_opt_out(path: Path, dest: str) -> str:
+    existing = load_opt_outs(path)
+    if dest in existing:
+        return "already_opted_out"
+    path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        os.write(fd, (dest + "\n").encode("utf-8"))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return "opt_out_recorded"
+
+
+def event_id_for(message_id: str) -> str:
+    token = str(message_id or "").strip()
+    if EVENT_ID_RE.fullmatch(token):
+        return token
+    return os.urandom(8).hex()
+
+
+def snippet_of(body: str) -> str:
+    text = " ".join(str(body or "").split())
+    if not text:
+        return "[no text]"
+    if len(text) <= 240:
+        return text
+    return text[:240]
+
+
+def prior_outbound(session: dict) -> dict:
+    return {
+        "draft_id": session.get("draft_id") or "",
+        "telnyx_message_id": session.get("telnyx_message_id") or "",
+        "sent_at": session.get("sent_at") or "",
+    }
+
+
+def public_event(event: dict) -> dict:
+    return {
+        "event_id": event.get("event_id") or "",
+        "status": event.get("status") or "",
+        "kind": event.get("kind") or "",
+        "who": event.get("who") or "",
+        "snippet": event.get("snippet") or "",
+        "prior_outbound": event.get("prior_outbound") or {},
+        "suggested_next": list(event.get("suggested_next") or []),
+        "reason": event.get("reason") or "",
+        "ts": event.get("ts") or "",
+        "auto_reply": False,
+        "provider_called": False,
+    }
+
+
+def write_event(directory: Path, event: dict) -> dict:
+    event_id = str(event.get("event_id") or "")
+    if not EVENT_ID_RE.fullmatch(event_id):
+        raise GateFailure("error", "event id is not valid", field="event_id", status=EXIT_ERROR)
+    path = directory / f"{event_id}.json"
+    if path.exists():
+        try:
+            current = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            current = None
+        if isinstance(current, dict):
+            return current
+    write_draft(path, event)
+    return event
+
+
+def list_open_events(directory: Path) -> list[dict]:
+    if not directory.exists():
+        return []
+    rows: list[dict] = []
+    for path in directory.glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict) and data.get("status") == "open":
+            rows.append(data)
+    rows.sort(key=lambda row: str(row.get("ts") or ""))
+    return rows
+
+
+def _owner_event(sender: str, body: str, message_id: str, session: dict, *, kind: str, reason: str, suggested: tuple[str, ...]) -> dict:
+    return {
+        "event_id": event_id_for(message_id),
+        "status": "open",
+        "kind": kind,
+        "who": sender,
+        "snippet": snippet_of(body),
+        "prior_outbound": prior_outbound(session),
+        "suggested_next": list(suggested),
+        "reason": reason,
+        "ts": iso(utc_now()),
+        "auto_reply": False,
+        "provider_called": False,
+    }
+
+
+def inbound(sender_raw: str, body_raw: str, message_id_raw: str) -> int:
+    """Record one third-party inbound. Does not send and does not open a chat."""
+    try:
+        hydrate_sms_env()
+        box_id = resolve_box_id()
+        assert_spike_box(box_id)
+        store = paths()
+        phones = phone_allowlist(enforce_closed=False)
+        sender = require_phone(sender_raw, "sender")
+        body = str(body_raw or "")
+        common = {"provider_called": False, "auto_reply": False, "who": sender}
+        if sender in phones:
+            return emit(
+                {
+                    "ok": True,
+                    "outcome": "owner_thread",
+                    "reason": "sender is on the static owner allowlist",
+                    **common,
+                },
+                EXIT_OK,
+            )
+        stop = is_stop_body(body) or sender in load_opt_outs(store["opt_out"])
+        if stop:
+            if is_stop_body(body):
+                record_opt_out(store["opt_out"], sender)
+            state, session = load_session_state(store["sessions"], sender, utc_now())
+            if state == "unreadable":
+                session = {}
+            event = write_event(
+                store["events"],
+                _owner_event(
+                    sender,
+                    body,
+                    message_id_raw,
+                    session,
+                    kind="stop",
+                    reason=f"{sender} is on the local opt-out list; not sending",
+                    suggested=("dismiss",),
+                ),
+            )
+            audit(
+                store,
+                box_id=box_id,
+                approver=str(session.get("approver") or ""),
+                dest=sender,
+                from_number_value=str(session.get("from") or ""),
+                body=body,
+                outcome="refused_stop",
+                reason=str(event.get("reason") or ""),
+                draft_id=str(session.get("draft_id") or "") or None,
+                telnyx_message_id=str(session.get("telnyx_message_id") or "") or None,
+                provider_called=False,
+            )
+            return emit(
+                {
+                    "ok": False,
+                    "outcome": "refused_stop",
+                    "reason": event.get("reason"),
+                    "event": public_event(event),
+                    **common,
+                },
+                EXIT_REFUSED,
+            )
+        state, session = load_session_state(store["sessions"], sender, utc_now())
+        if state == "unreadable":
+            raise GateFailure(
+                "error",
+                "sms session is unreadable; not accepting the inbound",
+                status=EXIT_ERROR,
+                extra={"who": sender},
+            )
+        if state == "active":
+            event = write_event(
+                store["events"],
+                _owner_event(
+                    sender,
+                    body,
+                    message_id_raw,
+                    session,
+                    kind="sms_reply",
+                    reason="inbound accepted inside the session TTL",
+                    suggested=SUGGESTED_NEXT,
+                ),
+            )
+            audit(
+                store,
+                box_id=box_id,
+                approver=str(session.get("approver") or ""),
+                dest=sender,
+                from_number_value=str(session.get("from") or ""),
+                body=body,
+                outcome="owner_event",
+                reason="inbound accepted inside the session TTL",
+                draft_id=str(session.get("draft_id") or "") or None,
+                telnyx_message_id=str(session.get("telnyx_message_id") or "") or None,
+                provider_called=False,
+                session_ttl_expires_at=str(session.get("ttl_expires_at") or "") or None,
+            )
+            return emit(
+                {
+                    "ok": True,
+                    "outcome": "owner_event",
+                    "reason": "inbound accepted inside the session TTL",
+                    "event": public_event(event),
+                    **common,
+                },
+                EXIT_OK,
+            )
+        outcome = "rejected_ttl" if state == "expired" else "unmatched"
+        reason = (
+            "session TTL expired; inbound was not accepted"
+            if state == "expired"
+            else "no active session for this sender"
+        )
+        audit(
+            store,
+            box_id=box_id,
+            approver=str(session.get("approver") or ""),
+            dest=sender,
+            from_number_value=str(session.get("from") or ""),
+            body=body,
+            outcome=outcome,
+            reason=reason,
+            draft_id=str(session.get("draft_id") or "") or None,
+            provider_called=False,
+        )
+        return emit({"ok": False, "outcome": outcome, "reason": reason, **common}, EXIT_REFUSED)
+    except GateFailure as failure:
+        sender = ""
+        kind, number = classify_phone(sender_raw)
+        if kind == "ok" and number:
+            sender = number
+        return refuse_context(failure, dest=sender, body=str(body_raw or ""))
+
+
+def list_events() -> int:
+    try:
+        hydrate_sms_env()
+        assert_spike_box(resolve_box_id())
+        rows = [public_event(row) for row in list_open_events(paths()["events"])]
+        return emit(
+            {
+                "ok": True,
+                "outcome": "events",
+                "provider_called": False,
+                "auto_reply": False,
+                "events": rows,
+            },
+            EXIT_OK,
+        )
+    except GateFailure as failure:
+        return refuse_context(failure)
+
+
+def dismiss(approver_raw: str, event_id_raw: str) -> int:
+    try:
+        ctx = context()
+        approver = resolve_approver(approver_raw, ctx["phones"], ctx["telegram"])
+        event_id = str(event_id_raw or "").strip()
+        if not EVENT_ID_RE.fullmatch(event_id):
+            raise GateFailure("error", "event id is not valid", field="event_id", status=EXIT_ERROR)
+        path = ctx["store"]["events"] / f"{event_id}.json"
+        if not path.exists():
+            raise GateFailure("error", "event was not found", field="event_id", status=EXIT_ERROR)
+        data = read_draft(path)
+        if data.get("status") == "open":
+            data["status"] = "dismissed"
+            data["dismissed_by"] = approver
+            write_draft(path, data)
+        return emit(
+            {
+                "ok": True,
+                "outcome": "dismissed",
+                "event_id": event_id,
+                "provider_called": False,
+                "auto_reply": False,
+            },
+            EXIT_OK,
+        )
+    except GateFailure as failure:
+        return refuse_context(failure)
+
+
 def deny(approver_raw: str, dest_raw: str) -> int:
     try:
         ctx = context()
-        approver = require_phone(approver_raw, "approver")
-        if approver not in ctx["owners"]:
-            raise GateFailure(
-                "refused_not_owner",
-                "approver is not an allowlisted owner of this box",
-                field="approver",
-            )
+        approver = resolve_approver(approver_raw, ctx["phones"], ctx["telegram"])
         dest = require_phone(dest_raw, "dest")
-        path = ctx["store"]["opt_out"]
-        existing = load_opt_outs(path)
-        if dest not in existing:
-            path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-            fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
-            try:
-                os.write(fd, (dest + "\n").encode("utf-8"))
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-        outcome = "already_opted_out" if dest in existing else "opt_out_recorded"
+        if same_principal(approver, dest):
+            raise GateFailure(
+                "refused_not_third_party",
+                "that number is the owner thread or the box number; reply normally",
+                field="dest",
+            )
+        outcome = record_opt_out(ctx["store"]["opt_out"], dest)
         audit(
             ctx["store"],
             box_id=ctx["box_id"],
@@ -1031,6 +1603,17 @@ def build_parser() -> argparse.ArgumentParser:
     deny_cmd = sub.add_parser("deny", help="Add one number to the local opt-out list. Does not send.")
     deny_cmd.add_argument("--approver", required=True)
     deny_cmd.add_argument("--dest", required=True)
+
+    inbound_cmd = sub.add_parser("inbound", help="Record one third-party inbound. Does not send.")
+    inbound_cmd.add_argument("--sender", required=True)
+    inbound_cmd.add_argument("--body", default="")
+    inbound_cmd.add_argument("--message-id", default="")
+
+    sub.add_parser("events", help="List open owner events. Does not send.")
+
+    dismiss_cmd = sub.add_parser("dismiss", help="Dismiss one owner event. Does not send.")
+    dismiss_cmd.add_argument("--approver", required=True)
+    dismiss_cmd.add_argument("--event-id", required=True)
     return parser
 
 
@@ -1045,7 +1628,13 @@ def main(argv: list[str] | None = None) -> int:
         return cancel(args.draft_id)
     if args.cmd == "deny":
         return deny(args.approver, args.dest)
-    return emit({"ok": False, "outcome": "error", "reason": "unknown command"}, EXIT_ERROR)
+    if args.cmd == "inbound":
+        return inbound(args.sender, args.body, args.message_id)
+    if args.cmd == "events":
+        return list_events()
+    if args.cmd == "dismiss":
+        return dismiss(args.approver, args.event_id)
+    return emit({"ok": False, "outcome": "error", "reason": "unknown command", "auto_reply": False}, EXIT_ERROR)
 
 
 if __name__ == "__main__":
