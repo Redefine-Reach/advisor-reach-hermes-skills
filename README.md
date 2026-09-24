@@ -78,6 +78,17 @@ description's first 57 characters are the routing contract (Hermes truncates the
 skill index there) and are pinned by `tests/circle-member-token.test.mjs`. Circle is NOT a
 Composio app — `connect-app` hands it off here.
 
+### sms-send-confirmed
+Owner-confirmed third-party SMS, one message at a time, from the box Telnyx
+DID. The agent stages a draft, shows destination + From + the authorization
+line, and only then may the owner reply `SEND` (or `/approve`). The script
+checks a local opt-out file and the owner allowlist, refuses autonomous /
+multi / unconfirmed sends, and calls `hermes send --to telnyx_sms:<E.164>`
+(the pinned `telnyx-hermes-sms` adapter — not a second provider). Audit JSONL
+lands on the box PVC. Spike lock: `advisor-reach-internal` only. Reply
+routing from that destination is a follow-up, not this skill. Contract:
+`tests/sms-send-confirmed.test.mjs`.
+
 ### schedule-text
 Reminders and scheduled texts that actually arrive, at the right hour. Every box's scheduler runs
 in UTC with no configured timezone, and a job created from a CLI session (or with `deliver: local`)
