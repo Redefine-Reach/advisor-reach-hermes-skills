@@ -100,7 +100,7 @@ test("skill routes third-party SMS through confirm, the pinned adapter, and the 
   assert.match(skill, /curl Telnyx/);
   assert.match(skill, /Do not add the destination to `TELNYX_SMS_ALLOWED_USERS`/);
   assert.match(skill, /Prepare-never-send stays the default/);
-  assert.match(skill, /schedule-text/);
+  assert.match(skill, /Do not use `schedule-text` as the\nthird-party path/);
   assert.match(skill, /advisor-reach-internal/);
   assert.match(skill, /Your entire reply to the owner is the JSON `attestation` field, verbatim/);
   assert.match(skill, /exactly `SEND` or `\/approve`/);
@@ -112,7 +112,9 @@ test("skill routes third-party SMS through confirm, the pinned adapter, and the 
   assert.match(skill, /\/opt\/data\/audit\/sms-outbound\.jsonl/);
   assert.match(skill, /\/opt\/data\/audit\/sms-opt-out\.txt/);
   assert.match(skill, /Never tell the owner to reply `Stop` or `STOP`/);
-  assert.match(skill, /Session routing for recent destinations is a follow-up \(A2\)/);
+  assert.match(skill, /Session routing \(A2\) is PR2/);
+  assert.match(skill, /MoO list/);
+  assert.match(skill, /Silence, an earlier yes/);
   assert.match(skill, /640 characters/);
 });
 
@@ -293,6 +295,15 @@ test("multi-dest, overlong body, cron, allow-all, and a foreign box never send",
   const multi = run(["stage", "--approver", OWNER, "--dest", `${DEST},${DEST}`, "--body", BODY]);
   assert.equal(multi.payload.outcome, "refused_multi");
   assert.equal(multi.callLines.length, 0);
+
+  const moo = run(["stage", "--approver", OWNER, "--dest", "MoO list", "--body", BODY]);
+  assert.equal(moo.payload.outcome, "refused_multi");
+  assert.match(moo.payload.reason, /MoO lists/);
+  assert.equal(moo.callLines.length, 0);
+
+  const csv = run(["stage", "--approver", OWNER, "--dest", "nurture.csv", "--body", BODY]);
+  assert.equal(csv.payload.outcome, "refused_multi");
+  assert.equal(csv.callLines.length, 0);
 
   const longBody = "x".repeat(641);
   const long = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", longBody]);

@@ -83,10 +83,10 @@ Owner-confirmed third-party SMS, one message at a time, from the box Telnyx
 DID. The agent stages a draft, shows destination + From + the authorization
 line, and only then may the owner reply `SEND` (or `/approve`). The script
 checks a local opt-out file and the owner allowlist, refuses autonomous /
-multi / unconfirmed sends, and calls `hermes send --to telnyx_sms:<E.164>`
+multi / MoO-list / unconfirmed sends, and calls `hermes send --to telnyx_sms:<E.164>`
 (the pinned `telnyx-hermes-sms` adapter — not a second provider). Audit JSONL
 lands on the box PVC. Spike lock: `advisor-reach-internal` only. Reply
-routing from that destination is a follow-up, not this skill. Contract:
+routing (A2) is PR2, not this skill. Contract:
 `tests/sms-send-confirmed.test.mjs`.
 
 ### schedule-text

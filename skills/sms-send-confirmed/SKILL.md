@@ -25,21 +25,23 @@ Use it when the owner asks you to text, SMS, or message a named person who
 is not this conversation.
 
 Do not use it to answer the owner. A reply in this thread is the normal
-owner↔ARIN SMS path and stays as it is. Do not use it for reminders or
-briefs — those stay on `schedule-text` and `daily-brief`, on the owner's
-own thread. A scheduled job, a standing job, or a cron run must not stage
-or send a third-party text.
+owner↔ARIN SMS path and stays as it is. Do not use `schedule-text` as the
+third-party path. That skill is owner-thread only, and so is `daily-brief`.
+A scheduled job, a standing job, or a cron run must not stage or send a
+third-party text.
 
 Prepare-never-send stays the default everywhere else. This skill is the
-explicit owner-gated exception, and only for one message at a time.
+explicit owner-gated exception, and only for one named recipient at a time.
+No SOUL change is required: if this script is not the thing that sends,
+the message has not been confirmed.
 
 ## Spike box
 
 Third-party send is enabled only when this box is `advisor-reach-internal`.
 The script reads the pod name (or `BOX_PUBLIC_BASE_URL` when there is no
 pod name). If it returns `refused_spike_box`, tell the owner this is not
-enabled on this box and stop. Do not look for another sender. Cos,
-customer boxes, and Marc are out of this slice.
+enabled on this box and stop. Do not look for another sender. Cos is out
+(its DID is not on a messaging profile). Customer boxes and Marc are out.
 
 ## What you run
 
@@ -56,9 +58,10 @@ pass the destination as the approver.
 
 ## Turn 1 — stage, then stop
 
-1. One destination. If they name more than one number, a list, or a batch,
-   refuse and ask for a single number. MoO lists and nurture sequences are
-   out of scope.
+1. One named person. If they ask for more than one number, a batch, a CSV,
+   a book of business, a nurture sequence, or a MoO list, refuse in your
+   reply and stop. Say that lists are not sent this way. Do not pick one
+   row and stage that. Do not call `stage`.
 2. One plain-text body, 640 characters or fewer (the box sends one segment
    at that cap; a longer body would become more than one Telnyx send).
    No Markdown. If you need it shorter, ask before staging.
@@ -68,8 +71,13 @@ pass the destination as the approver.
    authorization line. Do not paraphrase it, do not add a second draft, and
    do not call `send` in this turn.
 
-`/approve` is accepted later as the same confirm token. The attestation
-you show still asks for `SEND`.
+`/approve` is the same confirm token as `SEND`. The attestation you show
+still asks for `SEND`.
+
+Silence, an earlier yes, or "text my clients" is not consent. Consent is
+`SEND` or `/approve` in this conversation, after they have seen this
+destination, this From number, and this body. That is the same rule as
+email outreach: the irreversible step needs its own go-ahead.
 
 ## Turn 2 — SEND or cancel
 
@@ -144,11 +152,11 @@ provider id was stored, not the raw JSON.
 
 ## Replies from the person you texted
 
-Not in this slice. After the send, an inbound text from that destination
-is still subject to `TELNYX_SMS_ALLOWED_USERS`. Do not promise that their
+Not in this PR. After the send, an inbound text from that destination is
+still subject to `TELNYX_SMS_ALLOWED_USERS`. Do not promise that their
 reply will show up in this thread, and do not widen the allowlist to make
-it so. Session routing for recent destinations is a follow-up (A2), not
-this skill.
+it so. Session routing (A2) is PR2: it needs an adapter change, not another
+skill.
 
 ## Stop
 

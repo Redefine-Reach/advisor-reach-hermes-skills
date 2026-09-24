@@ -59,6 +59,11 @@ POD_NAME = re.compile(r"^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)-\d+$")
 E164_RE = re.compile(r"^\+[1-9]\d{1,14}$")
 PHONE_CHARS = re.compile(r"^[\d+\s().-]+$")
 MULTI_DEST = re.compile(r"[,;\n|&]|\band\b", re.IGNORECASE)
+LISTISH = re.compile(
+    r"(moo|mutual\s+of\s+omaha|nurture|book of business|\.csv\b|\.xlsx\b|"
+    r"lead list|contact list|\beveryone\b)",
+    re.IGNORECASE,
+)
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -115,7 +120,7 @@ def classify_phone(raw: str) -> tuple[str, str | None]:
     text = str(raw or "").strip()
     if not text:
         return "invalid", None
-    if MULTI_DEST.search(text) or len(re.findall(r"\+\d{8,}", text)) > 1:
+    if LISTISH.search(text) or MULTI_DEST.search(text) or len(re.findall(r"\+\d{8,}", text)) > 1:
         return "multi", None
     if not PHONE_CHARS.fullmatch(text):
         return "invalid", None
@@ -139,7 +144,7 @@ def require_phone(raw: str, field: str) -> str:
     if kind == "multi":
         raise GateFailure(
             "refused_multi",
-            "one message, one destination; lists and batches are refused",
+            "MoO lists, nurture, and any multi-recipient send are refused. Name one person.",
             field=field,
         )
     if kind != "ok" or not number:
