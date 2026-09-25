@@ -95,6 +95,20 @@ widened. The webhook hook under `method-a/` is still not a fleet image;
 that Method A deploy depends on this gate. Contract:
 `tests/sms-send-confirmed.test.mjs`.
 
+### ghl
+GoHighLevel (GHL / LeadConnector) through AdvisorReach's own GHL Marketplace App — not Composio,
+not an MCP server. One script, `skills/ghl/scripts/ghl.py` (Python 3 standard library only), run
+as `python3 /opt/data/skills/ghl/scripts/ghl.py <command>`: `connect` gets a sign-in link from
+`POST $ADVISORREACH_API_URL/crm/v1/connect` for the agent to text; after the user approves in
+their browser, `claim` takes the token once from `POST /crm/v1/claim` and saves it at
+`/opt/data/ghl/token.json` (mode 0600, atomic write); `status` says whether a token exists, for
+which location, and until when; `api <METHOD> <path> [--data <json>]` calls
+`https://services.leadconnectorhq.com` with the token and `Version: 2021-07-28`, substituting
+`{locationId}`, refreshing through `POST /crm/v1/refresh` when under five minutes remain and once
+after a `401`; `disconnect` deletes the token. The token is never printed. Its description's
+first 57 characters are the routing contract; `tests/ghl.test.mjs` pins them and runs the real
+script against a local fake of both the API and GHL.
+
 ### schedule-text
 Reminders and scheduled texts that actually arrive, at the right hour. Every box's scheduler runs
 in UTC with no configured timezone, and a job created from a CLI session (or with `deliver: local`)
