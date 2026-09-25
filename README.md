@@ -83,11 +83,13 @@ Owner-confirmed third-party SMS, one message at a time, from the box Telnyx
 DID. The agent stages a draft, shows destination + From + the authorization
 line, and only then may the owner reply `SEND` (or `/approve`). The script
 checks a local opt-out file and the owner allowlist, refuses autonomous /
-multi / MoO-list / unconfirmed sends, and calls `hermes send --to telnyx_sms:<E.164>`
-(the pinned `telnyx-hermes-sms` adapter — not a second provider). Audit JSONL
-lands on the box PVC. Spike lock: `advisor-reach-internal` only. Reply
-routing (A2) is PR2, not this skill. Contract:
-`tests/sms-send-confirmed.test.mjs`.
+multi / MoO-list / unconfirmed sends, and calls the pinned
+`telnyx-hermes-sms` adapter's `standalone_sender_fn` (not `hermes send`,
+not a second provider). A sent message writes a 7-day session file.
+Replies from that number become owner events (`sms-inbound-owner-event`);
+they do not open a chat, and a reply still needs a new `SEND`. Spike lock:
+`advisor-reach-internal` only. The webhook hook is Method A on that pod,
+not a fleet image. Contract: `tests/sms-send-confirmed.test.mjs`.
 
 ### schedule-text
 Reminders and scheduled texts that actually arrive, at the right hour. Every box's scheduler runs

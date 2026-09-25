@@ -4,20 +4,28 @@ description: "Text one third party an SMS from this box's Telnyx number. Use whe
 required_environment_variables:
   - TELNYX_SMS_FROM_NUMBER
   - TELNYX_SMS_ALLOWED_USERS
+  - TELNYX_SMS_API_BASE
+  - TELEGRAM_ALLOWED_USERS
 ---
 
 # SMS send confirmed
 
 This is the only path that may text a third party. It is one message, from
 this box's Telnyx number, after the owner confirms. It reuses the box's
-existing Telnyx adapter (`team-telnyx/telnyx-hermes-sms` @ `a7d209f`):
-the script calls `hermes send --to telnyx_sms:<E.164>`, and that command
-calls `send(chat_id=E.164)` with From = `TELNYX_SMS_FROM_NUMBER`.
+existing Telnyx adapter (`team-telnyx/telnyx-hermes-sms` @ `a7d209f`).
+The script hydrates `TELNYX_*` (including `TELNYX_SMS_API_BASE` for the
+telnyx-proxy), resolves the `telnyx_sms` plugin, and calls that plugin's
+`standalone_sender_fn`. From is `TELNYX_SMS_FROM_NUMBER`.
+
+`execute_code` strips `TELNYX_*` before the script starts. The script
+refills the keys it needs from this skill's `runtime.env` (optional) and
+from `/proc/1/environ`. It does not print those values.
 
 You do not send any other way. Do not call `hermes send` yourself, do not
 curl Telnyx, do not import the adapter, and do not pass a From number.
 Do not add the destination to `TELNYX_SMS_ALLOWED_USERS`. Do not change
-the Telnyx portal.
+Helm, customer YAML, or the Telnyx portal. A session file is not an
+allowlist entry.
 
 ## When this skill applies
 
@@ -53,8 +61,10 @@ If that file is missing, say so and stop. Do not search for another SMS
 tool. Invoke it from `execute_code` with an argument list (so the body is
 one argument). Do not set `SMS_SEND_TRANSPORT` or `SMS_SEND_CONFIRMED_TEST`.
 
-The approver is the E.164 of the person texting you in this thread. Never
-pass the destination as the approver.
+The approver is the E.164 of the person texting you on SMS, or their
+Telegram user id when they confirm from Telegram. The E.164 must be on
+`TELNYX_SMS_ALLOWED_USERS`. The Telegram id must be on
+`TELEGRAM_ALLOWED_USERS`. Never pass the destination as the approver.
 
 ## Turn 1 — stage, then stop
 
@@ -117,7 +127,7 @@ The script refuses, and you must not work around it, when:
   on (`refused_autonomous`)
 - more than one destination, a second open draft, or a body over 640
   characters (`refused_multi`)
-- the approver is not on `TELNYX_SMS_ALLOWED_USERS` (`refused_not_owner`)
+- the approver is not on `TELNYX_SMS_ALLOWED_USERS` or `TELEGRAM_ALLOWED_USERS` (`refused_not_owner`)
 - the destination is the owner or the box number (`refused_not_third_party`)
 - this box is not `advisor-reach-internal` (`refused_spike_box`)
 
@@ -152,11 +162,27 @@ provider id was stored, not the raw JSON.
 
 ## Replies from the person you texted
 
-Not in this PR. After the send, an inbound text from that destination is
-still subject to `TELNYX_SMS_ALLOWED_USERS`. Do not promise that their
-reply will show up in this thread, and do not widen the allowlist to make
-it so. Session routing (A2) is PR2: it needs an adapter change, not another
-skill.
+A successful send writes `/opt/data/sms-sessions/{E.164}.json`. The window
+is 7 days (`ttl_expires_at`). That file means an inbound SMS from that
+number may be shown to the owner. It does not let them drive this box, and
+it does not let you text them again.
+
+When a reply is captured, load `sms-inbound-owner-event`. Tell the owner
+who sent it (E.164), the snippet, and the prior outbound (`draft_id`,
+`telnyx_message_id`, sent time). Offer call, a draft reply, or dismiss.
+Do not answer the recipient. Do not say you will handle the thread. Do not
+keep talking to them after that one inbound.
+
+A draft reply is another pass through this skill: `stage`, show the
+attestation, and send only after a new `SEND` or `/approve`. One confirm,
+one message. `STOP` / the local opt-out file still refuses before Telnyx.
+
+Hermes drops inbound SMS that are not on `TELNYX_SMS_ALLOWED_USERS` inside
+the gateway, before any skill runs. This script cannot see those webhooks
+on its own. On `advisor-reach-internal` the Method A hook in
+`method-a/BAKE.md` calls `inbound` and then skips the agent turn. Do not
+call `inbound` yourself. That hook is spike-only. Do not bake it into the
+fleet image, and do not set `TELNYX_SMS_ALLOW_ALL_USERS` to fake it.
 
 ## Stop
 
