@@ -5,6 +5,7 @@ required_environment_variables:
   - TELNYX_SMS_FROM_NUMBER
   - TELNYX_SMS_ALLOWED_USERS
   - TELNYX_SMS_API_BASE
+optional_environment_variables:
   - TELEGRAM_ALLOWED_USERS
 ---
 
@@ -23,9 +24,11 @@ from `/proc/1/environ`. It does not print those values.
 
 You do not send any other way. Do not call `hermes send` yourself, do not
 curl Telnyx, do not import the adapter, and do not pass a From number.
-Do not add the destination to `TELNYX_SMS_ALLOWED_USERS`. Do not change
-Helm, customer YAML, or the Telnyx portal. A session file is not an
-allowlist entry.
+NEVER use Composio, `connect-app`, or a Telnyx toolkit to send or receive
+a third-party SMS. Do not add the destination to `TELNYX_SMS_ALLOWED_USERS`.
+Do not change Helm, customer YAML, or the Telnyx portal. A session file is
+not an allowlist entry. Mode B (a list, a nurture sequence, a book of
+business, or a MoO blast) stays refused.
 
 ## When this skill applies
 
@@ -43,13 +46,17 @@ explicit owner-gated exception, and only for one named recipient at a time.
 No SOUL change is required: if this script is not the thing that sends,
 the message has not been confirmed.
 
-## Spike box
+## Path A
 
-Third-party send is enabled only when this box is `advisor-reach-internal`.
-The script reads the pod name (or `BOX_PUBLIC_BASE_URL` when there is no
-pod name). If it returns `refused_spike_box`, tell the owner this is not
-enabled on this box and stop. Do not look for another sender. Cos is out
-(its DID is not on a messaging profile). Customer boxes and Marc are out.
+Third-party send is Path A on every box whose id resolves and whose native
+Telnyx From (`TELNYX_SMS_FROM_NUMBER`) is set. The script reads the pod
+name, then `BOX_PUBLIC_BASE_URL`, then `SMS_BOX_ID`. Customer boxes are
+included. The earlier spike that allowed only `advisor-reach-internal` is
+retired; that lock was intentional and is not the fleet rule anymore.
+
+If the script returns `refused_no_box`, or `error` with `field` `from`,
+tell the owner this box cannot send and stop. Do not look for another
+sender. Do not connect Telnyx through Composio.
 
 ## What you run
 
@@ -63,8 +70,10 @@ one argument). Do not set `SMS_SEND_TRANSPORT` or `SMS_SEND_CONFIRMED_TEST`.
 
 The approver is the E.164 of the person texting you on SMS, or their
 Telegram user id when they confirm from Telegram. The E.164 must be on
-`TELNYX_SMS_ALLOWED_USERS`. The Telegram id must be on
-`TELEGRAM_ALLOWED_USERS`. Never pass the destination as the approver.
+`TELNYX_SMS_ALLOWED_USERS`. `TELEGRAM_ALLOWED_USERS` is optional. When it
+is set, a Telegram id on that list may confirm. When it is unset, this
+skill still runs and only an allowlisted SMS owner can confirm. Never
+pass the destination as the approver.
 
 ## Turn 1 — stage, then stop
 
@@ -127,9 +136,9 @@ The script refuses, and you must not work around it, when:
   on (`refused_autonomous`)
 - more than one destination, a second open draft, or a body over 640
   characters (`refused_multi`)
-- the approver is not on `TELNYX_SMS_ALLOWED_USERS` or `TELEGRAM_ALLOWED_USERS` (`refused_not_owner`)
+- the approver is not on `TELNYX_SMS_ALLOWED_USERS`, or not on `TELEGRAM_ALLOWED_USERS` when that list is set (`refused_not_owner`)
 - the destination is the owner or the box number (`refused_not_third_party`)
-- this box is not `advisor-reach-internal` (`refused_spike_box`)
+- the box id does not resolve (`refused_no_box`) or `TELNYX_SMS_FROM_NUMBER` is unset (`field` `from`)
 
 No confirm, no attestation, an autonomous run, or a multi-send never reaches
 Telnyx. Say the reason and stop.
@@ -179,14 +188,15 @@ one message. `STOP` / the local opt-out file still refuses before Telnyx.
 
 Hermes drops inbound SMS that are not on `TELNYX_SMS_ALLOWED_USERS` inside
 the gateway, before any skill runs. This script cannot see those webhooks
-on its own. On `advisor-reach-internal` the Method A hook in
-`method-a/BAKE.md` calls `inbound` and then skips the agent turn. Do not
-call `inbound` yourself. That hook is spike-only. Do not bake it into the
-fleet image, and do not set `TELNYX_SMS_ALLOW_ALL_USERS` to fake it.
+on its own. The Method A hook in `method-a/BAKE.md` calls `inbound` and
+then skips the agent turn. Do not call `inbound` yourself. Do not bake
+that hook from this conversation, and do not set
+`TELNYX_SMS_ALLOW_ALL_USERS` to fake it. A missing hook is not a reason
+to use Composio.
 
 ## Stop
 
-If the script is missing, the box is wrong, or the From number is unset,
-tell the owner what you were trying to do and that it did not send. Do not
-probe Telnyx, do not vary the destination to see what works, and do not
-switch to another provider.
+If the script is missing, the box id does not resolve, or the From number
+is unset, tell the owner what you were trying to do and that it did not
+send. Do not probe Telnyx, do not vary the destination to see what works,
+and do not switch to another provider or to Composio.

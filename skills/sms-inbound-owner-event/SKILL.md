@@ -42,9 +42,11 @@ Do not call `inbound`.
 If the event outcome is `refused_stop`, tell the owner that number is on
 the do-not-text list and why. Do not draft a reply to it.
 
-## Spike
+## Path A
 
-This surface is for `advisor-reach-internal` only. It does not widen
+This surface uses the same gate as `sms-send-confirmed`: any resolved box
+with `TELNYX_SMS_FROM_NUMBER` set. It does not widen
 `TELNYX_SMS_ALLOWED_USERS`. Session TTL is not permission to chat with
-the recipient. The fleet image does not get the Method A webhook hook;
+the recipient. Mode B (lists, nurture, batch) stays out. Do not use
+Composio for third-party SMS. The Method A webhook hook is separate;
 see `sms-send-confirmed/method-a/BAKE.md`.
