@@ -88,7 +88,10 @@ test("connect → claim (pending, then ready) → status → disconnect", async 
     assert.equal(c.code, 0);
     assert.equal(c.out.connect_url, "https://marketplace.gohighlevel.com/oauth/chooselocation?state=st-1");
     assert.equal(state.requests[0].headers.authorization, "Bearer ar_live_testpfx_testsecret");
-    assert.deepEqual((await run(base, home, "status")).out, { connected: false, pending: true });
+    const st = await run(base, home, "status");
+    assert.deepEqual(st.out, { connected: false, pending: true, waiting_for_user: true });
+    assert.equal(state.requests.at(-1).method, "POST");
+    assert.equal(state.requests.at(-1).url, "/crm/v1/claim");
 
     const early = await run(base, home, "claim");
     assert.equal(early.code, 2);
@@ -113,6 +116,51 @@ test("connect → claim (pending, then ready) → status → disconnect", async 
     const d = await run(base, home, "disconnect");
     assert.deepEqual(d.out, { ok: true, connected: false });
     assert.ok(!existsSync(tokenFile));
+  } finally { server.close(); }
+});
+
+test("status saves an approved token itself", async () => {
+  const { server, state, base } = await fakeServer();
+  const home = mkdtempSync(join(tmpdir(), "ghl-"));
+  try {
+    await run(base, home, "connect");
+    state.claimStatus = 200;
+    const s = await run(base, home, "status");
+    assert.equal(s.code, 0);
+    assert.equal(s.out.connected, true);
+    assert.equal(s.out.just_connected, true);
+    assert.equal(s.out.location_id, "8lZ9fJmKPqGBpUhtLlDD");
+    const tokenFile = join(home, "ghl", "token.json");
+    assert.equal(statSync(tokenFile).mode & 0o777, 0o600);
+    assert.ok(!existsSync(join(home, "ghl", "pending.json")));
+    assert.ok(!JSON.stringify(s.out).includes("at-claimed"), "status never prints the token");
+  } finally { server.close(); }
+});
+
+test("api collects an approved token before calling GHL", async () => {
+  const { server, state, base } = await fakeServer();
+  const home = mkdtempSync(join(tmpdir(), "ghl-"));
+  try {
+    await run(base, home, "connect");
+    state.claimStatus = 200;
+    const r = await run(base, home, "api", "GET", "/locations/{locationId}");
+    assert.equal(r.out.status, 200);
+    assert.deepEqual(state.requests.map((q) => q.url), ["/crm/v1/connect", "/crm/v1/claim", "/locations/8lZ9fJmKPqGBpUhtLlDD"]);
+  } finally { server.close(); }
+});
+
+test("status forgets an expired sign-in", async () => {
+  const { server, state, base } = await fakeServer();
+  const home = mkdtempSync(join(tmpdir(), "ghl-"));
+  try {
+    await run(base, home, "connect");
+    state.claimStatus = 410;
+    const s = await run(base, home, "status");
+    assert.equal(s.code, 0);
+    assert.equal(s.out.connected, false);
+    assert.equal(s.out.pending, false);
+    assert.ok(s.out.error);
+    assert.ok(!existsSync(join(home, "ghl", "pending.json")));
   } finally { server.close(); }
 });
 

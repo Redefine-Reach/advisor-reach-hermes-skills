@@ -26,11 +26,11 @@ to the user.
 
     python3 /opt/data/skills/ghl/scripts/ghl.py status
 
-- `"connected": true` → go to Step 3. `location_id` is the GoHighLevel sub-account you can
-  reach; `scope` is what you may do there.
-- `"connected": false, "pending": true` → you already sent a link. Run `claim` (Step 2b)
-  before sending another one.
-- `"connected": false, "pending": false` → Step 2.
+- `"connected": true` → go to Step 3 (status finishes an approved sign-in itself).
+  `location_id` is the GoHighLevel sub-account you can reach; `scope` is what you may do there.
+- `"pending": true, "waiting_for_user": true` → the user has not approved yet: ask them to
+  finish signing in, do not send a new link.
+- `"connected": false` without `pending` → Step 2.
 
 `access_token_expired: true` is NOT a reason to reconnect: Step 3 refreshes it for you.
 
@@ -44,16 +44,17 @@ a. Get a link:
    (location) you want me to work in, approve, then text me "done". The link is good for 30
    minutes.
 
-b. When they say they are done:
+b. When they say they are done, run `status` (it saves the token the moment they have
+   approved):
 
-       python3 /opt/data/skills/ghl/scripts/ghl.py claim
+       python3 /opt/data/skills/ghl/scripts/ghl.py status
 
-   - exit 0, `"ok": true` → connected. Tell them which location you are connected to
+   - `"connected": true` → connected. Tell them which location you are connected to
      (`location_id`) and carry on with what they asked.
-   - exit 2, `"pending": true` → they have not finished. Ask them to finish signing in and
-     tell you when; do not send a new link yet.
-   - exit 1 with `status` 410 or 404 → the link expired or failed. Run `connect` again and
-     send the new link.
+   - `"pending": true, "waiting_for_user": true` → they have not finished. Ask them to
+     finish signing in and tell you when; do not send a new link yet.
+   - `"connected": false` without `pending` → the link expired or failed. Run `connect`
+     again and send the new link.
 
 ## Step 3 — Call GoHighLevel
 

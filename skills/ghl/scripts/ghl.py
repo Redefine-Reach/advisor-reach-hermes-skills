@@ -119,28 +119,53 @@ def cmd_connect(_args) -> None:
     _out({"ok": True, "connect_url": d["connect_url"], "expires_in_seconds": d["expires_in_seconds"]})
 
 
+def _try_claim(pending: dict):
+    """Ask the AdvisorReach API to claim a pending GoHighLevel sign-in.
+
+    Returns ("claimed", token), ("waiting", status_and_text) or ("expired", status_and_text).
+    Removes pending.json on 200/404/410 (a final outcome); leaves it alone on 409 (still waiting).
+    """
+    status, text = _advisorreach("POST", "/crm/v1/claim", {"state": pending["state"]})
+    if status == 409:
+        return "waiting", (status, "the user has not finished signing in yet")
+    if status in (404, 410):
+        _remove(_pending_path())
+        return "expired", (status, text[:500])
+    if status != 200:
+        return "expired", (status, text[:500])
+    token = _save_token(json.loads(text))
+    _remove(_pending_path())
+    return "claimed", token
+
+
 def cmd_claim(_args) -> None:
     pending = _read(_pending_path())
     if pending is None:
         _out({"ok": False, "error": "no pending GoHighLevel connection; run connect first"}, 1)
-    status, text = _advisorreach("POST", "/crm/v1/claim", {"state": pending["state"]})
-    if status == 409:
-        _out({"ok": False, "pending": True, "error": "the user has not finished signing in yet"}, 2)
-    if status != 200:
-        if status in (404, 410):
-            _remove(_pending_path())
-        _out({"ok": False, "status": status, "error": text[:500]}, 1)
-    token = _save_token(json.loads(text))
-    _remove(_pending_path())
-    _out({"ok": True, **_summary(token)})
+    outcome, result = _try_claim(pending)
+    if outcome == "waiting":
+        _, err = result
+        _out({"ok": False, "pending": True, "error": err}, 2)
+    if outcome == "expired":
+        status, err = result
+        _out({"ok": False, "status": status, "error": err}, 1)
+    _out({"ok": True, **_summary(result)})
 
 
 def cmd_status(_args) -> None:
     t = _read(_token_path())
-    pending = _read(_pending_path()) is not None
+    pending = _read(_pending_path())
+    if t is None and pending is not None:
+        outcome, result = _try_claim(pending)
+        if outcome == "claimed":
+            _out({**_summary(result), "just_connected": True})
+        if outcome == "waiting":
+            _out({"connected": False, "pending": True, "waiting_for_user": True})
+        _, err = result
+        _out({"connected": False, "pending": False, "error": err})
     if t is None:
-        _out({"connected": False, "pending": pending})
-    _out({**_summary(t), "access_token_expired": time.time() >= t["expires_at"], "pending": pending})
+        _out({"connected": False, "pending": pending is not None})
+    _out({**_summary(t), "access_token_expired": time.time() >= t["expires_at"], "pending": pending is not None})
 
 
 def _refresh(t: dict) -> dict:
@@ -154,7 +179,13 @@ def _refresh(t: dict) -> dict:
 def _valid_token(force_refresh: bool = False) -> dict:
     t = _read(_token_path())
     if t is None:
-        _out({"ok": False, "connected": False, "error": "GoHighLevel is not connected; run connect"}, 1)
+        pending = _read(_pending_path())
+        if pending is not None:
+            outcome, result = _try_claim(pending)
+            if outcome == "claimed":
+                t = result
+        if t is None:
+            _out({"ok": False, "connected": False, "error": "GoHighLevel is not connected; run connect"}, 1)
     if force_refresh or time.time() >= t["expires_at"] - REFRESH_MARGIN_SECONDS:
         t = _refresh(t)
     return t
