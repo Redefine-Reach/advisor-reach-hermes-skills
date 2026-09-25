@@ -7,6 +7,11 @@ calls that plugin's ``standalone_sender_fn`` after Hermes resolves
 ``telnyx_sms``. From is ``TELNYX_SMS_FROM_NUMBER``. This script does not
 talk to Telnyx itself and does not accept a From override.
 
+Path A is any resolved box id when that From number is set. The earlier
+spike lock to ``advisor-reach-internal`` is retired. Cron stays
+``refused_autonomous``. Lists and nurture (Mode B) stay refused, and the
+owner allowlist is not widened.
+
 A successful send writes a time-boxed session file. An inbound from that
 destination becomes an owner event. It does not start a chat with them.
 """
@@ -45,7 +50,6 @@ except ImportError:
     _discover_plugins = None
 
 ATTESTATION_VERSION = "red-390-v1"
-SPIKE_BOX_ID = "advisor-reach-internal"
 DEFAULT_MAX_BODY_CHARS = 640
 DEFAULT_DRAFT_TTL_SECONDS = 1800
 DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
@@ -422,12 +426,19 @@ def from_number(environ: Mapping[str, str] | None = None) -> str:
     return require_phone(raw, "from")
 
 
-def assert_spike_box(box_id: str) -> None:
-    if box_id != SPIKE_BOX_ID:
+def assert_path_a_box(box_id: str, environ: Mapping[str, str] | None = None) -> None:
+    """Allow Path A on any resolved box that has a native Telnyx From.
+
+    An empty box id refuses. ``TELNYX_SMS_FROM_NUMBER`` must be set (and a
+    valid E.164). This does not widen ``TELNYX_SMS_ALLOWED_USERS`` and does
+    not open Mode B (lists, nurture, multi-dest).
+    """
+    if not str(box_id or "").strip():
         raise GateFailure(
-            "refused_spike_box",
-            f"third-party SMS is enabled only on {SPIKE_BOX_ID}",
+            "refused_no_box",
+            "box id is unresolved; third-party SMS stays closed",
         )
+    from_number(environ)
 
 
 def assert_not_cron(environ: Mapping[str, str] | None = None) -> None:
@@ -796,8 +807,8 @@ def emit(payload: dict, status: int) -> int:
 def context() -> dict:
     hydrate_sms_env()
     box_id = resolve_box_id()
-    assert_spike_box(box_id)
     assert_not_cron()
+    assert_path_a_box(box_id)
     phones = phone_allowlist()
     telegram = telegram_allowlist()
     if not phones and not telegram:
@@ -1358,7 +1369,7 @@ def inbound(sender_raw: str, body_raw: str, message_id_raw: str) -> int:
     try:
         hydrate_sms_env()
         box_id = resolve_box_id()
-        assert_spike_box(box_id)
+        assert_path_a_box(box_id)
         store = paths()
         phones = phone_allowlist(enforce_closed=False)
         sender = require_phone(sender_raw, "sender")
@@ -1491,7 +1502,7 @@ def inbound(sender_raw: str, body_raw: str, message_id_raw: str) -> int:
 def list_events() -> int:
     try:
         hydrate_sms_env()
-        assert_spike_box(resolve_box_id())
+        assert_path_a_box(resolve_box_id())
         rows = [public_event(row) for row in list_open_events(paths()["events"])]
         return emit(
             {

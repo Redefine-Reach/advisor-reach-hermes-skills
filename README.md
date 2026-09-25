@@ -87,9 +87,13 @@ multi / MoO-list / unconfirmed sends, and calls the pinned
 `telnyx-hermes-sms` adapter's `standalone_sender_fn` (not `hermes send`,
 not a second provider). A sent message writes a 7-day session file.
 Replies from that number become owner events (`sms-inbound-owner-event`);
-they do not open a chat, and a reply still needs a new `SEND`. Spike lock:
-`advisor-reach-internal` only. The webhook hook is Method A on that pod,
-not a fleet image. Contract: `tests/sms-send-confirmed.test.mjs`.
+they do not open a chat, and a reply still needs a new `SEND`. Path A:
+any resolved box with `TELNYX_SMS_FROM_NUMBER` set. The earlier
+`advisor-reach-internal` spike lock was intentional and is retired. Cron
+and Mode B (lists, nurture, MoO) stay refused, and the allowlist is not
+widened. The webhook hook under `method-a/` is still not a fleet image;
+that Method A deploy depends on this gate. Contract:
+`tests/sms-send-confirmed.test.mjs`.
 
 ### schedule-text
 Reminders and scheduled texts that actually arrive, at the right hour. Every box's scheduler runs

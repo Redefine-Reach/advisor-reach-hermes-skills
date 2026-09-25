@@ -1,6 +1,7 @@
-// Hermetic contract for sms-send-confirmed (RED-390 PR1). No network, no Hermes.
+// Hermetic contract for sms-send-confirmed (RED-390). No network, no Hermes.
 // The script is the gate: stage never sends; send requires SEND plus attestation;
-// opt-out, cron, multi-dest, and a non-spike box never call the transport.
+// opt-out, cron, multi-dest, and an unresolved box never call the transport.
+// Path A allows any resolved non-empty box id when TELNYX_SMS_FROM_NUMBER is set.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -104,7 +105,19 @@ test("skill routes third-party SMS through confirm, the pinned adapter, and the 
   assert.match(skill, /Do not add the destination to `TELNYX_SMS_ALLOWED_USERS`/);
   assert.match(skill, /Prepare-never-send stays the default/);
   assert.match(skill, /Do not use `schedule-text` as the\nthird-party path/);
-  assert.match(skill, /advisor-reach-internal/);
+  assert.match(skill, /## Path A/);
+  assert.match(skill, /NEVER use Composio/);
+  assert.match(skill, /refused_no_box/);
+  assert.doesNotMatch(skill, /refused_spike_box/);
+  assert.doesNotMatch(skill, /Customer boxes and Marc are out/);
+  const frontmatter = skill.match(/^---\n([\s\S]*?)\n---\n/)[1];
+  const required = frontmatter.split("optional_environment_variables:")[0];
+  assert.match(required, /required_environment_variables:/);
+  assert.match(required, /- TELNYX_SMS_FROM_NUMBER/);
+  assert.match(required, /- TELNYX_SMS_ALLOWED_USERS/);
+  assert.match(required, /- TELNYX_SMS_API_BASE/);
+  assert.doesNotMatch(required, /TELEGRAM_ALLOWED_USERS/);
+  assert.match(frontmatter, /optional_environment_variables:\n  - TELEGRAM_ALLOWED_USERS/);
   assert.match(skill, /Your entire reply to the owner is the JSON `attestation` field, verbatim/);
   assert.match(skill, /exactly `SEND` or `\/approve`/);
   assert.match(skill, /refused_no_confirm/);
@@ -129,6 +142,9 @@ test("script sends through standalone_sender_fn after plugin resolve, not hermes
   assert.doesNotMatch(script, /api\.telnyx\.com/);
   assert.doesNotMatch(script, /hermes send/);
   assert.doesNotMatch(script, /TELNYX_SMS_ALLOWED_USERS"\]\s*=/);
+  assert.doesNotMatch(script, /refused_spike_box/);
+  assert.doesNotMatch(script, /SPIKE_BOX_ID/);
+  assert.match(script, /assert_path_a_box/);
   assert.match(script, /standalone_sender_fn/);
   assert.match(script, /_resolve_all/);
   assert.match(script, /a7d209f/);
@@ -328,7 +344,7 @@ test("deny records a number without sending", () => {
   assert.equal(staged.payload.outcome, "refused_stop");
 });
 
-test("multi-dest, overlong body, cron, allow-all, and a foreign box never send", () => {
+test("multi-dest, overlong body, cron, and allow-all never send", () => {
   const multi = run(["stage", "--approver", OWNER, "--dest", `${DEST},${DEST}`, "--body", BODY]);
   assert.equal(multi.payload.outcome, "refused_multi");
   assert.equal(multi.callLines.length, 0);
@@ -358,11 +374,12 @@ test("multi-dest, overlong body, cron, allow-all, and a foreign box never send",
   });
   assert.equal(allowAll.payload.outcome, "refused_autonomous");
 
-  const marc = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {
-    SMS_BOX_ID: "marc-king",
+  const cronOnCustomer = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {
+    SMS_BOX_ID: "david-marshall",
+    HERMES_CRON_JOB_ID: "job-1",
   });
-  assert.equal(marc.payload.outcome, "refused_spike_box");
-  assert.equal(marc.callLines.length, 0);
+  assert.equal(cronOnCustomer.payload.outcome, "refused_autonomous");
+  assert.equal(cronOnCustomer.callLines.length, 0);
 
   const ownerThread = run(["stage", "--approver", OWNER, "--dest", OWNER, "--body", BODY]);
   assert.equal(ownerThread.payload.outcome, "refused_not_third_party");
@@ -394,6 +411,79 @@ test("an expired draft does not send", () => {
   assert.equal(refused.payload.outcome, "refused_no_confirm");
   assert.match(refused.payload.reason, /expired/);
   assert.equal(refused.callLines.length, 0);
+});
+
+test("Path A allows any resolved box with a native From and refuses an empty box", () => {
+  const out = py(`${importMod}
+import os
+os.environ["TELNYX_SMS_FROM_NUMBER"] = "+19283563339"
+mod.assert_path_a_box("david-marshall")
+mod.assert_path_a_box("marc-king", {"TELNYX_SMS_FROM_NUMBER": "+19283563339"})
+try:
+    mod.assert_path_a_box("", {"TELNYX_SMS_FROM_NUMBER": "+19283563339"})
+    raise SystemExit("empty box was allowed")
+except mod.GateFailure as failure:
+    assert failure.outcome == "refused_no_box"
+try:
+    mod.assert_path_a_box("david-marshall", {"TELNYX_SMS_FROM_NUMBER": ""})
+    raise SystemExit("missing From was allowed")
+except mod.GateFailure as failure:
+    assert failure.outcome == "error" and failure.field == "from"
+print("ok")
+`);
+  assert.equal(out, "ok");
+
+  for (const box of ["marc-king", "david-marshall"]) {
+    const staged = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {
+      SMS_BOX_ID: box,
+    });
+    assert.equal(staged.payload.outcome, "staged", box);
+    assert.equal(staged.callLines.length, 0);
+    const draft = JSON.parse(
+      readFileSync(join(staged.dir, "drafts", `${staged.payload.draft_id}.json`), "utf8"),
+    );
+    assert.equal(draft.box_id, box);
+    assert.equal(draft.allowed_users, undefined);
+    if (box === "david-marshall") {
+      const sent = run(
+        ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
+        { SMS_BOX_ID: box },
+        staged.dir,
+      );
+      assert.equal(sent.payload.outcome, "sent");
+      assert.equal(sent.callLines.length, 1);
+      assert.equal(sent.auditLines.at(-1).box_id, box);
+      assert.equal(sent.auditLines.at(-1).provider_called, true);
+      const session = JSON.parse(readFileSync(join(staged.dir, "sessions", `${DEST}.json`), "utf8"));
+      assert.equal(session.allowed_users, undefined);
+    }
+  }
+
+  const viaUrl = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {
+    SMS_BOX_ID: "",
+    BOX_PUBLIC_BASE_URL: "https://david-marshall.boxes.advisorreach.ai",
+  });
+  assert.equal(viaUrl.payload.outcome, "staged");
+  const viaDraft = JSON.parse(
+    readFileSync(join(viaUrl.dir, "drafts", `${viaUrl.payload.draft_id}.json`), "utf8"),
+  );
+  assert.equal(viaDraft.box_id, "david-marshall");
+  assert.equal(viaUrl.callLines.length, 0);
+
+  const unresolved = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {
+    SMS_BOX_ID: "",
+  });
+  assert.equal(unresolved.payload.outcome, "refused_no_box");
+  assert.equal(unresolved.payload.provider_called, false);
+  assert.equal(unresolved.callLines.length, 0);
+
+  const customerMissingFrom = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {
+    SMS_BOX_ID: "david-marshall",
+    TELNYX_SMS_FROM_NUMBER: "",
+  });
+  assert.equal(customerMissingFrom.payload.outcome, "error");
+  assert.equal(customerMissingFrom.payload.field, "from");
+  assert.equal(customerMissingFrom.callLines.length, 0);
 });
 
 test("a non-owner and a missing From are refused", () => {
