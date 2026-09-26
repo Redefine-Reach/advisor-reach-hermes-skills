@@ -30,131 +30,33 @@ mailboxes on those domains, all connected to that account — ready to run cold
 email campaigns from. This is infrastructure, not a finished campaign: getting
 there does not by itself send any email.
 
-## Turning copy into campaigns is not this skill set's job
+## Campaigns: the `smartlead-campaigns` skill
 
-None of the three child skills here creates a campaign, and none of them ever
-will — that is deliberate, not a gap to improvise around.
+None of the three child skills creates a campaign. Once the account and mailboxes exist,
+everything about campaigns — seeing them, their stats, writing the emails, adding leads,
+starting and pausing — is the **`smartlead-campaigns`** skill, which works directly against
+SmartLead with this customer's own SmartLead account (its API key comes from the AdvisorReach
+API; you never handle it). The old OmegaAI MAB / "Email Campaigns" Design pipeline and its
+`Docs/AdvisorReach/email-campaigns` manual are retired: do not read them, do not fire them, and
+never treat `Component Installs/Email Campaigns` data as the customer's campaigns.
 
-Once the account/domain/mailbox infrastructure above exists and the customer
-has drafted copy, **campaigns are created inside the customer's Omega
-workspace, by the email-campaigns component's Design workflow — not by
-calling SmartLead's API.** That workflow is the natural next step after this
-skill set finishes: infrastructure here, campaigns there. If a task sounds
-like "build/create the campaigns in SmartLead," it belongs to that workflow,
-not to `email-outreach-client`, `email-outreach-mailboxes`, or
-`email-outreach-connect`.
+Campaign work is iterative and human-in-the-loop, not a one-shot step: drafts go in front of the
+customer, get revised from what they say, and nothing is created or sent without their yes.
 
-**Never call SmartLead's HTTP API directly to create, modify, or send
-campaigns — not even to "check what's available" or "try different
-endpoints."** If a task seems to need that, the answer is in the customer's
-workspace guides, not in the vendor's API — go find it there instead of
-inventing a request against `server.smartlead.ai`.
+## Looking up business details in the customer's workspace
 
-**Where to look:** the campaign operating manual is the **published, maintainer-owned**
-manual at `Docs/AdvisorReach` (see the paragraph immediately below for exactly how to
-reach it). That published manual — not any local page — is the source of truth for how
-campaigns work. A customer workspace may also carry its own local guide area (e.g. a
-`Skills/…` folder) and its README may link to one, but you must NOT treat that as the
-manual and must NOT navigate into it for campaign process: it is per-workspace, may be
-stale or private, and following it is exactly the fallback this skill forbids. If the
-workspace README points you at a local skills/guides area, ignore that link for campaign
-process and read the published manual instead.
+`email-outreach-mailboxes` needs **business details** — company name, contact name/email,
+address, phone, real website. They commonly live on a business-details page under `Notes/` in
+the customer's Omega workspace, reached through the `query-omega` MCP tools (`read`, `query`, …)
+— never the local filesystem and never your own past session logs. Only ask the customer for
+what genuinely isn't there.
 
-**The operating manual for campaigns is published in OmegaAI — read it by EXACT PATH, never `ls`.** The
-canonical, maintainer-owned manual lives at **`Docs/AdvisorReach/README`** (a readable index).
-
-**How you read it: use the query-omega MCP tools.** In your tool list they appear PREFIXED as
-`mcp__query_omega__search_packages`, `mcp__query_omega__get_package_docs`, `mcp__query_omega__read`, and
-`mcp__query_omega__list_workspaces` — call them directly, exactly like any other tool (they are TOOLS, not
-shell commands, not a CLI, not files on disk).
-
-**If those `mcp__query_omega__…` tools are NOT in your tool list, the box's OmegaAI connection is down — that
-is a real infrastructure fault, not something you can route around.** In that case: say plainly to the
-customer that you can't reach the published manual right now because the workspace connection is unavailable,
-answer as best you can from this skill's own content, and STOP. Do NOT try to "find" the tools by running
-`execute_code`/`terminal`, searching the filesystem, looking for a `query-omega` command or `tirith` binary,
-or invoking `connect-mcp` (that skill is for external OAuth services like Gmail, NOT for query-omega). There
-is nothing to install or discover — the tools are either present in your tool list or the connection is down.
-
-When the tools ARE present, exact procedure — do this, in order, with direct tool calls:
-1. Call `mcp__query_omega__search_packages` (query `"AdvisorReach"`) to find the AdvisorReach package; from
-   its result (or a follow-up `mcp__query_omega__get_package_docs`) take the package's **app-id** (it is a
-   DIFFERENT workspace from the customer's — that is expected and correct).
-2. Call `mcp__query_omega__read` with `{app_id: "<that AdvisorReach app-id>", page_path: "Docs/AdvisorReach/README"}`.
-3. Follow the child paths that README lists BY EXACT PATH, each with its own `mcp__query_omega__read` call —
-   e.g. `Docs/AdvisorReach/email-campaigns/README`, then `Docs/AdvisorReach/email-campaigns/design-workflow`,
-   `.../iterating-copy`, `.../connecting-smartlead`, `.../provisioning-senders`.
-
-Cross-workspace reads are gated per page: `read`/`get` succeed on these public pages, but `ls`/`describe`
-and the parent folder `Docs/AdvisorReach` itself are NOT readable from another workspace — so navigate ONLY
-by reading each index page and following the exact paths it names; never `ls` and never guess a path. Do NOT
-fall back to any local `Skills/Email Campaigns` or `Notes/` page — the published manual is the source of truth.
-
-## Campaign management is iterative, not another one-shot step
-
-The client account, domain, and mailboxes above are one-shot infrastructure —
-built once and done. Campaign management is not, and carrying the one-shot
-habit over is the mistake to avoid: it is an **iterative, human-in-the-loop**
-process with no finish line. Copy gets drafted, shown to the customer, revised
-from their feedback, and re-run — repeatedly, for as long as the customer
-keeps refining it.
-
-The customer's judgement is the authority on their own copy, not yours. Your
-job there is to put drafts and results in front of them and act on what they
-say back, not to run something to completion and report status.
-
-The mechanics of that loop — which lever to pull, how to bound a run, what to
-read back — live entirely in the workspace guides above. This skill set does
-not restate them.
-
-## First move for ANY "how does this work" question: read the published manual
-
-**If the customer is asking how something works** — how to connect SmartLead,
-provision mailboxes, design a campaign, or iterate copy — your FIRST action is
-to read the published manual (the `search_packages` → `read Docs/AdvisorReach/README`
-procedure above), BEFORE you look at anything in the customer's own workspace.
-The manual is the answer to "how does this work"; the customer's workspace is
-not, and poking around it first is the mistake to avoid. Do the manual read
-first, every time, for a process/how-to question.
-
-## Looking up specific facts in the customer's workspace (only after the above)
-
-Checking the customer's Omega workspace is for exactly **two kinds of concrete
-fact — nothing else**, and only when a step actually needs them (not as a way to
-answer "how does this work" — the manual does that). "The workspace" always means
-the customer's **Omega workspace**, reached through the `query-omega` MCP tools
-(`list_workspaces`, `ls`, `read`, `query`, `describe`, `run`, …) — never the
-local filesystem, and never your own past session logs.
-
-The two facts — nothing else:
-
-- **Business details** — company name, contact name/email, address, phone,
-  real website — commonly live on a business-details page under `Notes/` in
-  the workspace. `email-outreach-mailboxes` names the exact fields this can
-  fill in.
-- **Drafted campaign copy.** "We've got our copy drafted" usually means rows
-  already exist in the `Data/Copy` table of the email-campaigns install in
-  that same workspace — look there before treating it as something to ask
-  about or write yourself.
-
-Only ask the customer for what genuinely isn't in the workspace.
-
-**This is NOT license to read the workspace for how the process works, or for
-credentials.** Two hard limits:
-
-- **Never read or report a credential page.** `Notes/SmartLead Login` (and any
-  page holding a password, API key, or portal login) is OFF-LIMITS — do not
-  `read` it, do not quote it, do not tell the customer their password or where
-  it lives. The SmartLead **API key** is already wired into the connector and
-  the child skills use it via `ADVISORREACH_API_KEY`; nothing you do needs the
-  portal password, so there is never a reason to open that page. If the customer
-  asks for their login, tell them it lives in their own workspace and they can
-  open it themselves — do not fetch it for them.
-- **Never treat a local workspace page as the campaign manual.** For how
-  SmartLead connection, mailbox provisioning, or campaign design actually work,
-  read the published manual at `Docs/AdvisorReach` (see "The operating manual"
-  paragraph above) — never a local `Skills/…` page and never the workspace
-  README's link to one.
+**Never read or report a credential page.** `Notes/SmartLead Login` (and any page holding a
+password, API key, or portal login) is OFF-LIMITS — do not `read` it, do not quote it, do not
+tell the customer their password or where it lives. Nothing you do needs the portal password:
+the child skills and `smartlead-campaigns` authenticate with `ADVISORREACH_API_KEY`. If the
+customer asks for their login, tell them it lives in their own workspace and they can open it
+themselves.
 
 ## Order of operations
 
