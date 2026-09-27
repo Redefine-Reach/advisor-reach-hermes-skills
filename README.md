@@ -95,6 +95,18 @@ widened. The webhook hook under `method-a/` is still not a fleet image;
 that Method A deploy depends on this gate. Contract:
 `tests/sms-send-confirmed.test.mjs`.
 
+### smartlead-campaigns
+The customer's SmartLead campaigns, directly against SmartLead — the replacement for the retired
+OmegaAI MAB "Email Campaigns" Design pipeline. One script, `skills/smartlead-campaigns/scripts/smartlead.py`
+(Python 3 standard library only), run as `python3 /opt/data/skills/smartlead-campaigns/scripts/smartlead.py <command>`:
+it finds the customer's SmartLead client account and its API key through the AdvisorReach API
+(`/smartlead/v1/clients`, `/smartlead/v1/clients/{id}/api-key`), then calls
+`https://server.smartlead.ai/api/v1` itself — `account`, `campaigns`, `stats`, `sequences`, `mailboxes`
+(reads), and `create`, `save-sequences`, `add-leads`, `attach-mailboxes`, `schedule`, `start`, `pause`
+(each only after the user's yes). Request bodies are the SmartLead Connector's tested ones. The key is
+never printed. `tests/smartlead-campaigns.test.mjs` pins the 57-character routing prefix and runs the
+real script against a local fake of both APIs. `email-outreach` hands campaign work here.
+
 ### ghl
 GoHighLevel (GHL / LeadConnector) through AdvisorReach's own GHL Marketplace App — not Composio,
 not an MCP server. One script, `skills/ghl/scripts/ghl.py` (Python 3 standard library only), run
