@@ -1,0 +1,12 @@
+y2_statefips,y2_countyfips,y1_statefips,y1_countyfips,y1_state,y1_countyname,n1,n2,agi
+12,095,96,000,FL,Orange County Total Migration-US and Foreign,5000,9000,500000
+12,095,97,000,FL,Orange County Total Migration-US,4800,8600,480000
+12,095,58,000,FL,Orange County Total Migration-Same State,1000,2000,90000
+12,095,36,081,NY,Queens County,600,1053,36594
+12,095,06,037,CA,Los Angeles County,435,686,55853
+12,095,17,031,IL,Cook County,370,573,42165
+12,095,12,011,FL,Broward County,900,1500,50000
+12,095,12,095,FL,Orange County Non-migrants,300000,700000,20000000
+12,095,34,013,NJ,Essex County,-1,-1,-1
+04,013,96,000,AZ,Maricopa County Total Migration-US and Foreign,9000,17000,900000
+04,013,06,037,CA,Los Angeles County,2000,3500,250000

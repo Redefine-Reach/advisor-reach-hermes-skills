@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Feeder Markets — {{ summary.destination }}</title>
+<style>
+@page { size: Letter; margin: 0.6in 0.55in; @bottom-right { content: counter(page) " / " counter(pages); font-size: 8pt; color: #666; } }
+body { font-family: "DejaVu Sans", sans-serif; font-size: 9pt; color: #1b1b1b; }
+h1 { font-size: 18pt; margin: 0 0 4pt; } h2 { font-size: 12pt; margin: 16pt 0 6pt; border-bottom: 1px solid #ccc; padding-bottom: 2pt; }
+.sub { color: #555; margin-bottom: 10pt; }
+.tiles { display: flex; gap: 8pt; margin: 8pt 0; } .tile { flex: 1; border: 1px solid #ddd; border-radius: 4pt; padding: 6pt; }
+.tile b { display: block; font-size: 14pt; }
+table { width: 100%; border-collapse: collapse; font-size: 8pt; } th, td { border-bottom: 1px solid #e3e3e3; padding: 3pt 4pt; text-align: left; }
+th { background: #f3f3f3; } td.n { text-align: right; } tr.A td.t { font-weight: bold; color: #0a6b2d; } tr.B td.t { color: #8a5a00; }
+p.note { color: #444; }
+</style></head><body>
+<h1>Feeder Markets — {{ summary.destination }}</h1>
+<div class="sub">Where the households moving to {{ summary.destination }} come from, and the affluent ZIP codes inside those markets. {{ date_long }}.</div>
+<div class="tiles">
+  <div class="tile"><b>{{ summary.inflow_totals.returns | int | count if summary.inflow_totals.returns else "—" }}</b>households moved in (all US origins)</div>
+  <div class="tile"><b>{{ summary.feeder_counties }}</b>feeder counties ranked</div>
+  <div class="tile"><b>{{ summary.tiers.A }} / {{ summary.tiers.B }} / {{ summary.tiers.C }}</b>ZIPs in Tier A / B / C</div>
+</div>
+<h2>The thesis</h2>
+<p>Referral partners are real-estate agents in the markets that send clients to {{ summary.destination }}. When one of their clients relocates, the agent refers the client to you for a fee. Agents inside {{ summary.destination }} are competitors and are not on this list.</p>
+<h2>Feeder counties{% if not summary.include_in_state %} (out of state){% endif %}</h2>
+<table><tr><th>#</th><th>Origin county</th><th class="n">Households moved</th><th class="n">People</th><th class="n">Income moved</th><th class="n">Income per household</th><th class="n">Pull (1–5)</th></tr>
+{% for f in feeders %}<tr><td>{{ f.rank }}</td><td>{{ f.county }}</td><td class="n">{{ f.returns | count }}</td><td class="n">{{ f.individuals | count }}</td><td class="n">{{ f.agi_moved | money }}</td><td class="n">{{ f.agi_per_return | money }}</td><td class="n">{{ f.migration_score }}</td></tr>
+{% endfor %}</table>
+<h2>Scored ZIP codes</h2>
+<table><tr><th>#</th><th>ZIP</th><th>County</th><th class="n">Tax returns</th><th class="n">Avg income</th><th class="n">Pull</th><th class="n">Affluence</th><th class="n">Total</th><th>Tier</th></tr>
+{% for z in zips %}<tr class="{{ z.tier }}"><td>{{ z.rank }}</td><td>{{ z.zip }}</td><td>{{ z.county }}</td><td class="n">{{ z.returns | count }}</td><td class="n">{{ z.avg_agi | money }}</td><td class="n">{{ z.migration_score }}</td><td class="n">{{ z.affluence_score }}</td><td class="n">{{ "%.2f" | format(z.total) }}</td><td class="t">{{ z.tier }}</td></tr>
+{% endfor %}</table>
+<h2>How this was scored</h2>
+<p class="note">Feeder counties are ranked by the income of the households that moved from each county to {{ summary.destination }} (IRS Statistics of Income county-to-county migration, tax years 2022–2023). Pull (1–5) is that county's moved income relative to the top feeder. Affluence (1–5) is the average adjusted gross income per tax return in the ZIP (IRS SOI ZIP-code data, tax year 2022): $400K+ is 5, $250K+ 4, $175K+ 3, $125K+ 2, otherwise 1. Total = 0.55 × Pull + 0.45 × Affluence; Tier A is 4.0 or more, B is 3.0 to 3.99, C is below 3.0. ZIPs with fewer than 500 tax returns are left out. Each ZIP belongs to the county that holds most of its land (Census 2020 ZCTA-to-county file). A ZIP code matches a city in the agent database, so ZIPs from the same city return the same agents.</p>
+<h2>Sources</h2>
+<p class="note">{% for s in summary.sources %}{{ s }}<br>{% endfor %}Scores are computed from public data; they rank markets, they do not predict individual moves.</p>
+</body></html>
