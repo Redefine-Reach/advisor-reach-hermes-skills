@@ -107,6 +107,18 @@ it finds the customer's SmartLead client account and its API key through the Adv
 never printed. `tests/smartlead-campaigns.test.mjs` pins the 57-character routing prefix and runs the
 real script against a local fake of both APIs. `email-outreach` hands campaign work here.
 
+### feeder-markets
+Feeder-market migration report, scored ZIP list and referral-agent CSV — only on boxes connected
+to OmegaAI (`metadata.hermes.requires_toolsets: [mcp-query-omega]`). `scripts/feeder_markets.py analyze`
+ranks the out-of-state counties by the income that moved to the user's county (IRS SOI
+county-to-county migration 2022–2023) and scores their affluent ZIPs (IRS SOI income by ZIP 2022,
+Census ZCTA-to-county); `assets/render.py` builds the PDF (jinja2 + WeasyPrint in the box image),
+shared via `present-file`. The agent list is pulled by Cas, the OmegaAI in-app agent:
+`scripts/cas_pull.py start` opens her session in the box's OmegaAI workspace through the hosted MCP
+server and hands her the Tier A/B ZIPs with a 5000-agent cap; `wait` collects her CSV link. Python 3
+standard library only (render: the box venv). Contract: `tests/feeder-markets.test.mjs`; image proof:
+`google-cloud-gke-customer-boxes/tests/test_feeder_markets_box.sh`.
+
 ### ghl
 GoHighLevel (GHL / LeadConnector) through AdvisorReach's own GHL Marketplace App — not Composio,
 not an MCP server. One script, `skills/ghl/scripts/ghl.py` (Python 3 standard library only), run
