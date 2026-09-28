@@ -1,9 +1,10 @@
 // Contract + behaviour test for the `feeder-markets` skill (no network beyond 127.0.0.1).
 // Routing: Hermes shows only the first 57 characters of a skill description in the system-prompt
 // index (agent/skill_utils.py SKILL_PROMPT_DESC_LIMIT = 60 — see tests/circle-member-token.test.mjs).
-// Gating: metadata.hermes.requires_toolsets hides the skill unless the query-omega MCP server's
-// toolset is loaded (agent/prompt_builder.py _skill_should_show; the toolset of an MCP server
-// named X is "mcp-X", tools/mcp_tool.py).
+// Gating: the skill is installed only on boxes connected to OmegaAI — the box entrypoint removes it
+// when MCP_QUERY_OMEGA_API_KEY is unset (google-cloud-gke-customer-boxes docker/sms-box/box-entrypoint.sh,
+// "# BEGIN omega-only-skills"). A frontmatter requires_toolsets gate cannot do it: Hermes defers MCP
+// tools behind tool_search (tools/tool_search.py), so no mcp-* toolset is ever "available".
 // Behaviour: runs the REAL scripts (python3): feeder_markets.py against the small IRS/Census
 // fixtures in tests/fixtures/feeder-markets (passed as --cache, named like the real files), and
 // cas_pull.py against one local HTTP server that plays the hosted OmegaAI MCP server (JSON-RPC,
@@ -48,10 +49,10 @@ test("index prefix (first 57 chars) names feeder markets, the report, ZIPs and t
   assert.equal(desc.slice(0, SKILL_PROMPT_DESC_LIMIT - 3), "Feeder markets: migration report, scored ZIPs, agent CSV.");
 });
 
-test("only OmegaAI-connected boxes see it, and the key passes into the sandbox", () => {
+test("the OmegaAI key passes into the sandbox, and no dead toolset gate hides the skill", () => {
   const { fm } = frontmatter(skill);
-  assert.match(fm, /^metadata:\n  hermes:\n    requires_toolsets: \[mcp-query-omega\]$/m);
   assert.match(fm, /^required_environment_variables:\n  - MCP_QUERY_OMEGA_API_KEY$/m);
+  assert.doesNotMatch(fm, /requires_toolsets/);
 });
 
 test("the body gives the exact script paths and hands the pull to Cas", () => {

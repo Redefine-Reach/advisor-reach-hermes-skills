@@ -3,9 +3,6 @@ name: feeder-markets
 description: "Feeder markets: migration report, scored ZIPs, agent CSV. Use when asked where movers to a market come from, for a feeder-market or migration report, feeder ZIP codes, or a list/CSV of referral agents in those markets (OmegaAI-connected boxes only)."
 required_environment_variables:
   - MCP_QUERY_OMEGA_API_KEY
-metadata:
-  hermes:
-    requires_toolsets: [mcp-query-omega]
 ---
 
 # Feeder markets (migration report → scored ZIPs → referral-agent CSV)

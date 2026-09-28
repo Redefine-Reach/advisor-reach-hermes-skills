@@ -109,7 +109,7 @@ real script against a local fake of both APIs. `email-outreach` hands campaign w
 
 ### feeder-markets
 Feeder-market migration report, scored ZIP list and referral-agent CSV — only on boxes connected
-to OmegaAI (`metadata.hermes.requires_toolsets: [mcp-query-omega]`). `scripts/feeder_markets.py analyze`
+to OmegaAI (the box entrypoint removes it where `MCP_QUERY_OMEGA_API_KEY` is unset). `scripts/feeder_markets.py analyze`
 ranks the out-of-state counties by the income that moved to the user's county (IRS SOI
 county-to-county migration 2022–2023) and scores their affluent ZIPs (IRS SOI income by ZIP 2022,
 Census ZCTA-to-county); `assets/render.py` builds the PDF (jinja2 + WeasyPrint in the box image),
