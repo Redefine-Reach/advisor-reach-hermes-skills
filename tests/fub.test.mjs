@@ -633,3 +633,22 @@ test("revoke failure keeps the local token; 409 still deletes it", async () => {
     assert.deepEqual(JSON.parse(state.requests.at(-1).body), { access_token: SAVED_ACCESS });
   } finally { server.close(); }
 });
+
+test("ADVISORREACH_API_URL allows in-cluster http *.svc.cluster.local", async () => {
+  // _base_url is pure string validation (no DNS). Fleet boxes set
+  // ADVISORREACH_API_URL=http://advisorreach-api.advisorreach-api.svc.cluster.local.
+  const { execFileSync } = await import("node:child_process");
+  const code = [
+    "import importlib.util",
+    "spec = importlib.util.spec_from_file_location('fub', " + JSON.stringify(script) + ")",
+    "m = importlib.util.module_from_spec(spec)",
+    "spec.loader.exec_module(m)",
+    "assert m._base_url('http://advisorreach-api.advisorreach-api.svc.cluster.local', False) == 'http://advisorreach-api.advisorreach-api.svc.cluster.local'",
+    "assert m._base_url('http://foo.bar.svc.cluster.local:8080', False) == 'http://foo.bar.svc.cluster.local:8080'",
+    "assert m._base_url('http://evil.example', False) is None",
+    "assert m._base_url('https://api.advisorreach.ai', False) == 'https://api.advisorreach.ai'",
+    "print('ok')",
+  ].join("\n");
+  const out = execFileSync("python3", ["-c", code], { encoding: "utf-8" });
+  assert.match(out, /ok/);
+});
