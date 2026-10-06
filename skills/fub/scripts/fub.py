@@ -383,9 +383,12 @@ def _base_url(url, loopback_only):
     if parts.username or parts.password or parts.query or parts.fragment or not parts.hostname:
         return None
     loopback = parts.hostname in ("127.0.0.1", "localhost") and bool(parts.port)
+    # In-cluster AdvisorReach API is plain HTTP on *.svc.cluster.local (boxes set
+    # ADVISORREACH_API_URL=http://advisorreach-api.advisorreach-api.svc.cluster.local).
+    cluster = parts.hostname.endswith(".svc.cluster.local") or parts.hostname.endswith(".cluster.local")
     if parts.scheme == "https":
         return raw.rstrip("/")
-    if parts.scheme == "http" and loopback:
+    if parts.scheme == "http" and (loopback or cluster):
         return raw.rstrip("/")
     return None
 
@@ -470,7 +473,7 @@ def _advisorreach(method, path, body=None, literals=()):
         _out({"ok": False, "error": "ADVISORREACH_API_URL / ADVISORREACH_API_KEY are not set"}, 1, literals)
     origin = _base_url(base, loopback_only=False)
     if origin is None or not path.startswith("/"):
-        _out({"ok": False, "error": "ADVISORREACH_API_URL is not a usable https origin"}, 1, literals)
+        _out({"ok": False, "error": "ADVISORREACH_API_URL is not a usable https or in-cluster http origin"}, 1, literals)
     try:
         status, data, _headers = _exchange(
             method, origin + path, {"Authorization": "Bearer " + key}, body,
