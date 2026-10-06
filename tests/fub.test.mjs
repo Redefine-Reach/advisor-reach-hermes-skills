@@ -3,7 +3,7 @@
 // system-prompt index (agent/skill_utils.py SKILL_PROMPT_DESC_LIMIT = 60 — see
 // tests/ghl.test.mjs). The index window must name FUB and say this is not Composio.
 // Behaviour: runs the REAL skills/fub/scripts/fub.py (python3) against one local HTTP
-// server that plays both the AdvisorReach API's /crm/v1/fub mount and Follow Up Boss.
+// server that plays both the AdvisorReach API's /fub/v1 mount and Follow Up Boss.
 // Run: node --test tests/*.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -55,9 +55,12 @@ test("routes FUB away from Composio and declares only the AdvisorReach env vars"
   assert.match(skill, /never try to read the files in `\/opt\/data\/fub\/`/);
   assert.match(skill, /wait for yes/);
   assert.match(skill, /sms-send-confirmed/);
-  assert.match(skill, /\/crm\/v1\/fub\/connect/);
-  assert.match(skill, /\/crm\/v1\/fub\/claim/);
-  assert.match(skill, /\/crm\/v1\/fub\/refresh/);
+  assert.match(skill, /\/fub\/v1\/connect/);
+  assert.match(skill, /\/fub\/v1\/claim/);
+  assert.match(skill, /\/fub\/v1\/refresh/);
+  assert.match(skill, /\/fub\/v1\/revoke/);
+  assert.doesNotMatch(skill, /\/crm\/v1\/fub/);
+  assert.doesNotMatch(readFileSync(script, "utf8"), /\/crm\/v1\/fub/);
   assert.match(skill, /api\.followupboss\.com/);
   assert.match(skill, /python3 \/opt\/data\/skills\/fub\/scripts\/fub\.py status/);
 });
@@ -67,6 +70,9 @@ test("routes FUB away from Composio and declares only the AdvisorReach env vars"
 function fakeServer() {
   const state = {
     claimStatus: 409,
+    revokeStatus: 200,
+    claimOmitsSystem: false,
+    refreshOmitsSystem: false,
     requests: [],
     fubStatus: 200,
     fubBody: null,
@@ -96,17 +102,27 @@ function fakeServer() {
         res.writeHead(code, { "content-type": "application/json", ...extra });
         res.end(JSON.stringify(obj));
       };
-      if (req.url === "/crm/v1/fub/connect" && req.method === "POST") {
+      if (req.url === "/fub/v1/connect" && req.method === "POST") {
         return send(200, {
           connect_url: "https://app.followupboss.com/oauth/authorize?state=st-1",
           state: "st-1",
           expires_in_seconds: 1800,
         });
       }
-      if (req.url === "/crm/v1/fub/claim" && req.method === "POST") {
-        return state.claimStatus === 200 ? send(200, token("claimed")) : send(state.claimStatus, { detail: "x" });
+      if (req.url === "/fub/v1/claim" && req.method === "POST") {
+        if (state.claimStatus !== 200) return send(state.claimStatus, { detail: "x" });
+        const claimed = token("claimed");
+        if (state.claimOmitsSystem) delete claimed.system;
+        return send(200, claimed);
       }
-      if (req.url === "/crm/v1/fub/refresh" && req.method === "POST") return send(200, token("refreshed"));
+      if (req.url === "/fub/v1/refresh" && req.method === "POST") {
+        const refreshed = token("refreshed");
+        if (state.refreshOmitsSystem) delete refreshed.system;
+        return send(200, refreshed);
+      }
+      if (req.url === "/fub/v1/revoke" && req.method === "POST") {
+        return send(state.revokeStatus, state.revokeStatus === 200 ? { revoked: true } : { detail: "x" });
+      }
       if (req.url.startsWith("/v1/")) {
         if (state.fub401Once) {
           state.fub401Once = false;
@@ -200,7 +216,7 @@ test("connect → claim (pending, then ready) → status → disconnect", async 
     const st = await run(base, home, ["status"]);
     assert.deepEqual(st.out, { connected: false, pending: true, waiting_for_user: true });
     assert.equal(state.requests.at(-1).method, "POST");
-    assert.equal(state.requests.at(-1).url, "/crm/v1/fub/claim");
+    assert.equal(state.requests.at(-1).url, "/fub/v1/claim");
 
     const early = await run(base, home, ["claim"]);
     assert.equal(early.code, 2);
@@ -236,7 +252,12 @@ test("connect → claim (pending, then ready) → status → disconnect", async 
     assert.ok(!JSON.stringify(s.out).includes(ACCESS));
 
     const d = await run(base, home, ["disconnect"]);
-    assert.deepEqual(d.out, { ok: true, connected: false });
+    assert.deepEqual(d.out, { ok: true, connected: false, revoked: true });
+    assert.ok(!JSON.stringify(d.out).includes(ACCESS));
+    const revoke = state.requests.at(-1);
+    assert.equal(revoke.method, "POST");
+    assert.equal(revoke.url, "/fub/v1/revoke");
+    assert.deepEqual(JSON.parse(revoke.body), { access_token: ACCESS });
     assert.ok(!existsSync(tokenFile));
   } finally { server.close(); }
 });
@@ -496,7 +517,7 @@ test("api refreshes an expiring token and retries once after 401", async () => {
   try {
     const r = await run(base, home, ["api", "GET", "/people?limit=10"]);
     assert.equal(r.out.status, 200);
-    const refresh = state.requests.find((q) => q.url === "/crm/v1/fub/refresh");
+    const refresh = state.requests.find((q) => q.url === "/fub/v1/refresh");
     assert.deepEqual(JSON.parse(refresh.body), { refresh_token: SAVED_REFRESH });
     assert.equal(state.requests.at(-1).headers.authorization, "Bearer at-refreshed-0123456789abcdef");
     assert.equal(JSON.parse(readFileSync(join(home, "fub", "token.json"), "utf8")).refresh_token, "rt-refreshed-0123456789abcdef");
@@ -512,7 +533,7 @@ test("api refreshes an expiring token and retries once after 401", async () => {
     assert.equal(r.out.status, 200);
     assert.deepEqual(second.state.requests.map((q) => q.url), [
       "/v1/people?limit=10",
-      "/crm/v1/fub/refresh",
+      "/fub/v1/refresh",
       "/v1/people?limit=10",
     ]);
     assert.equal(second.state.requests.at(-1).headers.authorization, "Bearer at-refreshed-0123456789abcdef");
@@ -554,5 +575,61 @@ test("FUB_READ_ONLY refuses allowlisted writes", async () => {
     const read = await run(base, home, ["api", "GET", "/people?limit=10"], { FUB_READ_ONLY: "1" });
     assert.equal(read.code, 0);
     assert.equal(read.out.status, 200);
+  } finally { server.close(); }
+});
+
+test("claim without a system name does not send X-System", async () => {
+  const { server, state, base } = await fakeServer();
+  const home = mkdtempSync(join(tmpdir(), "fub-"));
+  state.claimOmitsSystem = true;
+  try {
+    await run(base, home, ["connect"]);
+    state.claimStatus = 200;
+    const done = await run(base, home, ["claim"]);
+    assert.equal(done.code, 0);
+    assert.equal(done.out.system, null);
+    const saved = JSON.parse(readFileSync(join(home, "fub", "token.json"), "utf8"));
+    assert.equal(saved.system, undefined);
+    const read = await run(base, home, ["api", "GET", "/me"]);
+    assert.equal(read.code, 0);
+    assert.equal(state.requests.at(-1).headers["x-system"], undefined);
+    assert.equal(state.requests.at(-1).headers.authorization, "Bearer " + ACCESS);
+  } finally { server.close(); }
+});
+
+test("refresh that omits system keeps the stored X-System name", async () => {
+  const { server, state, base } = await fakeServer();
+  const home = mkdtempSync(join(tmpdir(), "fub-"));
+  seedToken(home, { expires_at: Math.floor(Date.now() / 1000) + 60 });
+  state.refreshOmitsSystem = true;
+  try {
+    const r = await run(base, home, ["api", "GET", "/people?limit=10"]);
+    assert.equal(r.code, 0);
+    const saved = JSON.parse(readFileSync(join(home, "fub", "token.json"), "utf8"));
+    assert.equal(saved.system, "AdvisorReach");
+    assert.equal(state.requests.at(-1).headers["x-system"], "AdvisorReach");
+  } finally { server.close(); }
+});
+
+test("revoke failure keeps the local token; 409 still deletes it", async () => {
+  const { server, state, base } = await fakeServer();
+  const home = mkdtempSync(join(tmpdir(), "fub-"));
+  const tokenFile = join(home, "fub", "token.json");
+  seedToken(home);
+  state.revokeStatus = 502;
+  try {
+    const failed = await run(base, home, ["disconnect"]);
+    assert.equal(failed.code, 1);
+    assert.equal(failed.out.connected, true);
+    assert.match(failed.out.error, /could not revoke/);
+    assert.equal(JSON.parse(readFileSync(tokenFile, "utf8")).access_token, SAVED_ACCESS);
+    assert.equal(state.requests.at(-1).url, "/fub/v1/revoke");
+
+    state.revokeStatus = 409;
+    const gone = await run(base, home, ["disconnect"]);
+    assert.deepEqual(gone.out, { ok: true, connected: false, revoked: false });
+    assert.ok(!existsSync(tokenFile));
+    assert.equal(state.requests.at(-1).url, "/fub/v1/revoke");
+    assert.deepEqual(JSON.parse(state.requests.at(-1).body), { access_token: SAVED_ACCESS });
   } finally { server.close(); }
 });

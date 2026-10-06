@@ -132,27 +132,28 @@ On a 429 the request was not processed. A write that returns `outcome_unknown: t
 landed; do not blindly repeat it. Ask the user before you reconcile.
 
 To remove the saved token: `python3 /opt/data/skills/fub/scripts/fub.py disconnect`.
+That asks the mount to revoke the access token, then deletes the local file. If revoke cannot
+be reached, the local token stays so you can retry. Do not delete `/opt/data/fub/` yourself.
 
 ## AdvisorReach API FUB Mount
 
 This skill authenticates to `$ADVISORREACH_API_URL` with `Authorization: Bearer $ADVISORREACH_API_KEY`.
-Paths are namespaced under `/crm/v1/fub/` so they do not collide with the GoHighLevel mount at
-`/crm/v1/connect`, `/crm/v1/claim`, and `/crm/v1/refresh`.
+The mount is `/fub/v1`, not under `/crm/v1`. GoHighLevel already owns `/crm/v1/connect`,
+`/crm/v1/claim`, `/crm/v1/callback`, and `/crm/v1/refresh`.
 
 | Call | Body | 200 | Other |
 |---|---|---|---|
-| `POST /crm/v1/fub/connect` | empty | `{connect_url, state, expires_in_seconds}` | any other status is an error; nothing is stored |
-| `POST /crm/v1/fub/claim` | `{"state": "<state from connect>"}` | token object below | `409` still waiting (pending file kept); `404` or `410` expired (pending file removed) |
-| `POST /crm/v1/fub/refresh` | `{"refresh_token": "<saved refresh token>"}` | token object below | `409` means the user must reconnect (`reconnect: true`) |
+| `POST /fub/v1/connect` | empty | `{connect_url, state, expires_in_seconds}` | any other status is an error; nothing is stored |
+| `POST /fub/v1/claim` | `{"state": "<state from connect>"}` | token object below | `409` still waiting (pending file kept); `404` or `410` expired (pending file removed) |
+| `POST /fub/v1/refresh` | `{"refresh_token": "<saved refresh token>"}` | token object below | `409` means the user must reconnect (`reconnect: true`) |
+| `POST /fub/v1/revoke` | `{"access_token": "<saved access token>"}` | `{"revoked": true}` | `409` already gone (local token still deleted); any other status keeps the local token |
 
-`connect_url` must be `https`. Token object fields this skill stores:
+`connect_url` must be `https`. Token object fields this skill stores (same file, `/opt/data/fub/token.json`):
 
 - `access_token` (required) — Follow Up Boss OAuth access token, sent as `Authorization: Bearer`
 - `refresh_token` (required)
 - `expires_in` (required, seconds, integer ≥ 1)
-- `system` (required) — registered `X-System` **name** only, sent as the `X-System` header
+- `system` (optional) — registered `X-System` **name** only. The mount's token JSON does not include it. If a response does, it is stored and sent as `X-System`
 - `scope`, `account_id`, `user_id` (optional strings)
 
-The mount keeps `X-System-Key`, the OAuth client secret, and any API key. If a response includes
-those fields, this skill drops them and does not send `X-System-Key`. Follow Up Boss REST is
-always `https://api.followupboss.com/v1` plus the relative path.
+The mount keeps `X-System-Key`, the OAuth client secret, and any API key, and adds them on revoke. If a response includes those fields, this skill drops them and does not send `X-System-Key`. Follow Up Boss REST is always `https://api.followupboss.com/v1` plus the relative path.

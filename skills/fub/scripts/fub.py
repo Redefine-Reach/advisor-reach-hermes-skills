@@ -3,7 +3,7 @@
 
 The access token lives ONLY in /opt/data/fub/token.json (mode 0600, written atomically)
 and is never printed. `api` sends it to Follow Up Boss itself. The AdvisorReach API's
-FUB Mount (/crm/v1/fub) holds the OAuth client secret and the registered system key;
+FUB Mount (/fub/v1) holds the OAuth client secret and the registered system key;
 this script never stores or sends either one. Every command prints one JSON object.
 
 The Follow Up Boss host is fixed to api.followupboss.com. FUB_API_BASE is honored
@@ -24,7 +24,7 @@ import urllib.parse
 
 FUB_HOST = "api.followupboss.com"
 FUB_PREFIX = "/v1"
-MOUNT_PREFIX = "/crm/v1/fub"
+MOUNT_PREFIX = "/fub/v1"
 USER_AGENT = "advisorreach-box/1.0"
 REFRESH_MARGIN_SECONDS = 300
 TIMEOUT_SECONDS = 30
@@ -309,14 +309,23 @@ def _summary(token):
     }
 
 
-def _save_token(raw):
+def _save_token(raw, previous=None):
     if not isinstance(raw, dict):
         _out({"ok": False, "error": "Follow Up Boss token is invalid"}, 1)
     access = raw.get("access_token")
     refresh = raw.get("refresh_token")
-    system = raw.get("system")
+    # The mount returns FUB's token JSON, which has no system name. Keep a name we
+    # already stored when a refresh omits it. Never invent one.
+    if raw.get("system") is not None:
+        system = raw.get("system")
+    elif isinstance(previous, dict):
+        system = previous.get("system")
+    else:
+        system = None
     expires_in = raw.get("expires_in")
-    if not _opaque(access, 4096) or not _opaque(refresh, 4096) or not _header_value(system, 128):
+    if not _opaque(access, 4096) or not _opaque(refresh, 4096):
+        _out({"ok": False, "error": "Follow Up Boss token is invalid"}, 1)
+    if system is not None and not _header_value(system, 128):
         _out({"ok": False, "error": "Follow Up Boss token is invalid"}, 1)
     if type(expires_in) is not int or isinstance(expires_in, bool) or expires_in < 1 or expires_in > 10 * 365 * 24 * 3600:
         _out({"ok": False, "error": "Follow Up Boss token is invalid"}, 1)
@@ -325,8 +334,9 @@ def _save_token(raw):
         "token_type": "Bearer",
         "refresh_token": refresh,
         "expires_in": expires_in,
-        "system": system,
     }
+    if system is not None:
+        token["system"] = system
     for key in ("scope", "account_id", "user_id"):
         if raw.get(key) is None:
             continue
@@ -347,7 +357,7 @@ def _usable_token(token):
         return False
     if not _opaque(token.get("refresh_token"), 4096):
         return False
-    if not _header_value(token.get("system"), 128):
+    if token.get("system") is not None and not _header_value(token.get("system"), 128):
         return False
     expires_at = token.get("expires_at")
     return type(expires_at) is int and not isinstance(expires_at, bool)
@@ -576,7 +586,7 @@ def _refresh(token):
             "error": "could not refresh the Follow Up Boss token",
             "reconnect": status == 409,
         }, 1, _token_literals(token))
-    return _save_token(_mount_json(status, text, _token_literals(token)))
+    return _save_token(_mount_json(status, text, _token_literals(token)), previous=token)
 
 
 def _valid_token(force_refresh=False):
@@ -851,10 +861,9 @@ def _rate_limit(headers):
 def _fub_call(method, path, body, token):
     origin = _fub_origin()
     url = origin + FUB_PREFIX + path
-    headers = {
-        "Authorization": "Bearer " + token["access_token"],
-        "X-System": token["system"],
-    }
+    headers = {"Authorization": "Bearer " + token["access_token"]}
+    if token.get("system"):
+        headers["X-System"] = token["system"]
     try:
         return _exchange(method, url, headers, body)
     except _PreTransport:
@@ -965,10 +974,45 @@ def cmd_api(args):
     _emit_fub(method, status, data, headers, token)
 
 
+def _token_for_revoke():
+    """Return the private token when we can revoke it. Do not read a loose file."""
+    path = os.path.join(_home_dir(), "token.json")
+    if not os.path.lexists(path):
+        return None
+    if os.path.islink(path):
+        _out({"ok": False, "error": "credential storage may not be a link"}, 1)
+    try:
+        info = os.lstat(path)
+    except OSError:
+        _out({"ok": False, "error": "credential storage is unreadable"}, 1)
+    if not stat.S_ISREG(info.st_mode) or not _is_private(info):
+        return None
+    token = _read_store("token.json")
+    if not isinstance(token, dict) or not _opaque(token.get("access_token"), 4096):
+        return None
+    return token
+
+
 def cmd_disconnect(_args):
+    token = _token_for_revoke()
+    revoked = False
+    if token is not None:
+        literals = _token_literals(token)
+        status, _text = _advisorreach(
+            "POST", MOUNT_PREFIX + "/revoke", {"access_token": token["access_token"]}, literals,
+        )
+        if status == 200:
+            revoked = True
+        elif status != 409:
+            _out({
+                "ok": False,
+                "connected": True,
+                "status": status,
+                "error": "could not revoke the Follow Up Boss token",
+            }, 1, literals)
     _remove_store("token.json")
     _remove_store("pending.json")
-    _out({"ok": True, "connected": False})
+    _out({"ok": True, "connected": False, "revoked": revoked}, literals=_token_literals(token))
 
 
 class JsonParser(argparse.ArgumentParser):
@@ -989,7 +1033,7 @@ def main():
     api.add_argument("--data-file", help="JSON file outside credential storage")
     api.add_argument("--confirm-write", action="store_true", help="required for an allowlisted write after the user says yes")
     api.set_defaults(fn=cmd_api)
-    sub.add_parser("disconnect", help="delete the saved token from this box").set_defaults(fn=cmd_disconnect)
+    sub.add_parser("disconnect", help="revoke the token, then delete it from this box").set_defaults(fn=cmd_disconnect)
     args = parser.parse_args()
     args.fn(args)
 

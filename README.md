@@ -137,13 +137,14 @@ script against a local fake of both the API and GHL.
 Follow Up Boss (FUB) through AdvisorReach's FUB Mount — not Composio, not an MCP server, and
 not a hand-pasted API key. One script, `skills/fub/scripts/fub.py` (Python 3 standard library
 only), run as `python3 /opt/data/skills/fub/scripts/fub.py <command>`: `connect` gets a sign-in
-link from `POST $ADVISORREACH_API_URL/crm/v1/fub/connect` (namespaced so it does not collide with
-GHL's `/crm/v1/connect|claim|refresh`); after the user approves, `claim` or `status` takes the
-token from `POST /crm/v1/fub/claim` and saves it at `/opt/data/fub/token.json` (mode 0600, atomic
+link from `POST $ADVISORREACH_API_URL/fub/v1/connect` (the mount is `/fub/v1` because GHL already
+owns `/crm/v1/connect|claim|callback|refresh`); after the user approves, `claim` or `status` takes the
+token from `POST /fub/v1/claim` and saves it at `/opt/data/fub/token.json` (mode 0600, atomic
 write, POSIX owner and mode checked fail-closed). The mount keeps the X-System-Key and the OAuth
-client secret; the file holds the FUB access token, refresh token, and the X-System name. `api`
-calls hard-coded `https://api.followupboss.com/v1` with `Authorization: Bearer` and `X-System`,
-refreshing through `POST /crm/v1/fub/refresh`. Writes are prompt-gated and allowlisted (`POST
+client secret; the file holds the FUB access token and refresh token. `api` calls hard-coded
+`https://api.followupboss.com/v1` with `Authorization: Bearer`, refreshing through
+`POST /fub/v1/refresh`. `disconnect` revokes through `POST /fub/v1/revoke`, then deletes the
+local token. Writes are prompt-gated and allowlisted (`POST
 /notes`, limited `PUT /people/{id}`); `--confirm-write` does not unlock events, texts, emails,
 action plans, webhooks, or DELETE. Absolute `_metadata.nextLink` values on
 `api.followupboss.com` are rewritten to relative paths. HTTP 429 responses include `retry_after`
