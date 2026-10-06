@@ -1,11 +1,16 @@
 ---
 name: connect-app
-description: Connect any outside app Composio supports (Gmail, Google Calendar, Notion, Slack, HubSpot, LinkedIn, Canva, GitHub, and hundreds more) to this box through Composio so its tools become available, and use those tools once connected. Use when the user asks to connect, link, hook up, or sign into an app, or when you need something from an app that is not connected yet. Sends the user one sign-in link they open in their own browser.
+description: Connect outside apps Composio supports (Gmail, Google Calendar, Notion, Slack, HubSpot, LinkedIn, Canva, GitHub, and hundreds more) through Composio. NOT for Circle, GoHighLevel/GHL/HighLevel, or Follow Up Boss/FUB — those use native skills (circle-member-token, ghl, fub). Use when the user asks to connect an allowed outside app, or needs something from one not connected yet.
 ---
 
 # Connect an outside app (Composio)
 
-**Not for Circle.** Circle (circle.so) is AdvisorReach's own community, not a Composio app — use the `circle-member-token` skill for anything in Circle.
+**Not for Circle, GoHighLevel, or Follow Up Boss.**
+- Circle (circle.so) → `circle-member-token` skill
+- GoHighLevel / GHL / HighLevel / LeadConnector → `ghl` skill (never Composio toolkit `highlevel`)
+- Follow Up Boss / FUB → `fub` skill (never Composio toolkit `follow_up_boss`, never ask for an API key)
+If the user asks to connect or use any of those, open the native skill — do not call
+`COMPOSIO_SEARCH_TOOLS` or `COMPOSIO_MANAGE_CONNECTIONS` for them.
 
 This box has a `composio` MCP server. It gives you four tools:
 
