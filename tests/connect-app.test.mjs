@@ -13,10 +13,12 @@ import { dirname, join } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const skill = readFileSync(join(here, "..", "skills", "connect-app", "SKILL.md"), "utf8");
 
-test("frontmatter still names the skill's purpose (routing text untouched)", () => {
+test("frontmatter names Composio apps and excludes native Circle, GHL, and FUB", () => {
   const fm = skill.match(/^---\n([\s\S]*?)\n---\n/);
   assert.ok(fm, "frontmatter present");
-  assert.match(fm[1], /^description: Connect any outside app Composio supports/m);
+  assert.match(fm[1], /^description: "Connect outside apps Composio supports/m);
+  assert.match(fm[1], /NOT for Circle, GoHighLevel\/GHL\/HighLevel, or Follow Up Boss\/FUB/);
+  assert.match(fm[1], /circle-member-token, ghl, fub/);
 });
 
 test("connecting starts with a side-effect-free list of connected accounts", () => {
@@ -42,7 +44,7 @@ test("tool execution passes account by alias when several accounts exist, asks o
 });
 
 test("removing an account needs an explicit yes; writes name the source account", () => {
-  assert.match(skill, /^- `action: "remove"` deletes a connected account — only with the user's explicit yes/m);
+  assert.match(skill, /^- `action: "remove"` deletes a connected account -- only with the user's explicit yes/m);
   assert.match(skill, /and which account it goes from/);
 });
 
