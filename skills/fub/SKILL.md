@@ -1,6 +1,6 @@
 ---
 name: fub
-description: "FUB CRM. NOT a Composio/connect-app app. Read and write. Follow Up Boss leads and people on this box: connect, look up, notes, and person fields."
+description: "FUB CRM. NOT a Composio/connect-app app. Read and write. Follow Up Boss leads and people on this box: connect, look up, create a person, notes, and person fields."
 required_environment_variables:
   - ADVISORREACH_API_URL
   - ADVISORREACH_API_KEY
@@ -91,6 +91,9 @@ Examples:
     # add a note — only after they say yes
     python3 /opt/data/skills/fub/scripts/fub.py api POST '/notes' --confirm-write --data '{"personId": 4242, "subject": "Call", "body": "Call back Thursday"}'
 
+    # create a contact — only after they say yes
+    python3 /opt/data/skills/fub/scripts/fub.py api POST '/people' --confirm-write --data '{"firstName": "Jane", "lastName": "Doe", "emails": [{"value": "jane@example.com"}], "phones": [{"value": "5550100"}]}'
+
     # update contact fields — only after they say yes
     python3 /opt/data/skills/fub/scripts/fub.py api PUT '/people/4242' --confirm-write --data '{"firstName": "Jane", "lastName": "Doe"}'
 
@@ -102,13 +105,15 @@ The script also enforces a write allowlist. `--confirm-write` does not override 
 Allowed:
 
 - `POST /notes` with only `personId` (positive integer), `body`, and optional `subject` and `isHtml`
+- `POST /people` to create one person, with the same fields as `PUT /people/{id}` below.
+  Include at least one of a name (`firstName`, `lastName`, or `name`), an email, or a phone.
 - `PUT /people/{id}` with only `firstName`, `lastName`, `name`, `emails`, `phones`, `addresses`,
   `background`, and `price`
 
-Refused, flag or not: `DELETE`, `PATCH`, `POST /events`, `POST /people`, action plans
+Refused, flag or not: `DELETE`, `PATCH`, `POST /events`, action plans
 (`/actionPlansPeople` and the rest of `/actionPlans`), `/textMessages`, `/emails`, `/webhooks`,
-`/users`, `/oauthApps`, and any other write. `PUT /people/{id}` refuses `stage`, `source`,
-`assignedUserId`, `tags`, and any field not in the list above — those can start Follow Up Boss
+`/users`, `/oauthApps`, and any other write. `POST /people` and `PUT /people/{id}` refuse `stage`,
+`source`, `assignedUserId`, `tags`, and any field not in the list above — those can start Follow Up Boss
 automation. If the error says writes are disabled, stop; do not look for another way to write.
 
 Prefer `--data`. `--data-file` cannot read credential or token files, anything under
@@ -124,7 +129,7 @@ Prefer `--data`. `--data-file` cannot read credential or token files, anything u
 | `status` 403 from `api` | The connection's `scope` does not allow this call | Tell the user; do not retry |
 | `status` 422 / 400 from `api` | Bad path or body | Fix the request; read `body` |
 | `status` 429 from `api` | Rate limited. `retry_after` is seconds to wait. `rate_limit` has `limit`, `remaining`, `window`, and `context` | Wait `retry_after`, then retry once if this was a GET. Do not retry a write. Do not send other calls in between |
-| `not on the write allowlist` / `DELETE is not allowed` | This write can message someone or start an action plan | Do not retry. Notes and the person fields listed above are the only writes |
+| `not on the write allowlist` / `DELETE is not allowed` | This write can message someone or start an action plan | Do not retry. Creating a person, notes, and the person fields listed above are the only writes |
 | `credential storage is not private` | The saved token is readable by someone else | Stop. Do not read or chmod the file |
 | `status` 502 / 504 from the refresh | Our side or Follow Up Boss was slow/unavailable | Retry the refresh once by running the same `api` command again; it is safe |
 

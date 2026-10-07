@@ -693,6 +693,8 @@ def _write_resource_error(method, resource):
         return "%s is not allowed" % method
     if method == "POST" and resource == "/notes":
         return None
+    if method == "POST" and resource == "/people":
+        return None
     if method == "PUT" and resource.startswith("/people/"):
         person_id = resource[len("/people/"):]
         if person_id.isdigit() and person_id[0] != "0":
@@ -806,29 +808,47 @@ def _check_note(body):
     return None
 
 
-def _check_person(body):
+def _person_has_identity(body):
+    for key in ("firstName", "lastName", "name"):
+        value = body.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+    for key in ("emails", "phones"):
+        items = body.get(key) or ()
+        for item in items:
+            if isinstance(item, dict):
+                value = item.get("value")
+                if isinstance(value, str) and value.strip():
+                    return True
+    return False
+
+
+def _check_person(body, creating=False):
+    label = "POST /people" if creating else "PUT /people/{id}"
     if not isinstance(body, dict) or not body or set(body) - PERSON_FIELDS:
         refused = sorted(set(body) - PERSON_FIELDS) if isinstance(body, dict) else []
         if refused:
-            return "PUT /people/{id} refuses fields: " + ", ".join(refused)
-        return "PUT /people/{id} accepts only name, email, phone, address, background, and price fields"
+            return "%s refuses fields: %s" % (label, ", ".join(refused))
+        return "%s accepts only name, email, phone, address, background, and price fields" % label
     for key in ("firstName", "lastName", "name"):
         if key in body and not _short_string(body[key], 500):
-            return "PUT /people/{id} %s must be text" % key
+            return "%s %s must be text" % (label, key)
     if "background" in body and not _short_string(body["background"], 20000):
-        return "PUT /people/{id} background must be text"
+        return "%s background must be text" % label
     if "price" in body:
         price = body["price"]
         if type(price) is bool or not isinstance(price, (int, float)) or (
             isinstance(price, float) and not math.isfinite(price)
         ):
-            return "PUT /people/{id} price must be a number"
+            return "%s price must be a number" % label
     if "emails" in body and not _contact_list(body["emails"], EMAIL_FIELDS):
-        return "PUT /people/{id} emails must be a list of value/type objects"
+        return "%s emails must be a list of value/type objects" % label
     if "phones" in body and not _contact_list(body["phones"], PHONE_FIELDS):
-        return "PUT /people/{id} phones must be a list of value/type objects"
+        return "%s phones must be a list of value/type objects" % label
     if "addresses" in body and not _contact_list(body["addresses"], ADDRESS_FIELDS):
-        return "PUT /people/{id} addresses must be a list of address objects"
+        return "%s addresses must be a list of address objects" % label
+    if creating and not _person_has_identity(body):
+        return "POST /people requires a name, email, or phone"
     return None
 
 
@@ -954,8 +974,10 @@ def cmd_api(args):
         raw = _load_data_file(args.data_file)
     body = None if raw is None else _parse_body(raw)
     if method != "GET":
-        if method == "POST":
+        if method == "POST" and resource == "/notes":
             field_error = _check_note(body)
+        elif method == "POST" and resource == "/people":
+            field_error = _check_person(body, True)
         else:
             field_error = _check_person(body)
         if field_error:

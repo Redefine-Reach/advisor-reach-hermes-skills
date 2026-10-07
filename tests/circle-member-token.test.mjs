@@ -86,6 +86,11 @@ test("every curl in the new sections sets a User-Agent (Cloudflare 1010 rule)", 
   for (const b of blocks) assert.match(b, /User-Agent: advisorreach-box\/1\.0/, "curl block without User-Agent:\n" + b);
 });
 
-test("connect-app hands Circle off to circle-member-token", () => {
-  assert.match(connectApp, /^\*\*Not for Circle\.\*\* Circle \(circle\.so\) is AdvisorReach's own community, not a Composio app — use the `circle-member-token` skill for anything in Circle\.$/m);
+test("connect-app hands Circle, GoHighLevel, and Follow Up Boss to native skills", () => {
+  assert.match(connectApp, /^\*\*Not for Circle, GoHighLevel, or Follow Up Boss\.\*\*$/m);
+  assert.match(connectApp, /^- Circle \(circle\.so\) -> `circle-member-token` skill$/m);
+  assert.match(connectApp, /^- GoHighLevel \/ GHL \/ HighLevel \/ LeadConnector -> `ghl` skill \(never Composio toolkit `highlevel`\)$/m);
+  assert.match(connectApp, /^- Follow Up Boss \/ FUB -> `fub` skill \(never Composio toolkit `follow_up_boss`, never ask for an API key\)$/m);
+  assert.match(connectApp, /open the native skill -- do not call/);
+  assert.match(connectApp, /`COMPOSIO_SEARCH_TOOLS` or `COMPOSIO_MANAGE_CONNECTIONS` for them/);
 });
