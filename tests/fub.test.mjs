@@ -63,6 +63,9 @@ test("routes FUB away from Composio and declares only the AdvisorReach env vars"
   assert.doesNotMatch(readFileSync(script, "utf8"), /\/crm\/v1\/fub/);
   assert.match(skill, /api\.followupboss\.com/);
   assert.match(skill, /python3 \/opt\/data\/skills\/fub\/scripts\/fub\.py status/);
+  assert.match(skill, /POST '\/people'/);
+  assert.match(skill, /least one of a name/);
+  assert.doesNotMatch(skill, /`POST \/people`, action plans/);
 });
 
 // ---- behaviour against a local fake ------------------------------------------------------
@@ -357,7 +360,7 @@ test("write allowlist denies dangerous paths even with --confirm-write", async (
     ["POST", "/emails"],
     ["POST", "/webhooks"],
     ["POST", "/users"],
-    ["POST", "/people"],
+    ["POST", "/people/42"],
     ["DELETE", "/people/42"],
     ["PATCH", "/people/42"],
     ["PUT", "/events/1"],
@@ -398,6 +401,62 @@ test("write allowlist denies dangerous paths even with --confirm-write", async (
     assert.equal(state.requests.at(-1).method, "PUT");
     assert.equal(state.requests.at(-1).url, "/v1/people/42");
     assert.deepEqual(JSON.parse(state.requests.at(-1).body), { firstName: "Jane" });
+  } finally { server.close(); }
+});
+
+test("POST /people creates a contact after --confirm-write and refuses unsafe bodies", async () => {
+  const { server, state, base } = await fakeServer();
+  const home = mkdtempSync(join(tmpdir(), "fub-"));
+  seedToken(home);
+  const created = {
+    firstName: "David",
+    lastName: "Marshall",
+    emails: [{ value: "david@example.com" }],
+    phones: [{ value: "5550100" }],
+  };
+  try {
+    const unconfirmed = await run(base, home, ["api", "POST", "/people", "--data", JSON.stringify(created)]);
+    assert.notEqual(unconfirmed.code, 0);
+    assert.match(unconfirmed.out.error, /wait for yes/);
+    assert.equal(fubRequests(state).length, 0);
+
+    const automation = await run(base, home, ["api", "POST", "/people", "--confirm-write", "--data", JSON.stringify({
+      firstName: "David", stage: "Lead", source: "SMS", tags: ["vip"], assignedUserId: 9,
+    })]);
+    assert.notEqual(automation.code, 0);
+    assert.match(automation.out.error, /stage/);
+    assert.match(automation.out.error, /source/);
+    assert.match(automation.out.error, /tags/);
+    assert.match(automation.out.error, /assignedUserId/);
+    assert.equal(fubRequests(state).length, 0);
+
+    const noIdentity = await run(base, home, ["api", "POST", "/people", "--confirm-write", "--data", '{"background": "met at open house"}']);
+    assert.notEqual(noIdentity.code, 0);
+    assert.match(noIdentity.out.error, /requires a name, email, or phone/);
+    assert.equal(fubRequests(state).length, 0);
+
+    const blankName = await run(base, home, ["api", "POST", "/people", "--confirm-write", "--data", '{"firstName": "  ", "emails": [{"value": ""}]}']);
+    assert.notEqual(blankName.code, 0);
+    assert.match(blankName.out.error, /requires a name, email, or phone/);
+    assert.equal(fubRequests(state).length, 0);
+
+    const phoneOnly = await run(base, home, ["api", "POST", "/people", "--confirm-write", "--data", '{"phones": [{"value": "5550100", "type": "mobile"}]}']);
+    assert.equal(phoneOnly.code, 0);
+    assert.equal(phoneOnly.out.status, 200);
+    assert.equal(state.requests.at(-1).method, "POST");
+    assert.equal(state.requests.at(-1).url, "/v1/people");
+    assert.deepEqual(JSON.parse(state.requests.at(-1).body), { phones: [{ value: "5550100", type: "mobile" }] });
+
+    state.fubBody = { id: 99, name: "David Marshall" };
+    const person = await run(base, home, ["api", "POST", "/people", "--confirm-write", "--data", JSON.stringify(created)]);
+    assert.equal(person.code, 0);
+    assert.equal(person.out.status, 200);
+    assert.equal(person.out.body.id, 99);
+    assert.equal(state.requests.at(-1).method, "POST");
+    assert.equal(state.requests.at(-1).url, "/v1/people");
+    assert.deepEqual(JSON.parse(state.requests.at(-1).body), created);
+    assert.equal(state.requests.at(-1).headers.authorization, "Bearer " + SAVED_ACCESS);
+    assert.equal(fubRequests(state).length, 2);
   } finally { server.close(); }
 });
 

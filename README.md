@@ -145,7 +145,7 @@ client secret; the file holds the FUB access token and refresh token. `api` call
 `https://api.followupboss.com/v1` with `Authorization: Bearer`, refreshing through
 `POST /fub/v1/refresh`. `disconnect` revokes through `POST /fub/v1/revoke`, then deletes the
 local token. Writes are prompt-gated and allowlisted (`POST
-/notes`, limited `PUT /people/{id}`); `--confirm-write` does not unlock events, texts, emails,
+/notes`, `POST /people` with a name, email, or phone, limited `PUT /people/{id}`); `--confirm-write` does not unlock events, texts, emails,
 action plans, webhooks, or DELETE. Absolute `_metadata.nextLink` values on
 `api.followupboss.com` are rewritten to relative paths. HTTP 429 responses include `retry_after`
 and `rate_limit`. The token is never printed. `tests/fub.test.mjs` pins the 57-character index
