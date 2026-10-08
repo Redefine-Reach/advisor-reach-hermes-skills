@@ -26,7 +26,7 @@ You do not send any other way. Do not call `hermes send` yourself, do not
 curl Telnyx, do not import the adapter, and do not pass a From number.
 NEVER use Composio, `connect-app`, or a Telnyx toolkit to send or receive
 a third-party SMS. Do not add the destination to `TELNYX_SMS_ALLOWED_USERS`.
-Do not change Helm, customer YAML, or the Telnyx portal. A session file is
+Do not change Helm, the box's settings, or the Telnyx portal. A session file is
 not an allowlist entry. Mode B (a list, a nurture sequence, a book of
 business, or a MoO blast) stays refused.
 
