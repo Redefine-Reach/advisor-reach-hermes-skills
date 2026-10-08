@@ -28,7 +28,8 @@ sources IN ORDER and using the first that yields a non-empty array:
        cat /opt/box/circle/members.json
 
 3. The API, which returns the same list from the same source (the box's
-   Terraform customer file), so it cannot disagree with the file:
+   Circle members, set by an operator in advisorreach-boxes-api), so it
+   cannot disagree with the file:
 
        curl --max-time 30 -H "Authorization: Bearer $ADVISORREACH_API_KEY" \
          "$ADVISORREACH_API_URL/circle/v1/members"
@@ -58,7 +59,8 @@ including a real Circle member who belongs to a different box.
 
 `GET {ADVISORREACH_API_URL}/circle/v1/members` returns the same list the file
 holds, if you would rather ask than read the file. Both come from the same
-source (the box's Terraform customer file), so they cannot disagree.
+source (the box's Circle members in advisorreach-boxes-api), so they cannot
+disagree.
 
 Use `curl --max-time 30`. This is one hop to Circle and back, not a provisioning
 call; if it has not answered in 30 seconds it is a fault to report, not a reason
@@ -214,9 +216,12 @@ Never invent a post, and never ask for a link before you have listed the posts.
 
 ## What this does NOT do
 
-- **It does not create, rename or remove members.** Membership is managed in
-  Terraform. If someone asks you to add a teammate to Circle, say that it is a
-  change to `terraform/customers/<box>.yaml` and not something you can do.
+- **It does not create, rename or remove members.** A box's Circle members are
+  changed by an AdvisorReach operator (`ar box set <box> --circle-members-file`,
+  a Box Values Update in advisorreach-boxes-api), and a person new to Circle
+  is invited in Circle first. If someone asks you to add a teammate to Circle,
+  say that the AdvisorReach team makes that change and it is not something you
+  can do.
 - **It does not let you act as someone outside this box.** The API checks the
   requested email against this box's own list before doing anything.
 
