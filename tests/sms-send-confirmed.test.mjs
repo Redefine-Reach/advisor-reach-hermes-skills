@@ -1,11 +1,13 @@
 // Hermetic contract for sms-send-confirmed (RED-390). No network, no Hermes.
 // The script is the gate: stage never sends; send requires SEND plus attestation;
-// opt-out, cron, multi-dest, and an unresolved box never call the transport.
-// Path A allows any resolved non-empty box id when TELNYX_SMS_FROM_NUMBER is set.
+// opt-out, cron, multi-dest, an unresolved box, and a delegated child never call
+// the transport. Path A allows any resolved non-empty box id when
+// TELNYX_SMS_FROM_NUMBER is set. stage requires a Why line (red-390-v2).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync, chmodSync, existsSync, mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, writeFileSync, chmodSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir, hostname } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -28,7 +30,27 @@ function podLabel() {
   return match ? match[1] : null;
 }
 
-function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-"))) {
+function draftFiles(dir) {
+  const drafts = join(dir, "drafts");
+  if (!existsSync(drafts)) return [];
+  return readdirSync(drafts).filter((name) => name.endsWith(".json"));
+}
+
+function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), options = {}) {
+  // Existing stage flows stay valid: a Why line is required, so inject one
+  // unless the test passed --why itself or opted out.
+  const cmdArgs =
+    options.why === false || args[0] !== "stage" || args.includes("--why")
+      ? args
+      : [
+          ...args,
+          "--why",
+          "you asked for this text today",
+          "--source-kind",
+          "owner_text",
+          "--source-date",
+          "2026-10-08",
+        ];
   const calls = join(dir, "calls.jsonl");
   const transport = join(dir, "transport.py");
   writeFileSync(
@@ -62,7 +84,7 @@ function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-"))) {
     CALLS: calls,
     ...extra,
   };
-  const proc = spawnSync("python3", [scriptPath, ...args], { env, encoding: "utf8" });
+  const proc = spawnSync("python3", [scriptPath, ...cmdArgs], { env, encoding: "utf8" });
   let payload = null;
   try {
     payload = JSON.parse(proc.stdout || "null");
@@ -119,6 +141,14 @@ test("skill routes third-party SMS through confirm, the pinned adapter, and the 
   assert.doesNotMatch(required, /TELEGRAM_ALLOWED_USERS/);
   assert.match(frontmatter, /optional_environment_variables:\n  - TELEGRAM_ALLOWED_USERS/);
   assert.match(skill, /Your entire reply to the owner is the JSON `attestation` field, verbatim/);
+  assert.match(skill, /--why/);
+  assert.match(skill, /--source-kind/);
+  assert.match(skill, /refused_no_why/);
+  assert.match(skill, /fub_note/);
+  assert.match(skill, /\(no source\)/);
+  assert.match(skill, /Never name a source you did not read/);
+  assert.match(skill, /ARIN memory:/);
+  assert.match(skill, /HERMES_DELEGATED_CHILD_CONTEXT/);
   assert.match(skill, /exactly `SEND` or `\/approve`/);
   assert.match(skill, /refused_no_confirm/);
   assert.match(skill, /refused_no_attestation/);
@@ -148,6 +178,10 @@ test("script sends through standalone_sender_fn after plugin resolve, not hermes
   assert.match(script, /standalone_sender_fn/);
   assert.match(script, /_resolve_all/);
   assert.match(script, /a7d209f/);
+  assert.match(script, /red-390-v2/);
+  assert.doesNotMatch(script, /red-390-v1/);
+  assert.match(script, /refused_no_why/);
+  assert.match(script, /HERMES_DELEGATED_CHILD_CONTEXT/);
   const out = py(`${importMod}
 calls = []
 class Entry:
@@ -739,4 +773,435 @@ assert hook.skip_agent_turn(None) is False
 print("ok")
 `);
   assert.equal(out, "ok");
+});
+
+test("stage puts the Why line in the attestation and not in the client body", () => {
+  const line = "Why: Jane's offer deadline is 5 PM today (FUB note, Oct 7).";
+  assert.equal(line.length, 59);
+  const dir = mkdtempSync(join(tmpdir(), "sms-why-ok-"));
+  const staged = run(
+    [
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      DEST,
+      "--body",
+      BODY,
+      "--why",
+      "Jane's offer deadline is 5 PM today",
+      "--source-kind",
+      "fub_note",
+      "--source-date",
+      "2026-10-07",
+      "--source-ref",
+      "note-1",
+    ],
+    {},
+    dir,
+  );
+  assert.equal(staged.payload.outcome, "staged");
+  assert.equal(staged.payload.provider_called, false);
+  assert.equal(staged.payload.attestation_version, "red-390-v2");
+  assert.equal(staged.payload.source_kind, "fub_note");
+  assert.equal(staged.payload.source_date, "2026-10-07");
+  assert.equal(staged.payload.why_line, line);
+  assert.equal(staged.payload.source_ref, undefined);
+  assert.equal(staged.callLines.length, 0);
+  const parts = staged.payload.attestation.split("\n");
+  assert.match(parts[0], /from ARIN's number/);
+  assert.equal(parts[1], BODY);
+  assert.equal(parts[2], line);
+  assert.match(parts[3], /^Reply SEND to confirm/);
+  const draft = JSON.parse(readFileSync(join(dir, "drafts", `${staged.payload.draft_id}.json`), "utf8"));
+  assert.equal(draft.body, BODY);
+  assert.equal(draft.body_hash, createHash("sha256").update(BODY).digest("hex"));
+  assert.equal(draft.why_line, line);
+  assert.equal(draft.source_kind, "fub_note");
+  assert.equal(draft.source_date, "2026-10-07");
+  assert.equal(draft.source_ref, "note-1");
+  assert.equal(draft.attestation_version, "red-390-v2");
+  assert.doesNotMatch(draft.body, /Why:/);
+  const sent = run(
+    ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
+    {},
+    dir,
+  );
+  assert.equal(sent.payload.outcome, "sent");
+  assert.deepEqual(JSON.parse(sent.callLines[0]), { to: DEST, text: BODY });
+});
+
+test("Why line labels match the source kind", () => {
+  const out = py(`${importMod}
+assert len(mod.GSM7_CHARS) == 134
+assert chr(96) not in mod.GSM7_CHARS
+line, kind, day, ref = mod.build_why_line(
+    "Jane's offer deadline is 5 PM today", "fub_note", "2026-10-07", "", "note-1")
+assert line == "Why: Jane's offer deadline is 5 PM today (FUB note, Oct 7)."
+assert len(line) == 59 and kind == "fub_note" and day == "2026-10-07" and ref == "note-1"
+memory, memory_kind, memory_day, _ = mod.build_why_line(
+    "Sam's lease ends Nov 30, so renewal talk is due",
+    "memory",
+    "2026-09-12",
+    "FUB note",
+    "",
+)
+assert memory == "Why: Sam's lease ends Nov 30, so renewal talk is due (ARIN memory: FUB note, Sep 12)."
+assert memory_kind == "memory" and memory_day == "2026-09-12"
+assert len(memory) <= 120
+gmail, _, gmail_day, _ = mod.build_why_line(
+    "Mark asked about rates and has had no reply for 3 days",
+    "gmail",
+    "2026-10-05",
+    "Mark",
+    "msg-1",
+)
+assert gmail == "Why: Mark asked about rates and has had no reply for 3 days (Gmail from Mark, Oct 5)."
+assert gmail_day == "2026-10-05"
+owner, _, owner_day, _ = mod.build_why_line(
+    "you asked me to check in the day after the showing",
+    "owner_text",
+    "2026-10-08",
+    "",
+    "",
+)
+assert owner == "Why: you asked me to check in the day after the showing (your text, Oct 8)."
+assert owner_day == "2026-10-08"
+unknown, unknown_kind, _, _ = mod.build_why_line(
+    "Sam's lease ends Nov 30",
+    "memory",
+    "2026-09-12",
+    "source unknown",
+    "",
+)
+assert unknown_kind == "memory"
+assert unknown.endswith("(ARIN memory: source unknown, Sep 12).")
+print("ok")
+`);
+  assert.equal(out, "ok");
+});
+
+test("stage refuses a missing Why line and writes no draft", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sms-no-why-"));
+  const missing = run(
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY],
+    {},
+    dir,
+    { why: false },
+  );
+  assert.equal(missing.payload.outcome, "refused_no_why");
+  assert.equal(missing.payload.field, "why");
+  assert.equal(missing.payload.provider_called, false);
+  assert.equal(missing.proc.status, 2);
+  assert.equal(missing.callLines.length, 0);
+  assert.equal(draftFiles(dir).length, 0);
+
+  const noKind = run(
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY, "--why", "checking in today"],
+    {},
+    mkdtempSync(join(tmpdir(), "sms-no-kind-")),
+  );
+  assert.equal(noKind.payload.outcome, "refused_no_why");
+  assert.equal(draftFiles(noKind.dir).length, 0);
+
+  const noDate = run([
+    "stage",
+    "--approver",
+    OWNER,
+    "--dest",
+    DEST,
+    "--body",
+    BODY,
+    "--why",
+    "checking in today",
+    "--source-kind",
+    "fub_note",
+  ]);
+  assert.equal(noDate.payload.outcome, "refused_no_why");
+  assert.equal(draftFiles(noDate.dir).length, 0);
+
+  const later = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {}, dir);
+  assert.equal(later.payload.outcome, "staged");
+  assert.equal(draftFiles(dir).length, 1);
+});
+
+test("stage refuses a bad source kind", () => {
+  const bad = run([
+    "stage",
+    "--approver",
+    OWNER,
+    "--dest",
+    DEST,
+    "--body",
+    BODY,
+    "--why",
+    "checking in today",
+    "--source-kind",
+    "inbox",
+    "--source-date",
+    "2026-10-08",
+  ]);
+  assert.equal(bad.payload.outcome, "refused_no_why");
+  assert.equal(bad.payload.provider_called, false);
+  assert.equal(bad.callLines.length, 0);
+  assert.equal(draftFiles(bad.dir).length, 0);
+
+  const noName = run([
+    "stage",
+    "--approver",
+    OWNER,
+    "--dest",
+    DEST,
+    "--body",
+    BODY,
+    "--why",
+    "Mark asked about rates",
+    "--source-kind",
+    "gmail",
+    "--source-date",
+    "2026-10-05",
+  ]);
+  assert.equal(noName.payload.outcome, "refused_no_why");
+  assert.equal(draftFiles(noName.dir).length, 0);
+});
+
+test("stage refuses a non-GSM Why line and folds curly punctuation", () => {
+  const emoji = run([
+    "stage",
+    "--approver",
+    OWNER,
+    "--dest",
+    DEST,
+    "--body",
+    BODY,
+    "--why",
+    "deadline today \u{1F600}",
+    "--source-kind",
+    "owner_text",
+    "--source-date",
+    "2026-10-08",
+  ]);
+  assert.equal(emoji.payload.outcome, "refused_no_why");
+  assert.match(emoji.payload.reason, /GSM-7/);
+  assert.equal(emoji.payload.provider_called, false);
+  assert.equal(draftFiles(emoji.dir).length, 0);
+
+  const folded = run([
+    "stage",
+    "--approver",
+    OWNER,
+    "--dest",
+    DEST,
+    "--body",
+    BODY,
+    "--why",
+    "Jane\u2019s deadline \u2014 today\u2026",
+    "--source-kind",
+    "fub_note",
+    "--source-date",
+    "2026-10-07",
+  ]);
+  assert.equal(folded.payload.outcome, "staged");
+  assert.equal(folded.payload.why_line, "Why: Jane's deadline - today... (FUB note, Oct 7).");
+  assert.doesNotMatch(folded.payload.attestation, /\u2019|\u2014|\u2026/);
+});
+
+test("stage refuses confirm tokens in the Why line", () => {
+  for (const why of ["reply SEND now", "please /approve this", "they said STOP", "reply send now", "they said stop"]) {
+    const refused = run([
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      DEST,
+      "--body",
+      BODY,
+      "--why",
+      why,
+      "--source-kind",
+      "owner_text",
+      "--source-date",
+      "2026-10-08",
+    ]);
+    assert.equal(refused.payload.outcome, "refused_no_why", why);
+    assert.match(refused.payload.reason, /SEND/);
+    assert.equal(refused.payload.provider_called, false);
+    assert.equal(refused.callLines.length, 0);
+    assert.equal(draftFiles(refused.dir).length, 0);
+  }
+  const allowed = run([
+    "stage",
+    "--approver",
+    OWNER,
+    "--dest",
+    DEST,
+    "--body",
+    BODY,
+    "--why",
+    "sending the packet today",
+    "--source-kind",
+    "owner_text",
+    "--source-date",
+    "2026-10-08",
+  ]);
+  assert.equal(allowed.payload.outcome, "staged");
+  assert.match(allowed.payload.why_line, /sending the packet today/);
+});
+
+test("stage refuses a Why line that is too long", () => {
+  const longWhy = run([
+    "stage",
+    "--approver",
+    OWNER,
+    "--dest",
+    DEST,
+    "--body",
+    BODY,
+    "--why",
+    "a".repeat(200),
+    "--source-kind",
+    "owner_text",
+    "--source-date",
+    "2026-10-08",
+  ]);
+  assert.equal(longWhy.payload.outcome, "refused_no_why");
+  assert.match(longWhy.payload.reason, /90/);
+  assert.equal(draftFiles(longWhy.dir).length, 0);
+
+  const ninetyOne = run([
+    "stage",
+    "--approver",
+    OWNER,
+    "--dest",
+    DEST,
+    "--body",
+    BODY,
+    "--why",
+    "b".repeat(91),
+    "--source-kind",
+    "owner_text",
+    "--source-date",
+    "2026-10-08",
+  ]);
+  assert.equal(ninetyOne.payload.outcome, "refused_no_why");
+  assert.equal(draftFiles(ninetyOne.dir).length, 0);
+
+  const overLine = run([
+    "stage",
+    "--approver",
+    OWNER,
+    "--dest",
+    DEST,
+    "--body",
+    BODY,
+    "--why",
+    "c".repeat(90),
+    "--source-kind",
+    "memory",
+    "--source-name",
+    "FUB note from the archive",
+    "--source-date",
+    "2026-10-08",
+  ]);
+  assert.equal(overLine.payload.outcome, "refused_no_why");
+  assert.match(overLine.payload.reason, /120/);
+  assert.equal(overLine.payload.provider_called, false);
+  assert.equal(draftFiles(overLine.dir).length, 0);
+});
+
+test("stage refuses none with a date or ref and allows none alone", () => {
+  const dated = run([
+    "stage",
+    "--approver",
+    OWNER,
+    "--dest",
+    DEST,
+    "--body",
+    BODY,
+    "--why",
+    "you asked me to text Sam today",
+    "--source-kind",
+    "none",
+    "--source-date",
+    "2026-10-01",
+  ]);
+  assert.equal(dated.payload.outcome, "refused_no_why");
+  assert.equal(dated.payload.provider_called, false);
+  assert.equal(draftFiles(dated.dir).length, 0);
+
+  const withRef = run([
+    "stage",
+    "--approver",
+    OWNER,
+    "--dest",
+    DEST,
+    "--body",
+    BODY,
+    "--why",
+    "you asked me to text Sam today",
+    "--source-kind",
+    "none",
+    "--source-ref",
+    "note-9",
+  ]);
+  assert.equal(withRef.payload.outcome, "refused_no_why");
+  assert.equal(draftFiles(withRef.dir).length, 0);
+
+  const none = run([
+    "stage",
+    "--approver",
+    OWNER,
+    "--dest",
+    DEST,
+    "--body",
+    BODY,
+    "--why",
+    "you asked me to text Sam today",
+    "--source-kind",
+    "none",
+  ]);
+  assert.equal(none.payload.outcome, "staged");
+  assert.equal(none.payload.why_line, "Why: you asked me to text Sam today (no source).");
+  assert.equal(none.payload.source_kind, "none");
+  assert.equal(none.payload.source_date, "");
+  assert.equal(none.payload.source_ref, undefined);
+  assert.doesNotMatch(none.payload.why_line, /\d{4}|Oct|Sep/);
+  const draft = JSON.parse(readFileSync(join(none.dir, "drafts", `${none.payload.draft_id}.json`), "utf8"));
+  assert.equal(draft.source_date, "");
+  assert.equal(draft.source_ref, "");
+  assert.equal(draft.body, BODY);
+});
+
+test("a delegated child cannot stage or send", () => {
+  const blocked = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {
+    HERMES_DELEGATED_CHILD_CONTEXT: "1",
+  });
+  assert.equal(blocked.payload.outcome, "refused_autonomous");
+  assert.match(blocked.payload.reason, /delegated child/);
+  assert.equal(blocked.payload.provider_called, false);
+  assert.equal(blocked.proc.status, 2);
+  assert.equal(blocked.callLines.length, 0);
+  assert.equal(draftFiles(blocked.dir).length, 0);
+
+  const dir = mkdtempSync(join(tmpdir(), "sms-child-"));
+  const staged = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {}, dir);
+  assert.equal(staged.payload.outcome, "staged");
+  const childSend = run(
+    ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
+    { HERMES_DELEGATED_CHILD_CONTEXT: "1" },
+    dir,
+  );
+  assert.equal(childSend.payload.outcome, "refused_autonomous");
+  assert.equal(childSend.payload.provider_called, false);
+  assert.equal(childSend.callLines.length, 0);
+  const stillThere = JSON.parse(readFileSync(join(dir, "drafts", `${staged.payload.draft_id}.json`), "utf8"));
+  assert.equal(stillThere.status, "pending");
+  const sent = run(
+    ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
+    {},
+    dir,
+  );
+  assert.equal(sent.payload.outcome, "sent");
+  assert.equal(sent.callLines.length, 1);
+  assert.deepEqual(JSON.parse(sent.callLines[0]), { to: DEST, text: BODY });
 });
