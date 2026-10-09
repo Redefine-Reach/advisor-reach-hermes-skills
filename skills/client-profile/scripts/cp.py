@@ -231,6 +231,24 @@ def load_config() -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def mask_owner_number(value: object) -> object:
+    if not isinstance(value, str) or not value:
+        return value
+    digits = re.sub(r"\D", "", value)
+    if len(digits) < 4:
+        return "***"
+    return "***" + digits[-4:]
+
+
+def public_config(cfg: dict | None) -> dict | None:
+    if not isinstance(cfg, dict):
+        return cfg
+    shown = dict(cfg)
+    if "owner_number" in shown:
+        shown["owner_number"] = mask_owner_number(shown.get("owner_number"))
+    return shown
+
+
 def is_enabled() -> bool:
     cfg = load_config()
     return bool(cfg and cfg.get("enabled") is True)
@@ -943,7 +961,7 @@ def cmd_status() -> None:
         "ok": True,
         "enabled": bool(cfg and cfg.get("enabled") is True),
         "client_count": count,
-        "config": cfg,
+        "config": public_config(cfg),
     })
 
 
@@ -1099,9 +1117,39 @@ def cmd_evidence_add(client_id: str, opts: dict[str, list[str]]) -> None:
     emit(result)
 
 
+BLOCK_MARKER_RE = re.compile(r"<<<(?:END_)?UNTRUSTED_EVIDENCE[^>\n]*>>>")
+
+
+def fence_field(value: object) -> str:
+    text = value if isinstance(value, str) else ""
+    return BLOCK_MARKER_RE.sub(" ", text).replace("\r", "")
+
+
+def cmd_evidence_block(client_id: str, opts: dict[str, list[str]]) -> None:
+    gate(actor_of(opts), mutate=False)
+    path = require_client(client_id)
+    require_consent(path)
+    blocks: list[str] = []
+    for row in load_evidence(path):
+        if row.get("identity_status") != "confirmed":
+            continue
+        evidence_id = row.get("evidence_id") or ""
+        if not isinstance(evidence_id, str) or not EVIDENCE_RE.fullmatch(evidence_id):
+            continue
+        blocks.append(
+            f'<<<UNTRUSTED_EVIDENCE id="{evidence_id}">>>\n'
+            f"title: {fence_field(row.get('title'))}\n"
+            f"url: {fence_field(row.get('url'))}\n"
+            f"excerpt: {fence_field(row.get('excerpt'))}\n"
+            "<<<END_UNTRUSTED_EVIDENCE>>>"
+        )
+    emit({"ok": True, "count": len(blocks), "text": "\n\n".join(blocks)})
+
+
 def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
     gate(actor_of(opts), mutate=False)
     path = require_client(client_id)
+    require_consent(path)
     grouped: dict[int, list[dict]] = {}
     for row in load_evidence(path):
         if row.get("identity_status") == "inaccessible":
@@ -1130,6 +1178,7 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
 def cmd_confirm(client_id: str, opts: dict[str, list[str]]) -> None:
     actor = gate(actor_of(opts), mutate=True)
     path = require_client(client_id)
+    require_consent(path)
     none = "none" in opts
     candidate_raw = flag(opts, "candidate")
     if none and candidate_raw:
@@ -1594,11 +1643,13 @@ def main(argv: list[str]) -> None:
             fail("usage", "queries <client_id>")
         cmd_queries(positional[0], opts)
     if command == "evidence":
-        if not rest or rest[0] != "add":
-            fail("usage", "evidence add <client_id>")
+        if not rest or rest[0] not in {"add", "block"}:
+            fail("usage", "evidence add|block <client_id>")
         positional, opts = parse_flags(rest[1:])
         if len(positional) != 1:
-            fail("usage", "evidence add <client_id>")
+            fail("usage", "evidence add|block <client_id>")
+        if rest[0] == "block":
+            cmd_evidence_block(positional[0], opts)
         cmd_evidence_add(positional[0], opts)
     if command == "identity":
         if not rest or rest[0] not in {"candidates", "confirm"}:

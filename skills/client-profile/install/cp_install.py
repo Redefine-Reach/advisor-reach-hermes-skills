@@ -103,7 +103,32 @@ def owner_number() -> str | None:
     return None
 
 
+def mask_owner_number(value: object) -> object:
+    if not isinstance(value, str) or not value:
+        return value
+    digits = re.sub(r"\D", "", value)
+    if len(digits) < 4:
+        return "***"
+    return "***" + digits[-4:]
+
+
+def public_config(cfg: dict | None) -> dict | None:
+    if not isinstance(cfg, dict):
+        return cfg
+    shown = dict(cfg)
+    if "owner_number" in shown:
+        shown["owner_number"] = mask_owner_number(shown.get("owner_number"))
+    return shown
+
+
+def same_path(left: Path, right: Path) -> bool:
+    return left.resolve() == right.resolve()
+
+
 def copy_skill(dest: Path) -> None:
+    # Running from the installed tree (SKILL.md's path) must not delete itself.
+    if same_path(SKILL_SRC, dest):
+        return
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(
@@ -111,6 +136,17 @@ def copy_skill(dest: Path) -> None:
         dest,
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.tmp"),
     )
+
+
+def write_soul_block(soul_path: Path, before: str) -> None:
+    backup_soul(soul_path)
+    block = SOUL_BLOCK.read_text(encoding="utf-8").strip() + "\n"
+    if block_present(before):
+        after = before if before.endswith("\n") else before + "\n"
+    else:
+        sep = "" if before.endswith("\n") or before == "" else "\n"
+        after = before + sep + "\n" + block
+    soul_path.write_text(after, encoding="utf-8")
 
 
 def run_selftest(skill: Path, data: Path) -> dict:
@@ -143,7 +179,7 @@ def cmd_status() -> dict:
         "action": "status",
         "block_present": block_present(soul),
         "skill_present": skill_present(p["skill"]),
-        "config": cfg,
+        "config": public_config(cfg),
         "enabled": bool(cfg and cfg.get("enabled") is True),
     }
 
@@ -156,14 +192,6 @@ def cmd_install(slug: str | None) -> None:
         emit({"ok": False, "error": "soul_missing", "message": "SOUL.md is not on this box."}, 1)
     before = read_soul(p["soul"])
     before_sha = sha256(before)
-    backup_soul(p["soul"])
-    block = SOUL_BLOCK.read_text(encoding="utf-8").strip() + "\n"
-    if block_present(before):
-        after = before if before.endswith("\n") else before + "\n"
-    else:
-        sep = "" if before.endswith("\n") or before == "" else "\n"
-        after = before + sep + "\n" + block
-    p["soul"].write_text(after, encoding="utf-8")
     copy_skill(p["skill"])
     existing = load_config(p["cfg"]) or {}
     existing["enabled"] = True
@@ -180,6 +208,7 @@ def cmd_install(slug: str | None) -> None:
     if number and "owner_number" not in existing:
         existing["owner_number"] = number
     write_json(p["cfg"], existing)
+    write_soul_block(p["soul"], before)
     selftest = run_selftest(p["skill"], p["data"])
     result = {
         "ok": bool(selftest.get("ok")),
@@ -188,7 +217,7 @@ def cmd_install(slug: str | None) -> None:
         "soul_sha_after": sha256(read_soul(p["soul"])),
         "block_present": block_present(read_soul(p["soul"])),
         "skill_present": skill_present(p["skill"]),
-        "config": load_config(p["cfg"]),
+        "config": public_config(load_config(p["cfg"])),
         "selftest": selftest,
     }
     emit(result, 0 if result["ok"] else 1)
@@ -217,8 +246,10 @@ def cmd_uninstall() -> None:
         "action": "uninstall",
         "block_present": block_present(soul),
         "skill_present": skill_present(p["skill"]),
-        "config": load_config(p["cfg"]),
+        "config": public_config(load_config(p["cfg"])),
         "enabled": False,
+        "data_kept": True,
+        "message": "Client data was kept. Purge or revoke it if you want it gone.",
     })
 
 
@@ -233,7 +264,7 @@ def cmd_flip(enabled: bool) -> None:
         "ok": True,
         "action": "on" if enabled else "off",
         "enabled": enabled,
-        "config": load_config(p["cfg"]),
+        "config": public_config(load_config(p["cfg"])),
     })
 
 
