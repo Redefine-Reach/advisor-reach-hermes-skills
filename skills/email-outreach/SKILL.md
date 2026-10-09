@@ -28,7 +28,9 @@ this explicitly, in case you land on one directly.
 A SmartLead client account, dedicated sending domain(s), and one or more
 mailboxes on those domains, all connected to that account — ready to run cold
 email campaigns from. This is infrastructure, not a finished campaign: getting
-there does not by itself send any email.
+there does not by itself send any email. A one-off email from the advisor's own
+Gmail is not this setup and not a SmartLead campaign. Use `email-send-confirmed`.
+Do not call `GMAIL_SEND_EMAIL`.
 
 ## Campaigns: the `smartlead-campaigns` skill
 
