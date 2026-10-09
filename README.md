@@ -67,6 +67,17 @@ via the box's Exa search): bio, 24-month production as published, 15 channel sco
 Profile field-by-field, and a 90-day game plan. Locked template (`assets/template.html`) rendered by
 `assets/render.py` (jinja2 + weasyprint) from small per-section JSON files; delivered via `present-file`.
 
+### client-profile
+Appointment brief for one named person the owner is about to meet (buyer, listing, or other).
+Intake is name, city, and appointment type. `scripts/cp.py` builds name-and-city queries, holds
+evidence, requires an identity pick, and validates a cited DISC-lens brief (fair-housing screen
+in code, non-empty unknowns). Render uses the locked `assets/template.html` and WeasyPrint when
+the box has it. Delivery is an opaque file in `ARTIFACT_DIR` with a 7-day expiry. The enable
+flag is `/opt/data/client-profile/config.json`, not an environment variable. Install is
+files-only (`install/cp_install.py`). No CRM write, Human Design, people-data vendor, or street
+address. Contract: `tests/client-profile.test.mjs`. Merging here does not reach boxes until
+`SKILLS_REF` advances.
+
 ### circle-member-token
 Everything in AdvisorReach's own Circle community (`https://advisorreach.circle.so`) as one of the
 box's declared members: finds the member in `/opt/box/circle/members.json` (fallbacks: the fixed

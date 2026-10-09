@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Appointment brief</title>
+<style>
+  @page { size: Letter; margin: 0.7in; }
+  html, body { margin: 0; padding: 0; }
+  body { font: 11pt/1.4 Georgia, "Times New Roman", serif; color: #1a1a1a; }
+  header { border-bottom: 3px solid #1b2a4a; padding-bottom: 8pt; margin-bottom: 12pt; }
+  .eyebrow { font: 700 8.5pt Helvetica, Arial, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: #1b2a4a; margin: 0 0 4pt 0; }
+  h1 { font-size: 18pt; line-height: 1.2; margin: 0 0 4pt 0; }
+  .meta { font: 9.5pt Helvetica, Arial, sans-serif; color: #333; margin: 0; }
+  .banner { background: #f4f1ea; border: 1px solid #d9d3c6; padding: 8pt 10pt; margin: 0 0 12pt 0; font: 9.5pt Helvetica, Arial, sans-serif; }
+  h2 { font: 700 12.5pt Georgia, serif; color: #1b2a4a; margin: 14pt 0 4pt 0; }
+  p { margin: 0 0 6pt 0; }
+  ul { margin: 2pt 0 8pt 16pt; padding: 0; }
+  li { margin: 0 0 3pt 0; }
+  .conf { font: 8.5pt Helvetica, Arial, sans-serif; color: #444; }
+  .cite { font: 8pt Helvetica, Arial, sans-serif; color: #555; }
+  table { width: 100%; border-collapse: collapse; margin: 4pt 0 8pt 0; }
+  th, td { text-align: left; vertical-align: top; padding: 4pt 6pt; border-bottom: 1px solid #e3ded3; }
+  th { font: 700 8pt Helvetica, Arial, sans-serif; letter-spacing: 0.04em; text-transform: uppercase; color: #fff; background: #1b2a4a; }
+  footer { margin-top: 16pt; font: 8.5pt Helvetica, Arial, sans-serif; color: #444; }
+</style>
+</head>
+<body>
+<header>
+  <p class="eyebrow">Client profile · appointment brief</p>
+  <h1>{{NAME}}</h1>
+  <p class="meta">{{CITY}} · {{APPT_TYPE}}{{APPT_AT}}</p>
+</header>
+<p class="banner">{{GUARDRAIL}}</p>
+<h2>Snapshot</h2>
+<p>{{SNAPSHOT}}</p>
+<h2>Identity match</h2>
+<p>{{IDENTITY_LEVEL}}. {{IDENTITY_BASIS}}</p>
+<h2>Communication style</h2>
+<p>{{DISC}} <span class="conf">Confidence: {{DISC_CONFIDENCE}}. Hypothesis only, not a diagnosis.</span></p>
+<h2>How to communicate</h2>
+{{HOW}}
+<h2>Appointment playbook</h2>
+<p><strong>Opening.</strong> {{OPENING}}</p>
+<p><strong>Lead points.</strong></p>
+{{LEADS}}
+<p><strong>Questions.</strong></p>
+{{QUESTIONS}}
+<p><strong>Avoid.</strong></p>
+{{AVOID}}
+<p><strong>Close.</strong> {{CLOSE}}</p>
+<h2>Pricing conversation</h2>
+{{PRICING}}
+<h2>Verified facts</h2>
+{{VERIFIED}}
+<h2>Client stated</h2>
+{{STATED}}
+<h2>Observations</h2>
+{{OBSERVATIONS}}
+<h2>Hypotheses</h2>
+{{HYPOTHESES}}
+<h2>Recommendations</h2>
+{{RECOMMENDATIONS}}
+<h2>What we don't know</h2>
+{{UNKNOWNS}}
+<h2>Appendix · low confidence</h2>
+{{APPENDIX}}
+<h2>Sources</h2>
+{{SOURCES}}
+<footer>Verify before use. Public-source working brief. Low-confidence items stay in the appendix.</footer>
+</body>
+</html>

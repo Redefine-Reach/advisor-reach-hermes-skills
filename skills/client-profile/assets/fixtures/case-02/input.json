@@ -1,0 +1,14 @@
+{
+  "name": "Dana Whitfield",
+  "city": "Scottsdale",
+  "type": "buyer",
+  "urls": ["https://www.linkedin.com/in/dana-whitfield-example"],
+  "evidence": {
+    "url": "https://www.linkedin.com/in/dana-whitfield-example",
+    "title": "Dana Whitfield, LinkedIn",
+    "excerpt": "Dana Whitfield lists a Scottsdale real-estate practice on LinkedIn.",
+    "origin": "web",
+    "query": "\"Dana Whitfield\" https://www.linkedin.com/in/dana-whitfield-example",
+    "candidate": 1
+  }
+}

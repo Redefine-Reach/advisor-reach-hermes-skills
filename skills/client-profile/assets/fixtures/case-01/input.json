@@ -1,0 +1,23 @@
+{
+  "name": "Dana Whitfield",
+  "city": "Scottsdale",
+  "type": "buyer",
+  "evidence": [
+    {
+      "url": "https://example.com/dana-broker",
+      "title": "Dana Whitfield, broker at Red Rock Realty",
+      "excerpt": "Dana Whitfield is a broker in Scottsdale.",
+      "origin": "web",
+      "query": "\"Dana Whitfield\" \"Scottsdale\" professional profile company",
+      "candidate": 1
+    },
+    {
+      "url": "https://example.com/dana-forum",
+      "title": "Dana Whitfield, community forum speaker",
+      "excerpt": "Dana Whitfield spoke at a Scottsdale community forum.",
+      "origin": "web",
+      "query": "\"Dana Whitfield\" \"Scottsdale\" interview news community",
+      "candidate": 2
+    }
+  ]
+}

@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://advisorreach.local/client-profile/brief.schema.json",
+  "title": "Client profile brief",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "snapshot",
+    "identity_match",
+    "communication_style",
+    "how_to_communicate",
+    "appointment_playbook",
+    "verified_facts",
+    "client_stated",
+    "observations",
+    "hypotheses",
+    "recommendations",
+    "what_we_dont_know",
+    "guardrail_notice",
+    "appendix",
+    "verify_before_use"
+  ],
+  "properties": {
+    "snapshot": {"type": "string", "minLength": 1},
+    "identity_match": {"$ref": "#/$defs/identity_match"},
+    "communication_style": {"$ref": "#/$defs/communication_style"},
+    "how_to_communicate": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/cited"}
+    },
+    "appointment_playbook": {"$ref": "#/$defs/playbook"},
+    "verified_facts": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/fact"}
+    },
+    "client_stated": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/cited"}
+    },
+    "observations": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/fact"}
+    },
+    "hypotheses": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/fact"}
+    },
+    "recommendations": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/cited"}
+    },
+    "what_we_dont_know": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "guardrail_notice": {
+      "type": "string",
+      "const": "Verify before use. This brief is a working hypothesis from public sources, not a diagnosis. Do not steer on protected characteristics."
+    },
+    "appendix": {"$ref": "#/$defs/appendix"},
+    "verify_before_use": {"type": "boolean", "const": true}
+  },
+  "$defs": {
+    "confidence": {"enum": ["low", "medium", "high"]},
+    "evidence_ids": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "identity_match": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "basis"],
+      "properties": {
+        "level": {"enum": ["confirmed", "ambiguous", "none"]},
+        "basis": {"type": "string", "minLength": 1}
+      }
+    },
+    "communication_style": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["disc_hypothesis", "confidence", "evidence_ids"],
+      "properties": {
+        "disc_hypothesis": {"type": "string", "minLength": 1},
+        "confidence": {"$ref": "#/$defs/confidence"},
+        "evidence_ids": {"$ref": "#/$defs/evidence_ids"}
+      }
+    },
+    "cited": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "evidence_ids"],
+      "properties": {
+        "text": {"type": "string", "minLength": 1},
+        "evidence_ids": {"$ref": "#/$defs/evidence_ids"},
+        "confidence": {"$ref": "#/$defs/confidence"}
+      }
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "evidence_ids", "confidence"],
+      "properties": {
+        "text": {"type": "string", "minLength": 1},
+        "evidence_ids": {"$ref": "#/$defs/evidence_ids"},
+        "confidence": {"$ref": "#/$defs/confidence"}
+      }
+    },
+    "playbook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["opening", "lead_points", "questions", "avoid", "close"],
+      "properties": {
+        "opening": {"$ref": "#/$defs/cited"},
+        "lead_points": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {"$ref": "#/$defs/cited"}
+        },
+        "questions": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "avoid": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "close": {"type": "string", "minLength": 1},
+        "pricing_conversation": {"$ref": "#/$defs/cited"}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_id", "url", "title"],
+      "properties": {
+        "evidence_id": {"type": "string", "minLength": 1},
+        "url": {"type": "string"},
+        "title": {"type": "string"}
+      }
+    },
+    "appendix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["low_confidence", "sources"],
+      "properties": {
+        "low_confidence": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/fact"}
+        },
+        "sources": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/source"}
+        }
+      }
+    }
+  }
+}

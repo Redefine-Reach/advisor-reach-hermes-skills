@@ -1,0 +1,4 @@
+{
+  "warning": "address_tokens_stripped",
+  "banned": ["123 Main", "Main St", "123 Main St"]
+}

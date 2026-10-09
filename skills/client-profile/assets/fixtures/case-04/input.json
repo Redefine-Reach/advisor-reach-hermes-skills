@@ -1,0 +1,6 @@
+{
+  "name": "Dana Whitfield",
+  "city": "Scottsdale 123 Main St",
+  "type": "listing",
+  "banned": ["123 Main", "Main St", "123 Main St"]
+}
