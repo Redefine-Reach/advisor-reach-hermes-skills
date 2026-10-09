@@ -39,7 +39,8 @@ Do not use it to answer the owner. A reply in this thread is the normal
 owner↔ARIN SMS path and stays as it is. Do not use `schedule-text` as the
 third-party path. That skill is owner-thread only, and so is `daily-brief`.
 A scheduled job, a standing job, or a cron run must not stage or send a
-third-party text.
+third-party text. The `proactive-owner` skill is owner-thread only as
+well. A proactive brief or nudge must not call this script.
 
 Prepare-never-send stays the default everywhere else. This skill is the
 explicit owner-gated exception, and only for one named recipient at a time.
