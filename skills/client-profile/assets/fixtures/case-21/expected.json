@@ -1,0 +1,5 @@
+{
+  "fetched": false,
+  "reason": "private_or_login_walled_instagram",
+  "query_must_not_include": "instagram.com"
+}

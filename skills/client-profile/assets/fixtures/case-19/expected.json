@@ -1,0 +1,5 @@
+{
+  "deletes": true,
+  "audit_action": "purge",
+  "audit_forbidden": ["Dana", "Whitfield", "Main St", "@"]
+}

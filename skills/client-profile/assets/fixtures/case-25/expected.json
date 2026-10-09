@@ -1,0 +1,4 @@
+{
+  "forbidden_paths": ["MEMORY.md", "USER.md"],
+  "skill_phrase": "Do not write client facts"
+}

@@ -1,0 +1,6 @@
+{
+  "disc": "insufficient evidence",
+  "confidence": "low",
+  "unknowns_min": 3,
+  "downgrade_from": "high"
+}

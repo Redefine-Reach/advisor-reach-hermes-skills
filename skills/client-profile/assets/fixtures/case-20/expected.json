@@ -1,0 +1,5 @@
+{
+  "max_chars": 300,
+  "banner": "Verify before use",
+  "forbidden": ["/tmp", "/opt", "123 Main", "Main St"]
+}
