@@ -163,6 +163,19 @@ captured as the Delivery Target, then verify with `list` that it is `origin`/`te
 scheduled text whose content `daily-brief` defines. Routing prefix pinned by
 `tests/schedule-text.test.mjs`.
 
+### proactive-owner
+Owner-only proactive texts, default off. A box turns them on with
+`/opt/data/proactivity/config.json` (`"enabled": true`), not with an environment
+variable. The script reads the box IANA zone from the top-level `timezone` key
+in `config.yaml`, enforces quiet hours and a daily cap, and stores a `quiet`
+pause the owner can text. The morning brief can include a "Who needs you today"
+section. An afternoon nudge returns `[SILENT]` when nothing qualifies. Nothing
+here texts a client; a draft still has to go through `sms-send-confirmed` and
+`SEND`, which refuses cron. Contract: `tests/proactive-owner.test.mjs`. The
+Hermes cron pre-script and the afternoon job are specified in
+`skills/proactive-owner/references/afternoon-job.md` and are not installed by
+this repo.
+
 ### daily-brief
 The morning brief / daily update: what a Brief Job's prompt says (first line `User timezone: <IANA>`,
 the DELIVERY FORMAT paragraph) and what the fire-time run does — gather honestly from what is

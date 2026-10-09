@@ -9,5 +9,6 @@ Keep these source-neutral checks when they help the current brief:
 3. A visible pipeline file is not parsed pipeline content. Preserve a missing or `TBD` date as unknown.
 4. Check sent mail before asserting no prior contact; otherwise say last-touch status is unknown.
 5. Treat market context as optional and dated. Do not make it a mandatory section.
+6. When `proactive-owner` is enabled, "Who needs you today" is ranked by that script from bounded evidence. A missing last touch stays unknown. Omit the section when the feature is off. The section does not text a client.
 
 State a source gap plainly and keep the useful remainder. Do not infer a deadline, buyer intent, or outcome from labels, silence, or an agenda.
