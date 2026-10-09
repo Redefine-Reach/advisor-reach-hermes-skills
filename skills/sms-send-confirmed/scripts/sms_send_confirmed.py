@@ -8,9 +8,11 @@ calls that plugin's ``standalone_sender_fn`` after Hermes resolves
 talk to Telnyx itself and does not accept a From override.
 
 Path A is any resolved box id when that From number is set. The earlier
-spike lock to ``advisor-reach-internal`` is retired. Cron stays
-``refused_autonomous``. Lists and nurture (Mode B) stay refused, and the
-owner allowlist is not widened.
+spike lock to ``advisor-reach-internal`` is retired. Cron and a delegated
+child (``HERMES_DELEGATED_CHILD_CONTEXT``) stay ``refused_autonomous``.
+Lists and nurture (Mode B) stay refused, and the owner allowlist is not
+widened. ``stage`` requires a Why line. That line is only in the owner
+read-back; the client body and ``body_hash`` do not include it.
 
 A successful send writes a time-boxed session file. An inbound from that
 destination becomes an owner event. It does not start a chat with them.
@@ -31,7 +33,7 @@ import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, NoReturn
 from urllib.parse import urlparse
 
 # Hermes is on the box interpreter only. A top-level import would make the
@@ -49,7 +51,8 @@ except ImportError:
     _platform_registry = None
     _discover_plugins = None
 
-ATTESTATION_VERSION = "red-390-v1"
+# red-390-v2 adds the owner Why line. The client body and body_hash stay the same.
+ATTESTATION_VERSION = "red-390-v2"
 DEFAULT_MAX_BODY_CHARS = 640
 DEFAULT_DRAFT_TTL_SECONDS = 1800
 DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
@@ -74,6 +77,87 @@ CRON_ENVS = (
     "HERMES_CRON_AUTO_DELIVER_PLATFORM",
     "HERMES_CRON_AUTO_DELIVER_CHAT_ID",
 )
+# Hermes sets this on execute_code for a delegated child (pin a89f6aba, v0.21.0).
+DELEGATED_CHILD_ENV = "HERMES_DELEGATED_CHILD_CONTEXT"
+WHY_TEXT_MAX = 90
+WHY_LINE_MAX = 120
+SOURCE_LABELS = {
+    "fub_note": "FUB note",
+    "fub_record": "FUB record",
+    "ghl": "GHL record",
+    "calendar": "calendar",
+    "owner_text": "your text",
+}
+NAME_SOURCE_KINDS = frozenset({"gmail", "memory"})
+SOURCE_KINDS = frozenset(SOURCE_LABELS) | NAME_SOURCE_KINDS | {"none"}
+SOURCE_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+WHY_TOKEN_RE = re.compile(r"(?i)(?:\b(?:send|stop)\b|/approve)")
+# GSM 03.38 basic text plus the extension characters that stay GSM-7.
+# Controls, ESC, form feed, and backtick are excluded so one of them cannot
+# flip the owner SMS to UCS-2.
+_GSM7_ORDINALS = (
+    *range(0x20, 0x5B),
+    0x5F,
+    *range(0x61, 0x7B),
+    0xA1,
+    0xA3,
+    0xA4,
+    0xA5,
+    0xA7,
+    0xBF,
+    0xC4,
+    0xC5,
+    0xC6,
+    0xC7,
+    0xC9,
+    0xD1,
+    0xD6,
+    0xD8,
+    0xDC,
+    0xDF,
+    0xE0,
+    0xE4,
+    0xE5,
+    0xE6,
+    0xE8,
+    0xE9,
+    0xEC,
+    0xF1,
+    0xF2,
+    0xF6,
+    0xF8,
+    0xF9,
+    0xFC,
+    0x394,
+    0x393,
+    0x39B,
+    0x3A9,
+    0x3A0,
+    0x3A8,
+    0x3A3,
+    0x398,
+    0x39E,
+    0x3A6,
+    0x5E,
+    0x7B,
+    0x7D,
+    0x5C,
+    0x5B,
+    0x5D,
+    0x7E,
+    0x7C,
+    0x20AC,
+)
+GSM7_CHARS = frozenset(chr(code) for code in _GSM7_ORDINALS)
+_WHY_FOLDS = {
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u2013": "-",
+    "\u2014": "-",
+    "\u2026": "...",
+}
 AUDIT_KEYS = (
     "ts",
     "box_id",
@@ -152,13 +236,96 @@ def body_hash(body: str) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
-def attestation_text(from_number: str, dest: str, body: str) -> str:
+def attestation_text(from_number: str, dest: str, body: str, why_line: str) -> str:
     return (
         f"You're about to send this text from ARIN's number ({from_number}) to {dest}.\n"
         f"{body}\n"
+        f"{why_line}\n"
         "Reply SEND to confirm you authorize this one message and that the recipient may receive it.\n"
         "Reply anything else to cancel. Carrier STOP still works for them."
     )
+
+
+def refuse_why(reason: str) -> NoReturn:
+    raise GateFailure("refused_no_why", reason, field="why")
+
+
+def one_line(raw: str) -> str:
+    """Fold the plan's punctuation to ASCII and drop newlines."""
+    flat = str(raw or "").replace("\r\n", "\n").replace("\r", "\n").replace("\n", " ")
+    folded = "".join(_WHY_FOLDS.get(char, char) for char in flat)
+    return re.sub(r"[ \t]+", " ", folded).strip()
+
+
+def format_source_date(raw: str) -> str:
+    text = str(raw or "").strip()
+    try:
+        parsed = datetime.strptime(text, "%Y-%m-%d")
+    except ValueError:
+        refuse_why("source-date must be YYYY-MM-DD")
+    if parsed.strftime("%Y-%m-%d") != text:
+        refuse_why("source-date must be YYYY-MM-DD")
+    return f"{SOURCE_MONTHS[parsed.month - 1]} {parsed.day}"
+
+
+def build_why_line(
+    why_raw: str,
+    kind_raw: str,
+    date_raw: str,
+    name_raw: str,
+    ref_raw: str,
+) -> tuple[str, str, str, str]:
+    """Render the owner Why line. Returns line, kind, ISO date, and ref.
+
+    ``none`` is the only kind allowed without a date, and only with no ref.
+    The client body is not touched.
+    """
+    kind = str(kind_raw or "").strip().lower()
+    why = one_line(why_raw)
+    name = one_line(name_raw)
+    ref = str(ref_raw or "").strip()
+    date_text = str(date_raw or "").strip()
+    if not why or not kind:
+        refuse_why("stage requires --why and --source-kind")
+    if len(why) > WHY_TEXT_MAX:
+        refuse_why(f"why is {len(why)} characters; the limit is {WHY_TEXT_MAX}")
+    if kind not in SOURCE_KINDS:
+        refuse_why(
+            "source-kind must be fub_note, fub_record, ghl, gmail, calendar, owner_text, memory, or none"
+        )
+    if ref and re.search(r"[\x00-\x1f]", ref):
+        refuse_why("source-ref must be one line")
+    if kind == "none":
+        if date_text or ref:
+            refuse_why("source-kind none cannot include a date or ref")
+        line = f"Why: {why} (no source)."
+        stored_date = ""
+    else:
+        if not date_text:
+            refuse_why("source-date is required unless source-kind is none")
+        shown_date = format_source_date(date_text)
+        if kind in NAME_SOURCE_KINDS:
+            if not name:
+                refuse_why("source-name is required for gmail and memory")
+            if re.search(r"[,()]", name):
+                refuse_why("source-name must not contain commas or parentheses")
+            if kind == "gmail":
+                label = f"Gmail from {name}"
+            elif kind == "memory":
+                label = f"ARIN memory: {name}"
+            else:
+                refuse_why("source-name is not used for this source-kind")
+        else:
+            label = SOURCE_LABELS[kind]
+        line = f"Why: {why} ({label}, {shown_date})."
+        stored_date = date_text
+    if any(char not in GSM7_CHARS for char in line):
+        refuse_why("Why line must be GSM-7")
+    if WHY_TOKEN_RE.search(line):
+        refuse_why("Why line must not contain SEND, /approve, or STOP")
+    if len(line) > WHY_LINE_MAX:
+        refuse_why(f"Why line is {len(line)} characters; the limit is {WHY_LINE_MAX}")
+    return line, kind, stored_date, ref
 
 
 def classify_phone(raw: str) -> tuple[str, str | None]:
@@ -449,6 +616,16 @@ def assert_not_cron(environ: Mapping[str, str] | None = None) -> None:
                 "refused_autonomous",
                 "scheduled and standing jobs cannot send a third-party SMS",
             )
+
+
+def assert_not_delegated_child(environ: Mapping[str, str] | None = None) -> None:
+    """A delegated child must not stage or send (PLAN-subagents §2.6)."""
+    env = os.environ if environ is None else environ
+    if str(env.get(DELEGATED_CHILD_ENV, "")).strip():
+        raise GateFailure(
+            "refused_autonomous",
+            "a delegated child cannot stage or send a third-party SMS",
+        )
 
 
 def load_opt_outs(path: Path) -> set[str]:
@@ -808,6 +985,7 @@ def context() -> dict:
     hydrate_sms_env()
     box_id = resolve_box_id()
     assert_not_cron()
+    assert_not_delegated_child()
     assert_path_a_box(box_id)
     phones = phone_allowlist()
     telegram = telegram_allowlist()
@@ -863,7 +1041,16 @@ def refuse_context(failure: GateFailure, *, approver: str = "", dest: str = "", 
     return emit(payload, failure.status)
 
 
-def stage(approver_raw: str, dest_raw: str, body_raw: str) -> int:
+def stage(
+    approver_raw: str,
+    dest_raw: str,
+    body_raw: str,
+    why_raw: str = "",
+    source_kind_raw: str = "",
+    source_date_raw: str = "",
+    source_name_raw: str = "",
+    source_ref_raw: str = "",
+) -> int:
     try:
         ctx = context()
         approver = resolve_approver(approver_raw, ctx["phones"], ctx["telegram"])
@@ -885,6 +1072,13 @@ def stage(approver_raw: str, dest_raw: str, body_raw: str) -> int:
                 field="body",
             )
         assert_not_opted_out(dest, ctx["store"]["opt_out"])
+        why_line, source_kind, source_date, source_ref = build_why_line(
+            why_raw,
+            source_kind_raw,
+            source_date_raw,
+            source_name_raw,
+            source_ref_raw,
+        )
         now = utc_now()
         with DraftLock(ctx["store"]["drafts"]):
             if pending_blocks(ctx["store"]["drafts"], now):
@@ -904,11 +1098,15 @@ def stage(approver_raw: str, dest_raw: str, body_raw: str) -> int:
                 "body": body,
                 "body_hash": body_hash(body),
                 "attestation_version": ATTESTATION_VERSION,
+                "why_line": why_line,
+                "source_kind": source_kind,
+                "source_date": source_date,
+                "source_ref": source_ref,
                 "created_at": iso(now),
                 "expires_at": iso(expires),
             }
             write_draft(draft_path(ctx["store"]["drafts"], draft_id), record)
-        shown = attestation_text(ctx["from"], dest, body)
+        shown = attestation_text(ctx["from"], dest, body, why_line)
         return emit(
             {
                 "ok": True,
@@ -919,6 +1117,9 @@ def stage(approver_raw: str, dest_raw: str, body_raw: str) -> int:
                 "body_len": len(body),
                 "body_hash": record["body_hash"],
                 "attestation_version": ATTESTATION_VERSION,
+                "source_kind": source_kind,
+                "source_date": source_date,
+                "why_line": why_line,
                 "expires_at": record["expires_at"],
                 "attestation": shown,
                 "provider_called": False,
@@ -1602,6 +1803,13 @@ def build_parser() -> argparse.ArgumentParser:
     stage_cmd.add_argument("--approver", required=True)
     stage_cmd.add_argument("--dest", required=True)
     stage_cmd.add_argument("--body", required=True)
+    # Missing Why args are refused in stage() as refused_no_why, not by argparse,
+    # so an old stage invocation still returns that outcome and writes no draft.
+    stage_cmd.add_argument("--why", default="")
+    stage_cmd.add_argument("--source-kind", default="")
+    stage_cmd.add_argument("--source-date", default="")
+    stage_cmd.add_argument("--source-name", default="")
+    stage_cmd.add_argument("--source-ref", default="")
 
     send_cmd = sub.add_parser("send", help="Send one staged draft after SEND and attestation.")
     send_cmd.add_argument("--draft-id", required=True)
@@ -1632,7 +1840,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.cmd == "stage":
-        return stage(args.approver, args.dest, args.body)
+        return stage(
+            args.approver,
+            args.dest,
+            args.body,
+            args.why,
+            args.source_kind,
+            args.source_date,
+            args.source_name,
+            args.source_ref,
+        )
     if args.cmd == "send":
         return send(args.draft_id, args.confirm, args.attest)
     if args.cmd == "cancel":
