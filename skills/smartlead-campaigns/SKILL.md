@@ -64,8 +64,10 @@ mailbox it sends from, the schedule — and do it only after they say yes.
     python3 /opt/data/skills/smartlead-campaigns/scripts/smartlead.py start <campaign_id>
     python3 /opt/data/skills/smartlead-campaigns/scripts/smartlead.py pause <campaign_id>
 
-`start` sends real email to real people. Say which campaign, how many leads, and from which
+`start` sends real email to real people through SmartLead, not the advisor's Gmail. Say which campaign, how many leads, and from which
 mailbox, and start only after an explicit yes. `pause` stops sending; also only on request.
+Do not call `GMAIL_SEND_EMAIL` or the other Gmail send tools. A one-off email from the
+advisor's own mailbox is `email-send-confirmed`.
 
 ## Sample emails / copy
 
