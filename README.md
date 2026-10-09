@@ -95,6 +95,19 @@ widened. The webhook hook under `method-a/` is still not a fleet image;
 that Method A deploy depends on this gate. Contract:
 `tests/sms-send-confirmed.test.mjs`.
 
+### email-send-confirmed
+Owner-confirmed email from the advisor's Gmail, one plain-text recipient at a
+time. The agent stages a draft, shows the From account, recipient, subject,
+body preview, and one Why line, and only then may the owner reply `SEND`
+(or `/approve`). The script refuses cron, a delegated child
+(`HERMES_DELEGATED_CHILD_CONTEXT`), a missing Why line, and any confirm that
+is not exactly `SEND` or `/approve`, and only then calls Composio
+`GMAIL_SEND_EMAIL`. Skills that would otherwise send Gmail
+(`connect-app`, Follow Up Boss, GoHighLevel, SmartLead, email outreach)
+point here and do not call that tool. The tool can still be invoked directly
+until the box drops it from the tool list. Contract:
+`tests/email-send-confirmed.test.mjs`.
+
 ### smartlead-campaigns
 The customer's SmartLead campaigns, directly against SmartLead — the replacement for the retired
 OmegaAI MAB "Email Campaigns" Design pipeline. One script, `skills/smartlead-campaigns/scripts/smartlead.py`

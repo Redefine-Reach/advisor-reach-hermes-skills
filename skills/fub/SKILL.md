@@ -21,7 +21,8 @@ absolute path (`$HERMES_HOME` is scrubbed from the sandbox; `/opt/data` is its v
 Every command prints ONE JSON object. The script never prints the token — never try to read the files in `/opt/data/fub/` yourself, and never show a token, the API key, a system key, or a local path to the user.
 
 Texting or emailing a lead is not a Follow Up Boss call. To text a lead, use `sms-send-confirmed`
-only. This skill must not send texts, emails, or action plans.
+only. To email a lead from the advisor's Gmail, use `email-send-confirmed` only. Never call
+`GMAIL_SEND_EMAIL`. This skill must not send texts, emails, or action plans.
 
 ## Step 1 — ALWAYS check first
 

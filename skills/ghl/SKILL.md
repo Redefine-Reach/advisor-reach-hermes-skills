@@ -83,7 +83,9 @@ Examples (GHL API v2, base `https://services.leadconnectorhq.com`):
     python3 /opt/data/skills/ghl/scripts/ghl.py api PUT '/contacts/<contactId>' --data '{"tags": ["buyer"]}'
 
 **Writes need a yes.** Before any `POST`, `PUT`, `PATCH` or `DELETE`, tell the user exactly
-what you will create or change and do it only after they say yes.
+what you will create or change and do it only after they say yes. Do not send email through
+this API. A message from the advisor's Gmail uses `email-send-confirmed`. Never call
+`GMAIL_SEND_EMAIL`.
 
 ## Errors
 
