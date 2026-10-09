@@ -168,6 +168,8 @@ def cmd_install(slug: str | None) -> None:
     existing = load_config(p["cfg"]) or {}
     existing["enabled"] = True
     existing["schema_version"] = 1
+    if "consent_required" not in existing:
+        existing["consent_required"] = True
     existing["installed_at"] = datetime.now(timezone.utc).isoformat()
     existing["tz"] = existing.get("tz") or "America/Phoenix"
     if slug:

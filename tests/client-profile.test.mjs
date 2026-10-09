@@ -44,15 +44,15 @@ function world(opts = {}) {
   mkdirSync(artifact, { recursive: true });
   if (opts.config !== false) {
     mkdirSync(data, { recursive: true });
-    writeFileSync(
-      join(data, "config.json"),
-      JSON.stringify({
-        enabled: opts.enabled !== false,
-        schema_version: 1,
-        tz: "America/Phoenix",
-        box: "test",
-      }),
-    );
+    const config = {
+      enabled: opts.enabled !== false,
+      schema_version: 1,
+      tz: "America/Phoenix",
+      box: "test",
+    };
+    if (opts.consentRequired === false) config.consent_required = false;
+    if (opts.agentName) config.agent_name = opts.agentName;
+    writeFileSync(join(data, "config.json"), JSON.stringify(config));
   }
   return { dir, data, artifact };
 }
@@ -112,6 +112,15 @@ function loadCaseBrief(name, evidenceIds) {
   return brief;
 }
 
+function recordConsent(ctx, id) {
+  const res = run(
+    ["consent", "record", id, "--method", "text", "--by", "owner", "--actor", "owner"],
+    ctx,
+  );
+  assert.equal(res.payload && res.payload.ok, true, res.stdout + res.stderr);
+  return res;
+}
+
 function addEvidence(ctx, id, item) {
   const res = run(
     [
@@ -155,6 +164,7 @@ function seed(ctx, input = { name: "Dana Whitfield", city: "Scottsdale", type: "
   const intake = run(args, ctx);
   assert.equal(intake.payload && intake.payload.ok, true, intake.stdout + intake.stderr);
   const id = intake.payload.client_id;
+  recordConsent(ctx, id);
   const evidence = input.evidence
     ? Array.isArray(input.evidence)
       ? input.evidence
@@ -327,6 +337,7 @@ test("case 4 strips address tokens from intake and queries", () => {
   for (const banned of expected.banned) {
     assert.equal(JSON.stringify(stored).includes(banned), false);
   }
+  recordConsent(ctx, intake.payload.client_id);
   const queries = run(["queries", intake.payload.client_id], ctx);
   assert.equal(queries.payload.ok, true, queries.stdout);
   for (const banned of expected.banned) assert.doesNotMatch(queries.stdout, new RegExp(banned));
@@ -339,6 +350,7 @@ test("case 4 strips address tokens from intake and queries", () => {
   const body = JSON.parse(readFileSync(intakePath, "utf8"));
   body.name = "Dana Whitfield 123 Main St";
   writeFileSync(intakePath, JSON.stringify(body));
+  recordConsent(hand, made.payload.client_id);
   const again = run(["queries", made.payload.client_id], hand);
   assert.equal(again.payload.ok, true, again.stdout);
   for (const banned of expected.banned) assert.doesNotMatch(again.stdout, new RegExp(banned));
@@ -365,6 +377,7 @@ test("query escaping and phone email dob stripping", () => {
   );
   assert.equal(intake.payload.ok, true, intake.stdout + intake.stderr);
   assert.doesNotMatch(intake.stdout, /dana@example.com|555-0199|01\/02\/1980|85251/);
+  recordConsent(ctx, intake.payload.client_id);
   const queries = run(["queries", intake.payload.client_id], ctx);
   const blob = queries.stdout;
   assert.doesNotMatch(blob, /dana@example.com|555-0199|01\/02\/1980|85251/);
@@ -379,6 +392,7 @@ test("queries cap at 6 and keep the known url", () => {
   for (let i = 0; i < 8; i += 1) args.push("--url", `https://example.com/p/${i}`);
   const intake = run(args, ctx);
   assert.equal(intake.payload.ok, true, intake.stdout);
+  recordConsent(ctx, intake.payload.client_id);
   const queries = run(["queries", intake.payload.client_id], ctx);
   assert.equal(queries.payload.queries.length, 6);
   assert.match(queries.payload.queries[2].q, /https:\/\/example\.com\/p\/0/);
@@ -396,6 +410,7 @@ test("case 21 private instagram is not fetched", () => {
   assert.equal(intake.payload.ok, true, intake.stdout);
   assert.equal(intake.payload.inaccessible[0].reason, input.reason);
   assert.equal(intake.payload.inaccessible[0].fetched, false);
+  recordConsent(ctx, intake.payload.client_id);
   const queries = run(["queries", intake.payload.client_id], ctx);
   assert.equal(queries.payload.ok, true, queries.stdout);
   for (const query of queries.payload.queries) {
@@ -1018,6 +1033,7 @@ test("install uninstall on and off are files-only", () => {
   assert.equal(installed.payload.block_present, true);
   assert.equal(installed.payload.skill_present, true);
   assert.equal(installed.payload.config.enabled, true);
+  assert.equal(installed.payload.config.consent_required, true);
   assert.equal(installed.payload.config.box, "joe-gilmour");
   assert.equal(installed.payload.config.owner_number, "+14805550100");
   assert.equal(installed.payload.selftest.ok, true);
@@ -1026,8 +1042,13 @@ test("install uninstall on and off are files-only", () => {
   assert.equal(soul.split("<!-- BEGIN client-profile v1 -->").length - 1, 1);
   assert.match(soul, /hello from soul/);
   assert.ok(readdirSync(box).some((name) => name.startsWith("SOUL.md.bak-client-profile-")));
+  const configPath = join(box, "client-profile", "config.json");
+  const turnedOff = JSON.parse(readFileSync(configPath, "utf8"));
+  turnedOff.consent_required = false;
+  writeFileSync(configPath, JSON.stringify(turnedOff));
   const again = exec(["install", "joe-gilmour"]);
   assert.equal(again.payload.ok, true, JSON.stringify(again.payload));
+  assert.equal(again.payload.config.consent_required, false);
   assert.equal(readFileSync(join(box, "SOUL.md"), "utf8").split("<!-- BEGIN client-profile v1 -->").length - 1, 1);
   const data = join(box, "client-profile");
   const profileEnv = {
@@ -1059,6 +1080,192 @@ test("install uninstall on and off are files-only", () => {
   const off = exec(["off"]);
   assert.equal(off.payload.enabled, false);
   assert.equal(existsSync(join(data, keptPayload.client_id)), true);
+});
+
+test("consent request stays within 300 characters and names the agent", () => {
+  assert.match(skill, /consent request/);
+  assert.match(skill, /own phone/);
+  assert.match(skill, /ARIN never texts the client/);
+  assert.match(skill, /consent_required/);
+  const ctx = world({ agentName: "Ada Agent" });
+  const intake = run(
+    ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"],
+    ctx,
+  );
+  assert.equal(intake.payload.ok, true, intake.stdout);
+  const requested = run(["consent", "request", intake.payload.client_id, "--actor", "owner"], ctx);
+  assert.equal(requested.payload.ok, true, requested.stdout);
+  assert.equal(Object.keys(requested.payload).sort().join(","), "ok,text");
+  assert.ok(requested.payload.text.length <= 300);
+  assert.match(requested.payload.text, /Ada Agent/);
+  assert.match(requested.payload.text, /public information/i);
+  assert.match(requested.payload.text, /YES/);
+  assert.doesNotMatch(requested.payload.text, /Dana|Whitfield|Scottsdale/);
+  const named = run(
+    ["consent", "request", intake.payload.client_id, "--actor", "owner", "--agent", "Ada Agent"],
+    ctx,
+  );
+  assert.match(named.payload.text, /Ada Agent/);
+  assert.ok(named.payload.text.length <= 300);
+  const long = run(
+    ["consent", "request", intake.payload.client_id, "--actor", "owner", "--agent", "A".repeat(400)],
+    ctx,
+  );
+  assert.equal(long.payload.ok, true, long.stdout);
+  assert.ok(long.payload.text.length <= 300);
+  assert.match(long.payload.text, /YES/);
+  assert.match(long.payload.text, /public information/i);
+});
+
+test("queries evidence validate render and deliver refuse until consent is recorded", () => {
+  const ctx = world();
+  const intake = run(
+    ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"],
+    ctx,
+  );
+  assert.equal(intake.payload.ok, true, intake.stdout);
+  const id = intake.payload.client_id;
+  const standing = run(["consent", "status", id], ctx);
+  assert.equal(standing.payload.ok, true);
+  assert.equal(standing.payload.status, "missing");
+  assert.equal(standing.payload.required, true);
+  const file = join(ctx.dir, "brief.json");
+  writeFileSync(file, "{}");
+  const refused = [
+    run(["queries", id], ctx),
+    run(
+      [
+        "evidence",
+        "add",
+        id,
+        "--actor",
+        "owner",
+        "--url",
+        "https://example.com/dana",
+        "--title",
+        "Dana Whitfield",
+        "--excerpt",
+        "Dana Whitfield is a broker in Scottsdale.",
+        "--origin",
+        "web",
+        "--query",
+        "profile",
+        "--candidate",
+        "1",
+      ],
+      ctx,
+    ),
+    run(["brief", "validate", id, file, "--actor", "owner"], ctx),
+    run(["brief", "render", id, "--actor", "owner"], ctx),
+    run(["deliver", id, "--actor", "owner"], ctx),
+  ];
+  for (const res of refused) {
+    assert.equal(res.payload.ok, false, res.stdout);
+    assert.equal(res.payload.error, "consent_required");
+    assert.doesNotMatch(res.stdout, /Dana|Whitfield|Scottsdale/);
+  }
+});
+
+test("consent record writes consent.json and an audit line without personal details", () => {
+  const ctx = world();
+  const intake = run(
+    ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"],
+    ctx,
+  );
+  const id = intake.payload.client_id;
+  const named = run(
+    ["consent", "record", id, "--method", "text", "--by", "Dana Whitfield", "--actor", "owner"],
+    ctx,
+  );
+  assert.equal(named.payload.ok, false);
+  assert.equal(named.payload.error, "owner_only");
+  assert.doesNotMatch(named.stdout, /Whitfield|Scottsdale/);
+  const bad = run(["consent", "record", id, "--method", "sms", "--by", "owner", "--actor", "owner"], ctx);
+  assert.equal(bad.payload.error, "bad_method");
+  const note = "Dana Whitfield of Scottsdale said porch-yes-token at 123 Main St";
+  const recorded = run(
+    ["consent", "record", id, "--method", "text", "--by", "owner", "--actor", "owner", "--note", note],
+    ctx,
+  );
+  assert.equal(recorded.payload.ok, true, recorded.stdout);
+  assert.equal(recorded.payload.status, "recorded");
+  assert.equal(recorded.payload.method, "text");
+  assert.ok(recorded.payload.recorded_at);
+  assert.doesNotMatch(recorded.stdout, /Dana|Whitfield|Scottsdale|porch-yes-token|123 Main/);
+  const stored = JSON.parse(readFileSync(join(ctx.data, id, "consent.json"), "utf8"));
+  assert.equal(stored.status, "recorded");
+  assert.equal(stored.method, "text");
+  assert.equal(stored.by, "owner");
+  assert.equal(stored.actor, "owner");
+  assert.equal(stored.recorded_at, recorded.payload.recorded_at);
+  assert.doesNotMatch(stored.note || "", /123 Main/);
+  const line = auditLines(ctx).find((item) => item.action === "consent_record");
+  assert.ok(line);
+  assert.deepEqual(Object.keys(line).sort(), ["action", "actor", "client_id", "counts", "ts"]);
+  assert.equal(line.actor, "owner");
+  assert.equal(line.counts.consents, 1);
+  const blob = JSON.stringify(line);
+  assert.equal(blob.includes("Dana"), false);
+  assert.equal(blob.includes("Whitfield"), false);
+  assert.equal(blob.includes("Scottsdale"), false);
+  assert.equal(blob.includes("porch-yes-token"), false);
+  assert.equal(blob.includes("123 Main"), false);
+  const queries = run(["queries", id], ctx);
+  assert.equal(queries.payload.ok, true, queries.stdout);
+  const standing = run(["consent", "status", id], ctx);
+  assert.equal(standing.payload.status, "recorded");
+  assert.equal(standing.payload.method, "text");
+  assert.equal(standing.payload.by, "owner");
+  assert.equal(standing.payload.actor, "owner");
+  assert.doesNotMatch(standing.stdout, /porch-yes-token|Dana/);
+});
+
+test("consent revoke deletes the client and the artifact", () => {
+  const ctx = world();
+  const ready = deliverReady(ctx);
+  const artifact = join(ctx.artifact, ready.delivered.url.split("/").at(-1));
+  assert.equal(existsSync(artifact), true);
+  const revoked = run(["consent", "revoke", ready.id, "--actor", "owner"], ctx);
+  assert.equal(revoked.payload.ok, true, revoked.stdout);
+  assert.equal(revoked.payload.deleted, true);
+  assert.equal(existsSync(join(ctx.data, ready.id)), false);
+  assert.equal(existsSync(artifact), false);
+  const line = auditLines(ctx).find((item) => item.action === "consent_revoke");
+  assert.ok(line);
+  assert.deepEqual(Object.keys(line).sort(), ["action", "actor", "client_id", "counts", "ts"]);
+  const blob = JSON.stringify(line);
+  assert.equal(blob.includes("Dana"), false);
+  assert.equal(blob.includes("Whitfield"), false);
+  assert.equal(blob.includes("Scottsdale"), false);
+  assert.equal(line.counts.profiles, 1);
+  assert.equal(line.counts.artifacts, 1);
+  const standing = run(["consent", "status", ready.id], ctx);
+  assert.equal(standing.payload.error, "unknown_client");
+});
+
+test("consent revoke still runs when the skill is off", () => {
+  const ctx = world();
+  const made = seed(ctx);
+  writeFileSync(
+    join(ctx.data, "config.json"),
+    JSON.stringify({ enabled: false, schema_version: 1, tz: "America/Phoenix", box: "test" }),
+  );
+  const revoked = run(["consent", "revoke", made.id, "--actor", "owner"], ctx);
+  assert.equal(revoked.payload.ok, true, revoked.stdout);
+  assert.equal(existsSync(join(ctx.data, made.id)), false);
+});
+
+test("consent_required false allows research without a record", () => {
+  const ctx = world({ consentRequired: false });
+  const intake = run(
+    ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"],
+    ctx,
+  );
+  const standing = run(["consent", "status", intake.payload.client_id], ctx);
+  assert.equal(standing.payload.status, "missing");
+  assert.equal(standing.payload.required, false);
+  const queries = run(["queries", intake.payload.client_id], ctx);
+  assert.equal(queries.payload.ok, true, queries.stdout);
 });
 
 test("fixtures cover cases 1 through 25", () => {
