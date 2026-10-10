@@ -161,23 +161,28 @@ approver and that destination. That only updates the local file. It does
 not send.
 
 An inbound from that destination whose whole body is a single carrier
-opt-out keyword is recorded on the same list. Do not send. Carrier
-opt-out keywords are STOP, STOPALL, UNSUBSCRIBE, CANCEL, END, QUIT,
-REVOKE, and OPTOUT. Never ask the owner to send one. `/stop` is the Hermes
-pause, and it is not how a third party is opted out here. The recipient
-can still opt out with their carrier. Telnyx enforces that later; this
-file is the check you run first.
+opt-out keyword is recorded on the same list. Do not send. Telnyx's
+default opt-out keywords are STOP, STOPALL, STOP ALL, UNSUBSCRIBE,
+CANCEL, END, and QUIT. REVOKE and OPTOUT are extra guards and are
+treated the same way. Never ask the owner to send one of those words.
+START and UNSTOP opt back in.
+HELP is the help word. Never ask the owner to send HELP either.
+`/stop` is the Hermes pause, and it is not how a third party is opted out
+here. The recipient can still opt out with their carrier. Telnyx enforces
+that later; this file is the check you run first.
 
 ## If the owner opts out
 
 If the owner texts a plain-words opt-out, any reasonable request to stop
-the texts, including "please stop texting me", do not argue and do not
-keep texting. Acknowledge once, in one short sentence, that you will stop.
-Then stop. A later message that is exactly START resubscribes them.
+the texts, including "please stop texting me", do not argue.
+Send exactly one confirmation text, and send nothing after that.
+START and UNSTOP opt back in.
 
 Unsubscribing the owner number, blocking later texts, and honoring START
-are carrier and Hermes gateway behavior. This repository cannot do that
-part. If the text still reaches you, follow the rule above.
+and UNSTOP are carrier and Hermes gateway behavior. HELP is also answered
+by Telnyx, not by asking the owner to send it. This repository cannot do
+that part. If the text still reaches you, send that one confirmation
+text and then stop.
 
 ## Audit
 

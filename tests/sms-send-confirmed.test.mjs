@@ -129,9 +129,14 @@ test("skill routes third-party SMS through confirm, the pinned adapter, and the 
   assert.match(skill, /\/opt\/data\/audit\/sms-opt-out\.txt/);
   assert.match(skill, /Reply SEND to send, or NO to drop it/);
   assert.match(skill, /`NO` or `skip`/);
-  assert.match(skill, /Never ask the owner to send one/);
-  assert.match(skill, /Acknowledge once/);
-  assert.match(skill, /exactly START resubscribes/);
+  assert.match(skill, /STOP, STOPALL, STOP ALL, UNSUBSCRIBE/);
+  assert.match(skill, /CANCEL, END, and QUIT/);
+  assert.match(skill, /REVOKE and OPTOUT are extra guards/);
+  assert.match(skill, /START and UNSTOP opt back in/);
+  assert.match(skill, /HELP is the help word/);
+  assert.match(skill, /Never ask the owner to send HELP/);
+  assert.match(skill, /exactly one confirmation text/);
+  assert.doesNotMatch(skill, /Acknowledge once/);
   assert.doesNotMatch(skill, /Reply anything else to cancel/);
   assert.doesNotMatch(skill, /reply `cancel`/i);
   assert.match(skill, /7 days/);
@@ -703,8 +708,19 @@ test("STOP refuses before any provider call", () => {
   assert.equal(staged.callLines.length, 1);
 });
 
-test("REVOKE and OPTOUT refuse before any provider call", () => {
-  for (const word of ["REVOKE", "OPTOUT", "opt-out"]) {
+test("stop bodies match Telnyx defaults plus REVOKE and OPTOUT", () => {
+  const out = py(`${importMod}
+for word in ("stop", "STOPALL", "stop all", "STOP ALL", "  unsubscribe ", "cancel", "end", "quit", "revoke", "OPTOUT", "opt-out"):
+    assert mod.is_stop_body(word), word
+for word in ("please stop", "help", "HELP", "start", "START", "unstop", "UNSTOP", "stop please"):
+    assert mod.is_stop_body(word) is False, word
+print("ok")
+`);
+  assert.equal(out, "ok");
+});
+
+test("REVOKE, OPTOUT, and STOP ALL refuse before any provider call", () => {
+  for (const word of ["REVOKE", "OPTOUT", "opt-out", "STOP ALL"]) {
     const dir = mkdtempSync(join(tmpdir(), "sms-opt-word-"));
     sendOne(dir);
     const stopped = run(["inbound", "--sender", DEST, "--body", word, "--message-id", word], {}, dir);

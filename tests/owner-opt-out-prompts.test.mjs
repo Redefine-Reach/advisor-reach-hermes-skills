@@ -11,7 +11,7 @@ const root = join(here, "..");
 const skillsDir = join(root, "skills");
 
 const KEYWORD =
-  "stop|stopall|unsubscribe|cancel|end|quit|revoke|optout|opt-out";
+  "stop all|stop|stopall|unsubscribe|cancel|end|quit|revoke|optout|opt-out|help";
 
 const PATTERNS = [
   new RegExp(
@@ -101,10 +101,20 @@ test("detector flags an instruction to reply with an opt-out keyword", () => {
   assert.equal(stop.length, 1);
   assert.match(stop[0], /text me STOP/);
 
+  const help = findOptOutReplyInstructions("Reply HELP if you need anything.");
+  assert.equal(help.length, 1);
+  assert.match(help[0], /Reply HELP/);
+
+  const stopAll = findOptOutReplyInstructions("Reply STOP ALL to opt out.");
+  assert.equal(stopAll.length, 1);
+  assert.match(stopAll[0], /Reply STOP ALL/);
+
   assert.deepEqual(
     findOptOutReplyInstructions("Never tell the owner to reply `Stop` or `STOP`."),
     [],
   );
+  assert.deepEqual(findOptOutReplyInstructions("Never ask the owner to reply HELP."), []);
+  assert.deepEqual(findOptOutReplyInstructions("HELP is the help word."), []);
   assert.deepEqual(findOptOutReplyInstructions("Reply SEND to send, or NO to drop it."), []);
   assert.deepEqual(
     findOptOutReplyInstructions("reply and stop. Say that lists are not sent this way."),

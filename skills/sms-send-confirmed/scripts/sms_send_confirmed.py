@@ -56,19 +56,24 @@ DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
 CONFIRM_TOKENS = frozenset({"send", "/approve"})
 DROP_TOKENS = frozenset({"no", "skip"})
 ATTEST_YES = frozenset({"yes", "y", "true", "1"})
-STOP_BODIES = frozenset(
+# Telnyx default stop keywords. Case-insensitive; surrounding and repeated
+# whitespace ignored. STOP ALL is two words. Source:
+# https://developers.telnyx.com/docs/messaging/messages/advanced-opt-in-out
+# START and UNSTOP opt back in. HELP is the help keyword, not a stop word.
+TELNYX_STOP_BODIES = frozenset(
     {
         "stop",
         "stopall",
+        "stop all",
         "unsubscribe",
         "cancel",
         "end",
         "quit",
-        "revoke",
-        "optout",
-        "opt-out",
     }
 )
+# Extra guards. Not Telnyx defaults. "opt-out" is the hyphenated form of OPTOUT.
+EXTRA_STOP_BODIES = frozenset({"revoke", "optout", "opt-out"})
+STOP_BODIES = TELNYX_STOP_BODIES | EXTRA_STOP_BODIES
 SUGGESTED_NEXT = ("call", "draft reply", "dismiss")
 HYDRATE_KEYS = (
     "TELNYX_API_KEY",
@@ -424,7 +429,8 @@ def same_principal(approver: str, dest: str) -> bool:
 
 
 def is_stop_body(body: str) -> bool:
-    return str(body or "").strip().lower() in STOP_BODIES
+    text = " ".join(str(body or "").strip().lower().split())
+    return text in STOP_BODIES
 
 
 def from_number(environ: Mapping[str, str] | None = None) -> str:
