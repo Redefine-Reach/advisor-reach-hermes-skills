@@ -54,8 +54,21 @@ DEFAULT_MAX_BODY_CHARS = 640
 DEFAULT_DRAFT_TTL_SECONDS = 1800
 DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
 CONFIRM_TOKENS = frozenset({"send", "/approve"})
+DROP_TOKENS = frozenset({"no", "skip"})
 ATTEST_YES = frozenset({"yes", "y", "true", "1"})
-STOP_BODIES = frozenset({"stop", "stopall", "unsubscribe", "cancel", "end", "quit"})
+STOP_BODIES = frozenset(
+    {
+        "stop",
+        "stopall",
+        "unsubscribe",
+        "cancel",
+        "end",
+        "quit",
+        "revoke",
+        "optout",
+        "opt-out",
+    }
+)
 SUGGESTED_NEXT = ("call", "draft reply", "dismiss")
 HYDRATE_KEYS = (
     "TELNYX_API_KEY",
@@ -157,7 +170,8 @@ def attestation_text(from_number: str, dest: str, body: str) -> str:
         f"You're about to send this text from ARIN's number ({from_number}) to {dest}.\n"
         f"{body}\n"
         "Reply SEND to confirm you authorize this one message and that the recipient may receive it.\n"
-        "Reply anything else to cancel. Carrier STOP still works for them."
+        "Reply SEND to send, or NO to drop it.\n"
+        "The recipient can still opt out with their carrier."
     )
 
 
@@ -649,6 +663,11 @@ def is_confirm(token: str) -> bool:
     return str(token or "").strip().lower() in CONFIRM_TOKENS
 
 
+def is_drop(token: str) -> bool:
+    """True when the owner answered NO or skip. That drops the draft and does not send."""
+    return str(token or "").strip().lower() in DROP_TOKENS
+
+
 def is_attest(token: str) -> bool:
     return str(token or "").strip().lower() in ATTEST_YES
 
@@ -1005,13 +1024,18 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                     extra={"draft_id": draft_id, "dest": dest},
                 )
             if not is_confirm(confirm):
+                dropped = is_drop(confirm)
                 draft["status"] = "cancelled"
-                draft["cancelled_reason"] = "confirm was not SEND"
+                draft["cancelled_reason"] = (
+                    "owner replied NO or skip" if dropped else "confirm was not SEND"
+                )
                 draft["body"] = ""
                 write_draft(path, draft)
                 raise GateFailure(
                     "refused_no_confirm",
-                    "confirm was not SEND; the draft is cancelled",
+                    "owner replied NO or skip; the draft was not sent"
+                    if dropped
+                    else "confirm was not SEND; the draft was not sent",
                     extra={"draft_id": draft_id, "dest": dest},
                 )
             if not is_attest(attest):

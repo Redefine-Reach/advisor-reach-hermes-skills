@@ -127,7 +127,13 @@ test("skill routes third-party SMS through confirm, the pinned adapter, and the 
   assert.match(skill, /refused_multi/);
   assert.match(skill, /\/opt\/data\/audit\/sms-outbound\.jsonl/);
   assert.match(skill, /\/opt\/data\/audit\/sms-opt-out\.txt/);
-  assert.match(skill, /Never tell the owner to reply `Stop` or `STOP`/);
+  assert.match(skill, /Reply SEND to send, or NO to drop it/);
+  assert.match(skill, /`NO` or `skip`/);
+  assert.match(skill, /Never ask the owner to send one/);
+  assert.match(skill, /Acknowledge once/);
+  assert.match(skill, /exactly START resubscribes/);
+  assert.doesNotMatch(skill, /Reply anything else to cancel/);
+  assert.doesNotMatch(skill, /reply `cancel`/i);
   assert.match(skill, /7 days/);
   assert.match(skill, /Do not answer the recipient/);
   assert.match(skill, /Do not add the destination to `TELNYX_SMS_ALLOWED_USERS`/);
@@ -219,6 +225,10 @@ test("stage shows attestation and does not send", () => {
   assert.equal(payload.dest, DEST);
   assert.match(payload.attestation, /from ARIN's number \(\+19283563339\) to \+15555550199/);
   assert.match(payload.attestation, /Reply SEND to confirm you authorize this one message/);
+  assert.match(payload.attestation, /Reply SEND to send, or NO to drop it\./);
+  assert.match(payload.attestation, /The recipient can still opt out with their carrier\./);
+  assert.doesNotMatch(payload.attestation, /to cancel/i);
+  assert.doesNotMatch(payload.attestation, /\bSTOP\b/);
   assert.match(payload.attestation, new RegExp(BODY));
   assert.equal(callLines.length, 0);
   assert.equal(auditLines.length, 0);
@@ -308,6 +318,45 @@ test("a non-SEND reply cancels and does not send", () => {
   );
   assert.equal(later.payload.outcome, "refused_no_confirm");
   assert.equal(later.callLines.length, 0);
+});
+
+test("the cancel command drops a staged draft and does not send", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sms-drop-cmd-"));
+  const staged = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {}, dir);
+  const dropped = run(["cancel", "--draft-id", staged.payload.draft_id], {}, dir);
+  assert.equal(dropped.payload.outcome, "cancelled");
+  assert.equal(dropped.payload.provider_called, false);
+  assert.equal(dropped.callLines.length, 0);
+  const later = run(
+    ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
+    {},
+    dir,
+  );
+  assert.equal(later.payload.outcome, "refused_no_confirm");
+  assert.equal(later.callLines.length, 0);
+});
+
+test("NO, no, and skip drop the draft and do not send", () => {
+  for (const token of ["NO", "no", "  skip ", "Skip"]) {
+    const dir = mkdtempSync(join(tmpdir(), "sms-drop-"));
+    const staged = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {}, dir);
+    const dropped = run(
+      ["send", "--draft-id", staged.payload.draft_id, "--confirm", token, "--attest", "yes"],
+      {},
+      dir,
+    );
+    assert.equal(dropped.payload.outcome, "refused_no_confirm", token);
+    assert.match(dropped.payload.reason, /owner replied NO or skip/);
+    assert.equal(dropped.payload.provider_called, false);
+    assert.equal(dropped.callLines.length, 0);
+    const later = run(
+      ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
+      {},
+      dir,
+    );
+    assert.equal(later.payload.outcome, "refused_no_confirm", token);
+    assert.equal(later.callLines.length, 0);
+  }
 });
 
 test("opt-out is refused before the provider, including a number added after stage", () => {
@@ -652,6 +701,18 @@ test("STOP refuses before any provider call", () => {
   const staged = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {}, dir);
   assert.equal(staged.payload.outcome, "refused_stop");
   assert.equal(staged.callLines.length, 1);
+});
+
+test("REVOKE and OPTOUT refuse before any provider call", () => {
+  for (const word of ["REVOKE", "OPTOUT", "opt-out"]) {
+    const dir = mkdtempSync(join(tmpdir(), "sms-opt-word-"));
+    sendOne(dir);
+    const stopped = run(["inbound", "--sender", DEST, "--body", word, "--message-id", word], {}, dir);
+    assert.equal(stopped.payload.outcome, "refused_stop", word);
+    assert.equal(stopped.payload.provider_called, false);
+    assert.equal(stopped.callLines.length, 1);
+    assert.match(readFileSync(stopped.env.SMS_OPT_OUT_FILE, "utf8"), new RegExp(DEST.replace("+", "\\+")));
+  }
 });
 
 test("a Telegram approver can confirm and cannot be the destination", () => {
