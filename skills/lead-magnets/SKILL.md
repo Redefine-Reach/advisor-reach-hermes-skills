@@ -37,7 +37,7 @@ can_script = os.path.isdir("/opt/data/cgi-bin")
 can_ask_arin = os.path.exists("/opt/data/arin-web/api-server.key")
 st = fc("status")
 ```
-- `base` empty or `can_script` False: this box cannot serve `/scripts/` (Box Scripts are off). Stop and
+- `base` empty or `can_script` False: this box cannot serve `/scripts/` yet (its image predates Box Scripts). Stop and
   tell the team.
 - `st["ok"]` False with `MCP_QUERY_OMEGA_API_KEY is not set`: this box has no OmegaAI connection, so it
   cannot keep leads. Stop and say so. Never look for another key.
