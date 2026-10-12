@@ -80,6 +80,28 @@ files-only (`install/cp_install.py`). No CRM write, Human Design, people-data ve
 address. Contract: `tests/client-profile.test.mjs`. Merging here does not reach boxes until
 `SKILLS_REF` advances.
 
+### advisorreach-site
+Team ARIN's way to change `https://advisorreach.ai` (the ARIN Lane): clones
+`Redefine-Reach/advisorreach-site` over HTTPS as the team machine user `ar-team-arin`, whose token
+`scripts/git-credential-wttc-oauth.py` gets from WTTC's GitHub OAuth Client through the box's OmegaAI MCP
+key (nothing stored), edits only `public/` on an `arin/*` branch, runs the copy and link contract tests with node,
+pushes the branch, and confirms the release by `git ls-remote` of `production` and
+`https://advisorreach.ai/release-identity.json`. The site repo's `arin-promote.yml` validates,
+promotes and deploys. A Lead Magnet page goes under `public/m/<name>/`. Contract:
+`tests/advisorreach-site.test.mjs`, `tests/git-credential-wttc-oauth.test.mjs`.
+
+### lead-magnets
+How any box's ARIN builds a Lead Magnet end to end, with no developer: the leads are kept by the
+box workspace's Form Capture install (an OmegaAI component, form-capture repo), a Form Capture webhook
+with a secret header calls a Box Script ARIN writes at `/opt/data/cgi-bin/<name>` (served at
+`/scripts/<name>` by the customer-boxes `box-scripts` container), long work goes to an api_server run,
+and the page is published with the box's site skill. `scripts/form_capture.py` calls the install's
+`FormCapture` methods through the hosted OmegaAI MCP with the box's key (status, add/list/remove
+webhooks, submissions); it never installs Form Capture and never prints a header value. Names no
+particular magnet: each one is written down in a box-local skill under
+`/opt/data/skills/lead-magnet-builds/<name>/`. Installed only on boxes with `MCP_QUERY_OMEGA_API_KEY`
+(customer-boxes entrypoint, `# BEGIN omega-only-skills`). Contract: `tests/lead-magnets.test.mjs`.
+
 ### circle-member-token
 Everything in AdvisorReach's own Circle community (`https://advisorreach.circle.so`) as one of the
 box's declared members: finds the member in `/opt/box/circle/members.json` (fallbacks: the fixed

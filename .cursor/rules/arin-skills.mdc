@@ -1,0 +1,10 @@
+---
+description: AdvisorReach Hermes skills repo conventions
+alwaysApply: true
+---
+- The default branch is `production`. Do the work on a branch and open a pull request; do not push directly to `production`.
+- Third-party SMS goes through `sms-send-confirmed`. Keep that SEND gate: stage the draft, show the destination, the From number, and the authorization line, and send only after the owner replies exactly `SEND` or `/approve`. A vague yes does not send. One confirm sends one message. Never auto-send to a real contact.
+- Email and CRM writes are not the SMS SEND token. Each keeps its own confirmation step. Follow Up Boss writes need a yes and then `--confirm-write`, and only on the script's allowlist. GoHighLevel `POST`, `PUT`, `PATCH`, and `DELETE` need a yes that names the change. Gmail and other Composio sends, posts, deletes, and edits need explicit authorization for that action and account. SmartLead changes that create, schedule, or start a campaign, and email-outreach steps that order or spend, need an explicit yes.
+- No customer data in code or fixtures. Use synthetic contacts, such as reserved 555 numbers and `example.com` addresses.
+- Before claiming a skill is done, exercise its real entrypoint on a synthetic input. Contract tests are `node --test tests/*.test.mjs`; scripted skills run the real script against a local fake.
+- Freeze October 11–19, 2026: do not roll skill changes out to live customer environments.

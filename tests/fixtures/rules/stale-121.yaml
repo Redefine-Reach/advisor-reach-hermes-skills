@@ -1,0 +1,14 @@
+# TEST FIXTURE ONLY (AX-3.13). Not a live rules file. With --today 2026-10-12,
+# rule fixture-stale-121 is 121 days old (verified 2026-06-13) and must fail CI.
+state: ZZ
+rules:
+- id: fixture-fresh-120
+  source_type: statute
+  sources: [{url: https://example.invalid/a}, {url: https://example.invalid/b}]
+  effective_date: '2020-01-01'
+  last_verified: '2026-06-14'
+- id: fixture-stale-121
+  source_type: statute
+  sources: [{url: https://example.invalid/a}, {url: https://example.invalid/b}]
+  effective_date: '2020-01-01'
+  last_verified: '2026-06-13'
