@@ -45,10 +45,10 @@ rules:
       brokers employed by a designated broker pursuant to section 32-2151.01, subsection G during each
       twenty-four-month period of licensure.
     retrieved_date: '2026-10-12'
-  effective_date: '2010-07-29'
+  effective_date: null
   last_verified: '2026-10-12'
   last_checked: '2026-10-12'
-  verification_note: "Effective date: Laws 2010, ch. 166 (SB 1219), sec. 5 struck 'four' and inserted 'two' in § 32-2129(C); approved Apr 26, 2010, no delayed-effective section, general effective date for the 49th Leg., 2nd Reg. Sess. is 07-29-2010 (https://www.azleg.gov/legtext/49leg/2r/laws/0166.htm; https://www.azleg.gov/general-effective-dates/)."
+  verification_note: "Fact-check 2026-10-12: effective date left null. Laws 2010 ch. 166 (SB 1219) only changed the renewal term in 32-2129(C) and the original enactment wasn't found."
   confidence: high
   notes: The two-year length is stated in A.R.S. § 32-2129(C). Section 32-2130(A) independently describes
     licensure in twenty-four-month periods. The expiration date printed on the license is the date the
@@ -1282,10 +1282,10 @@ rules:
       in an unincorporated area of a county, and any subsequent seller, to furnish an affidavit of disclosure
       to the buyer at least seven days before the property is transferred.
     retrieved_date: '2026-10-12'
-  effective_date: '2023-10-29'
+  effective_date: '2000-05-18'
   last_verified: '2026-10-12'
   last_checked: '2026-10-12'
-  verification_note: "Effective date of the current text: Laws 2024, ch. 105, sec. 2 carries § 33-422(A), retroactive from and after Oct 29, 2023 under sec. 6 (https://www.azleg.gov/legtext/56leg/2R/laws/0105.htm). Original enactment predates Laws 2019 ch. 103 and was not found. HB 2092 (2025) was vetoed and is not a source."
+  verification_note: "Effective date: Laws 2000, 4th Special Session, ch. 1 (former 11-806.03), 2000-05-18 (fact-check 2026-10-12). Laws 2024, ch. 105, sec. 2 carries the current § 33-422(A) text, retroactive from and after Oct 29, 2023 under sec. 6 (https://www.azleg.gov/legtext/56leg/2R/laws/0105.htm); that date is an amendment, not the original enactment. HB 2092 (2025) was vetoed and is not a source."
   confidence: high
   notes: 'The statute does not say calendar or business days. The buyer acknowledges receipt. A release
     of liability for an omission or misrepresentation in the affidavit is not valid. The seller records
@@ -1324,10 +1324,10 @@ rules:
     title: HB 2092 Senate engrossed summary
     quoted_text: The buyer has the right to rescind a sale within five days of receiving the affidavit.
     retrieved_date: '2026-10-12'
-  effective_date: '2023-10-29'
+  effective_date: '2000-05-18'
   last_verified: '2026-10-12'
   last_checked: '2026-10-12'
-  verification_note: "Effective date of the current text: Laws 2024, ch. 105, sec. 2 carries § 33-422(D), retroactive from and after Oct 29, 2023 under sec. 6. Original enactment not found."
+  verification_note: "Effective date: Laws 2000, 4th Special Session, ch. 1 (former 11-806.03), 2000-05-18 (fact-check 2026-10-12). Laws 2024, ch. 105, sec. 2 carries the current § 33-422(D) text, retroactive from and after Oct 29, 2023 under sec. 6; that date is an amendment, not the original enactment."
   confidence: high
   notes: 'The statute does not say calendar or business days. The house summary''s ''within five days
     of receiving'' matches subsection (D)''s ''five days after the affidavit of disclosure is furnished.''
