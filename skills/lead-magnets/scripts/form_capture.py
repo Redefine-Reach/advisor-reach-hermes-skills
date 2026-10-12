@@ -74,10 +74,17 @@ class Mcp:
         msg = self.request("tools/call", {"name": name, "arguments": arguments})
         if "error" in msg:
             raise RuntimeError("%s failed: %s" % (name, json.dumps(msg["error"])[:300]))
-        payload = json.loads(msg["result"]["content"][0]["text"])
-        if payload.get("ok") is not True:
-            raise RuntimeError("%s failed: %s" % (name, str(payload.get("error"))[:300]))
-        return payload.get("data")
+        result = msg["result"]
+        payload = json.loads(result["content"][0]["text"])
+        if result.get("isError"):
+            raise RuntimeError("%s failed: %s" % (name, json.dumps(payload)[:300]))
+        # Two answer shapes (seen 2026-10-12): an envelope {"ok", "data" | "error"} (`run`), or the
+        # tool's data itself (`list_workspaces` answers {"workspaces", "home-app-id", ...}).
+        if isinstance(payload, dict) and "ok" in payload:
+            if payload.get("ok") is not True:
+                raise RuntimeError("%s failed: %s" % (name, str(payload.get("error"))[:300]))
+            return payload.get("data")
+        return payload
 
 
 def connect():
@@ -99,7 +106,10 @@ def connect():
 def call(mcp, app_id, method, arg):
     data = mcp.tool("run", {"app_id": app_id, "page_path": INSTALL_PAGE, "protocol": PROTOCOL,
                             "method": method, "args": [arg]})
-    # `qo run` answers a list of solutions; a FormCapture method has exactly one.
+    # `run` answers its solutions as a list, either bare or (2026-10-12) as {"path", "result": [...]};
+    # a FormCapture method has exactly one.
+    if isinstance(data, dict) and isinstance(data.get("result"), list):
+        data = data["result"]
     if isinstance(data, list):
         data = data[0] if data else {}
     if not isinstance(data, dict):
