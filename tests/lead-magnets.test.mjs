@@ -295,6 +295,46 @@ test("magnet.py install copies the skill's script and worker byte for byte, 0700
   assert.equal(badName.code, 1);
 });
 
+test("magnet.py test posts magnet.json's test values and the form name through Form Capture's hook", async () => {
+  const posts = [];
+  const hook = createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", () => {
+      posts.push({ method: req.method, type: req.headers["content-type"], body });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "received" }));
+    });
+  });
+  await new Promise((r) => hook.listen(0, "127.0.0.1", r));
+  const hookUrl = `http://127.0.0.1:${hook.address().port}/hook/e-1`;
+  const s = await standIn({ endpoint: { status: "ok", "endpoint-url": hookUrl } });
+  try {
+    const m = await magnet();
+    assert.equal(m.inst.code, 0);
+    const r = await mgRun(m.root, ["test", "free-market-report"], { OMEGA_MCP_URL: s.url, MCP_QUERY_OMEGA_API_KEY: "key-1" });
+    assert.equal(r.code, 0);
+    assert.deepEqual(r.msg, { ok: true, status: 200 });
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].method, "POST");
+    assert.equal(posts[0].type, "application/x-www-form-urlencoded");
+    assert.deepEqual(Object.fromEntries(new URLSearchParams(posts[0].body)),
+      { form: "free-market-report", market: "Austin", name: "Test Lead", email: "lead@example.com" });
+    assert.ok(s.calls.length > 0 && s.calls.every((c) => c.auth === "Bearer key-1"));
+    assert.ok(runs(s.calls).some((a) => a.method === "endpoint"));
+  } finally { s.close(); hook.close(); }
+});
+
+test("magnet.py create keeps an existing secret", async () => {
+  const m = await magnet();
+  const file = join(m.DIR, "secret");
+  const before = readFileSync(file, "utf8");
+  const again = await mgRun(m.root, ["create", "free-market-report"]);
+  assert.equal(again.code, 0);
+  assert.equal(readFileSync(file, "utf8"), before);
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+});
+
 test("the Box Script refuses a wrong method, a missing secret and a non-submission, and starts nothing", async () => {
   const m = await magnet();
   assert.equal((await cgi(m.script, m.secret, { method: "GET" })).status, 405);
@@ -335,7 +375,7 @@ test("the Box Script saves the job, starts the worker in its own session and ans
 });
 
 // A stand-in for the box's Hermes api_server: a run "makes" the file the prompt names, then ends as told.
-async function hermesStandIn(ending = "completed") {
+async function hermesStandIn(ending = "completed", writes = true) {
   const calls = [];
   const server = createServer((req, res) => {
     let body = "";
@@ -345,7 +385,7 @@ async function hermesStandIn(ending = "completed") {
       res.writeHead(req.method === "POST" ? 202 : 200, { "Content-Type": "application/json" });
       if (req.method === "POST") {
         const file = calls.at(-1).body.input.match(/Save the result as the file (\S+) and nothing else/)[1];
-        if (ending === "completed") writeFileSync(file, "made");
+        if (ending === "completed" && writes) writeFileSync(file, "made");
         res.end(JSON.stringify({ run_id: "run_1", status: "queued" }));
       } else {
         res.end(JSON.stringify({ run_id: "run_1", status: ending, output: "DONE" }));
@@ -409,6 +449,16 @@ test("the worker fails a run that does not complete, a by-hand attempt is a new 
     assert.equal(await work(d, h2.url), 1);
     assert.deepEqual(d.log().map((e) => [e.event, e.reason ?? null]).slice(-2), [["produced", null], ["failed", "delivery_down"]]);
   } finally { h2.close(); }
+});
+
+test("the worker fails a run that completes without its file", async () => {
+  const m = await magnet();
+  const h = await hermesStandIn("completed", false);
+  try {
+    assert.equal(await work(m, h.url), 1);
+    assert.deepEqual(m.log().map((e) => e.event).slice(-1).concat(m.log().at(-1).reason), ["failed", "no_result"]);
+    assert.ok(!m.log().some((e) => e.event === "produced"));
+  } finally { h.close(); }
 });
 
 test("magnet.py off renames the Box Script, and log shows the magnet's own lines", async () => {
