@@ -170,7 +170,12 @@ connected (`references/gathering.md`, distilled from an advisor's real runs), bu
 mobile page (`references/brief-page.html`, AdvisorReach palette, no scripts), publish it through
 `present-file`, and text under 550 plain characters ending `Full brief: <link>`. Scheduling the
 job is `schedule-text`'s work — this skill defers to it the way `video` defers delivery to
-`present-file`. Contract: `tests/daily-brief.test.mjs`; the image and cold-start kind tests live
+`present-file`. A four-item morning brief runs priorities, meetings, commitments, and
+follow-ups at the same time (`scripts/parallel_brief.py`, RED-629): at most four helpers, a
+per-helper timeout, a total token cap, one reply in that fixed order, and start/end timestamps
+in the box log. "What are you working on?" is answered from that log. Helpers cannot send a
+text or an email. Kanban stays off. Contract: `tests/daily-brief.test.mjs` and
+`tests/parallel-brief.test.mjs`; the image and cold-start kind tests live
 in `google-cloud-gke-customer-boxes/tests/test_daily_brief_{box,kind}.sh`.
 
 ### video
