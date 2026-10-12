@@ -44,7 +44,9 @@ const WORKER_TEXT = readFileSync(join(dir, "scripts", "worker.py"), "utf8");
 const MAGNET_PY = join(dir, "scripts", "magnet.py");
 
 // A stand-in MCP server: list_workspaces answers a home workspace; `run` answers per FormCapture method.
-async function standIn(methods) {
+// shape "envelope": every tool answers {ok, data | error}, run's data a bare list (until 2026-10-12).
+// shape "current": list_workspaces answers its data bare; run answers {ok, command, data: {path, result: [...]}}.
+async function standIn(methods, shape = "envelope") {
   const calls = [];
   const server = createServer((req, res) => {
     let body = "";
@@ -55,10 +57,14 @@ async function standIn(methods) {
       if (!("id" in msg)) { res.writeHead(202); res.end(); return; }
       let payload = { ok: true, data: null };
       if (msg.method === "tools/call" && msg.params.name === "list_workspaces") {
-        payload = { ok: true, data: { "home-app-id": "app-1" } };
+        payload = shape === "current"
+          ? { workspaces: [{ app_id: "app-1", name: "W" }], "active-app-id": "app-1", "home-app-id": "app-1" }
+          : { ok: true, data: { "home-app-id": "app-1" } };
       } else if (msg.method === "tools/call" && msg.params.name === "run") {
         const answer = methods[msg.params.arguments.method];
-        payload = answer === undefined ? { ok: false, error: "PageNotFoundException" } : { ok: true, data: [answer] };
+        payload = answer === undefined ? { ok: false, command: "run", error: "PageNotFoundException" }
+          : shape === "current" ? { ok: true, command: "run", data: { path: msg.params.arguments.page_path, result: [answer] } }
+          : { ok: true, data: [answer] };
       }
       const reply = msg.method === "initialize"
         ? { jsonrpc: "2.0", id: msg.id, result: { protocolVersion: "2025-03-26", capabilities: {} } }
@@ -133,6 +139,22 @@ test("status answers the hook URL through the box's own key and home workspace",
     assert.ok(s.calls.every((c) => c.auth === "Bearer key-1"));
     assert.deepEqual(runs(s.calls), [{ app_id: "app-1", page_path: "Component Installs/Form Capture",
       protocol: "FormCapture", method: "endpoint", args: [{}] }]);
+  } finally { s.close(); }
+});
+
+test("status works with the hosted MCP's current answer shapes (bare list_workspaces, run data.result)", async () => {
+  const s = await standIn({ endpoint: { status: "ok", "endpoint-url": "https://db.queryomega.com/hook/e-1" } }, "current");
+  try {
+    const r = await runHelper(s.url, ["status"]);
+    assert.equal(r.code, 0);
+    assert.deepEqual(r.msg, { ok: true, app_id: "app-1", page: "Component Installs/Form Capture",
+      endpoint_url: "https://db.queryomega.com/hook/e-1" });
+    const empty = await standIn({}, "current");
+    try {
+      const missing = await runHelper(empty.url, ["status"]);
+      assert.equal(missing.code, 1);
+      assert.match(missing.msg.error, /PageNotFoundException/);
+    } finally { empty.close(); }
   } finally { s.close(); }
 });
 
