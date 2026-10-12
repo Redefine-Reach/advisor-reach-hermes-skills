@@ -45,8 +45,10 @@ rules:
       brokers employed by a designated broker pursuant to section 32-2151.01, subsection G during each
       twenty-four-month period of licensure.
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '2010-07-29'
+  last_verified: '2026-10-12'
   last_checked: '2026-10-12'
+  verification_note: "Effective date: Laws 2010, ch. 166 (SB 1219), sec. 5 struck 'four' and inserted 'two' in § 32-2129(C); approved Apr 26, 2010, no delayed-effective section, general effective date for the 49th Leg., 2nd Reg. Sess. is 07-29-2010 (https://www.azleg.gov/legtext/49leg/2r/laws/0166.htm; https://www.azleg.gov/general-effective-dates/)."
   confidence: high
   notes: The two-year length is stated in A.R.S. § 32-2129(C). Section 32-2130(A) independently describes
     licensure in twenty-four-month periods. The expiration date printed on the license is the date the
@@ -78,8 +80,10 @@ rules:
     quoted_text: License renewal must occur on or before the last day of the month in which the license
       was issued.
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '2025-12-13'
+  last_verified: '2026-10-12'
   last_checked: '2026-10-12'
+  verification_note: 'Effective date: current R4-28-303 section, 31 A.A.R. 4267, effective Dec 13, 2025 (SOS pamphlet Supp. 26-2). Section date, not proven to be the first date of subsection (B).'
   confidence: high
   notes: Offset 0 before the expiration date means the reminder lands on the expiration date, not the
     day before. R4-28-303(B) calls an application after the expiration date a late renewal. A.R.S. § 32-2129(C)
@@ -112,14 +116,16 @@ rules:
       broker or real estate salesperson, a timeshare salesperson, a cemetery broker or cemetery salesperson
       or a membership camping broker or membership camping salesperson.
     retrieved_date: '2026-10-12'
-  - url: https://www.azleg.gov/ars/32/02122.htm
+  - url: https://www.azleg.gov/legtext/50leg/2r/laws/0239.htm
     publisher: Arizona State Legislature
-    title: A.R.S. § 32-2122(B)
-    quoted_text: It is unlawful for any person, corporation, partnership or limited liability company
-      to engage in any business, occupation or activity listed in subsection A of this section without
-      first obtaining a license as prescribed in this chapter and otherwise complying with this chapter.
+    title: Laws 2012, ch. 239, amending A.R.S. § 32-2130(F) (effective from and after January 1, 2013)
+    quoted_text: Between the expiration date of the license and the date of renewal of the license, the
+      rights of the licensee under the license expire. While the license is expired it is unlawful for
+      a person to act or attempt or offer to act in a manner included in the definition of a real estate,
+      cemetery or membership camping broker or salesperson.
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '2013-01-01'
+  last_verified: '2026-10-12'
   last_checked: '2026-10-12'
   confidence: high
   notes: This is the point that keeps the one-year renewal window from being described as a grace period
@@ -127,7 +133,12 @@ rules:
     of persons employed by that broker on the broker's expiration date. The ADRE FAQ's phrase about review
     of the renewal application is narrower than the statute, which ties the return of license rights to
     renewal of the license. The ADRE FAQ URL returned 404 on 2026-10-12 and was replaced with A.R.S. §
-    32-2122(B), which makes unlicensed activity unlawful.
+    the Laws 2012 ch. 239 text of § 32-2130(F). Citation is A.R.S. § 32-2130(F), effective 2013-01-01;
+    § 32-2122(B) was removed because it bans practice without first obtaining a license and says nothing
+    about expiration (fact-check 2026-10-12). Caution - the azleg.gov § 32-2130 page currently prints
+    wording from Laws 2026, ch. 220 (adding timeshare salesperson), which is effective only from and after
+    June 30, 2027; the source 1 quote above is that future wording, and the in-force list is the Laws 2012/2024
+    wording in source 2.
 - id: az-license-late-renewal-one-year-window
   category: license_renewal
   title: Late renewal without an examination stays open for one year
@@ -162,8 +173,10 @@ rules:
       is made within twelve months after the license expires and the license is not canceled, terminated
       or suspended at the time of application.
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '2013-01-01'
+  last_verified: '2026-10-12'
   last_checked: '2026-10-12'
+  verification_note: "Effective date: one-year window is in Laws 2012, ch. 239, effective from and after Jan 1, 2013; current (G) wording from Laws 2024, ch. 52 (Sep 14, 2024). The 12-month exam waiver is § 32-2124(H) until Laws 2026 ch. 220 renumbers it (I) after June 30, 2027."
   confidence: medium
   notes: Both sections use a one-year or twelve-month length. They do not use the same status test. Section
     32-2130(G) looks at whether the license was canceled or suspended at the time of expiration. Section
@@ -202,7 +215,10 @@ rules:
       than $200.
     retrieved_date: '2026-10-12'
   effective_date: null
+  last_verified: '2026-10-12'
+  status: drop
   last_checked: '2026-10-12'
+  verification_note: 'DROP: no effective or revision date found for the ADRE fee amounts ($60/$125/$120/$245) on azre.gov/all-adre-resources/fees or in a dated fee schedule or SPS (fact-check 2026-10-12 plus retry).'
   confidence: low
   notes: The dollar split between timely and late renewal was found only on the ADRE fee table retrieved
     2026-10-12. A.R.S. § 32-2132 does not state $60, $125, $120, or $245. It caps a broker renewal at
@@ -242,8 +258,10 @@ rules:
       of satisfactory completion of 24 credit hours of continuing education courses in the categories
       specified in subsection (A)(5).
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '2013-01-01'
+  last_verified: '2026-10-12'
   last_checked: '2026-10-12'
+  verification_note: 'Effective date: 24-hour salesperson total is in Laws 2012, ch. 239, effective from and after Jan 1, 2013; R4-28-402 last amended effective Dec 13, 2025.'
   confidence: high
   notes: The 24-hour total for salespersons agrees in the statute and the rule reprint. The same statute
     places ordinary associate brokers in the 24-hour group and places designated brokers, and associate
@@ -256,20 +274,25 @@ rules:
     here.
 - id: az-ce-six-category-minimums
   category: continuing_ed
-  title: Six continuing-education categories have a three-hour minimum
-  plain_rule: The continuing-education rule requires at least three hours in each of agency law, contract
-    law, commissioner's standards, real estate legal issues, fair housing, and disclosure, with further
-    approved hours used to reach the renewal total.
+  title: Eight continuing-education categories each have a three-hour minimum
+  plain_rule: A.A.C. R4-28-402(A)(2), effective December 13, 2025, requires at least three hours in each
+    of the categories in (A)(5)(a) through (A)(5)(h) - agency law, contract law, requirements for licensees,
+    real estate legal issues, fair housing, disclosure, business brokerage, and general real estate.
   trigger: license expiration date
   offset_days: 0
   offset_direction: before
   calendar_or_business_days: null
   reminder_text: 'Reminder: renewal education is tracked by category. The published rule text requires
-    a minimum of three hours in each of six named categories, and extra hours in a category the system
-    treats as already filled are described by ADRE as elective hours.'
+    a minimum of three hours in each of the eight categories (a) through (h) of R4-28-402(A)(5).'
   applies_to: agent
   source_type: ADRE rule (A.A.C.)
   sources:
+  - url: https://web.archive.org/web/20260727013006/https://apps.azsos.gov/public_services/Title_04/4-28.pdf
+    publisher: Arizona Secretary of State (A.A.C. Title 4, Ch. 28, Supp. 26-2, archived copy)
+    title: Ariz. Admin. Code R4-28-402(A)(2), effective December 13, 2025 (31 A.A.R. 4267)
+    quoted_text: The renewal applicant shall complete a minimum of three hours in each category under
+      subsections (A)(5)(a) through (A)(5)(h).
+    retrieved_date: '2026-10-12'
   - url: https://www.law.cornell.edu/regulations/arizona/Ariz-Admin-Code-SS-R4-28-402
     publisher: Legal Information Institute, Cornell Law School
     title: Ariz. Admin. Code R4-28-402(A)(2) and (A)(5)
@@ -293,20 +316,14 @@ rules:
       specified in subsection (A)(5). The renewal applicant shall complete a minimum of three hours in
       each of the mandatory categories under subsections (A)(5)(a) through (A)(5)(f).
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '2025-12-13'
+  last_verified: '2026-10-12'
   last_checked: '2026-10-12'
   confidence: medium
-  notes: The six category names and the three-hour minimum are in the rule, not in A.R.S. § 32-2130. The
-    statute says the commissioner determines the content by rule. Both texts retrieved are reprints. The
-    Cornell amendment note ends March 5, 2005, and the Secretary of State pamphlet was not retrieved,
-    so a later amendment to the category list would not appear here. The rule does not state a number
-    of elective hours. Three hours times six categories is 18, and the salesperson total is 24, so the
-    rule leaves six hours to be filled by additional mandatory-category, business-brokerage, or general
-    courses. ADRE's education page says surplus hours in a completed category flow to an elective category.
-    It does not say the required elective total is three. R4-28-402(C) says the Department shall not grant
-    credit for more than nine hours of continuing education per day. The quoted category lines are the
-    opening sentences of subsections (A)(5)(a) through (A)(5)(f). The lists of example topics under each
-    heading were omitted from the quote.
+  notes: Corrected 2026-10-12 to the current R4-28-402 (effective Dec 13, 2025), which requires three
+    hours in each of categories (a) through (h) - not six categories. The Cornell and 2025 Law Book reprints
+    below show the superseded (a)-(f) text and are kept only as history; 'commissioner's standards' is
+    not in the current list. Paraphrased quote in source 1 is from the fact-check reading of the pamphlet.
 - id: az-ce-firewise-deed-fraud-water
   category: continuing_ed
   title: ADRE one-hour Firewise, deed fraud, and Arizona water topics
@@ -339,8 +356,10 @@ rules:
       based upon significant current issues in the real estate community. The Department shall notify
       licensees of a new requirement by written notice published in printed or electronic format.
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '2025-01-01'
+  last_verified: '2026-10-12'
   last_checked: '2026-10-12'
+  verification_note: 'Effective date: ADRE Education page, ''Beginning January 1, 2025'' (https://azre.gov/divisions/education).'
   confidence: low
   notes: The one-hour amounts and the three topic names appear on the ADRE education page. R4-28-402(A)(6)
     authorizes current-issue hours and a published notice, and it does not name Firewise, deed fraud,
@@ -768,8 +787,10 @@ rules:
       or deliver to a purchaser or a purchaser's designated agent the information required by this subsection
       within ten days after acceptance of the purchaser's offer to purchase.
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '2026-09-12'
+  last_verified: '2026-10-12'
   last_checked: '2026-10-12'
+  verification_note: 'Effective date: Laws 2026, ch. 249 (HB 2397), general effective date Sep 12, 2026.'
   confidence: high
   notes: 'A third text, the AAR H.O.A. Condominium / Planned Community Addendum updated September 2026,
     says: ''If the homeowner''s association has less than 50 units, no later than ten (10) days after
@@ -813,8 +834,10 @@ rules:
       agent within ten days after receipt of the written notice of a pending purchase offer all of the
       following
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '2026-09-12'
+  last_verified: '2026-10-12'
   last_checked: '2026-10-12'
+  verification_note: 'Effective date: Laws 2026, ch. 249 (HB 2397), general effective date Sep 12, 2026.'
   confidence: high
   notes: 'The September 2026 HOA addendum repeats the association''s ten days: ''The association is obligated
     by Arizona law to provide information described below to Buyer within ten (10) days after receipt
@@ -929,8 +952,10 @@ rules:
       or persons with disabilities or any 0-bedroom dwelling (unless any child who is less than 6 years
       of age resides or is expected to reside in such housing).
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '1996-04-22'
+  last_verified: '2026-10-12'
   last_checked: '2026-10-12'
+  verification_note: 'Effective date: 40 C.F.R. 745.107 effective Apr 22, 1996 (61 FR 9064; 1999-07-22 correction); applicability Sep 6, 1996 (>4 units) and Dec 6, 1996 (1-4 units).'
   confidence: high
   notes: 'Section 745.100 states that this subpart implements 42 U.S.C. § 4852d and that the seller discloses
     known lead-based paint and hazards, provides available records, provides the pamphlet, gives purchasers
@@ -977,8 +1002,10 @@ rules:
       disclosure and warning language to the sales or leasing contract before the purchaser or lessee
       is obligated under a contract to purchase or lease target housing.
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '1996-04-22'
+  last_verified: '2026-10-12'
   last_checked: '2026-10-12'
+  verification_note: 'Effective date: 40 C.F.R. 745.110 effective Apr 22, 1996 (61 FR 9064; 1999-07-22 correction).'
   confidence: high
   notes: Both citations are in 40 C.F.R. Part 745 Subpart F, which implements 42 U.S.C. § 4852d. They
     are two sections of one regulation, not two unrelated publishers. The 10-day figure is the length
@@ -1023,8 +1050,10 @@ rules:
       under any contract to purchase or lease target housing that is not otherwise an exempt transaction
       pursuant to § 745.101.
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '1996-04-22'
+  last_verified: '2026-10-12'
   last_checked: '2026-10-12'
+  verification_note: 'Effective date is the regulatory date of 40 C.F.R. 745.107; the Feb 2026 form edition label was not re-proved from the PDF.'
   confidence: low
   notes: 'The August 2024 final prints the same five-day delivery, ten-day or blank assessment period,
     and five-day cancellation language. The other checkbox on both forms says the information was provided
@@ -1079,8 +1108,10 @@ rules:
       broker''s immediate family, has a financial interest in the transaction other than the salesperson''s
       or broker''s receipt of compensation for the real estate services.'
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '2025-12-13'
+  last_verified: '2026-10-12'
   last_checked: '2026-10-12'
+  verification_note: 'Effective date: R4-28-1101, 31 A.A.R. 4267, effective Dec 13, 2025.'
   confidence: medium
   notes: The timing sentence agrees in the Cornell reprint and the AAR February 2025 explanation. An AAR
     December 4, 2025 handout on 2025 Commissioner's-rule updates shows different wording for item 3, including
@@ -1122,8 +1153,10 @@ rules:
     quoted_text: The disclosures must be provided on a separate piece of paper no later than the time
       of each referral or, if the lender requires use of a particular provider, the time of loan application
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '2011-12-30'
+  last_verified: '2026-10-12'
   last_checked: '2026-10-12'
+  verification_note: 'Effective date: CFPB Regulation X interim final rule (2011-31722), effective Dec 30, 2011.'
   confidence: high
   notes: Offset 0 before the referral means the reminder is at the referral, which is what 'no later than
     the time of each referral' allows. The disclosure describes the relationship, including the ownership
@@ -1167,7 +1200,10 @@ rules:
       Read the Public Report before signing any contract to purchase a property in a subdivision.
     retrieved_date: '2026-10-12'
   effective_date: null
+  last_verified: '2026-10-12'
+  status: drop
   last_checked: '2026-10-12'
+  verification_note: "DROP: no session-law effective date found for the furnish-before-signing duty in § 32-2183(A); azleg.gov page has no history line and Laws 2024 ch. 52 does not amend it (fact-check 2026-10-12 plus retry)."
   confidence: high
   notes: Exemptions are in A.R.S. §§ 32-2181.01 and 32-2181.02 and were not restated as deadlines. The
     three-year rescission action is a limitations period in § 32-2183(I), not a contract contingency,
@@ -1207,8 +1243,10 @@ rules:
       in an unincorporated area of a county, and any subsequent seller, to furnish an affidavit of disclosure
       to the buyer at least seven days before the property is transferred.
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '2023-10-29'
+  last_verified: '2026-10-12'
   last_checked: '2026-10-12'
+  verification_note: "Effective date of the current text: Laws 2024, ch. 105, sec. 2 carries § 33-422(A), retroactive from and after Oct 29, 2023 under sec. 6 (https://www.azleg.gov/legtext/56leg/2R/laws/0105.htm). Original enactment predates Laws 2019 ch. 103 and was not found. HB 2092 (2025) was vetoed and is not a source."
   confidence: high
   notes: 'The statute does not say calendar or business days. The buyer acknowledges receipt. A release
     of liability for an omission or misrepresentation in the affidavit is not valid. The seller records
@@ -1247,8 +1285,10 @@ rules:
     title: HB 2092 Senate engrossed summary
     quoted_text: The buyer has the right to rescind a sale within five days of receiving the affidavit.
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '2023-10-29'
+  last_verified: '2026-10-12'
   last_checked: '2026-10-12'
+  verification_note: "Effective date of the current text: Laws 2024, ch. 105, sec. 2 carries § 33-422(D), retroactive from and after Oct 29, 2023 under sec. 6. Original enactment not found."
   confidence: high
   notes: 'The statute does not say calendar or business days. The house summary''s ''within five days
     of receiving'' matches subsection (D)''s ''five days after the affidavit of disclosure is furnished.''
