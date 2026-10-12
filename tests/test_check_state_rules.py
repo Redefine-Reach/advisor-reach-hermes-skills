@@ -202,6 +202,23 @@ class LiveFile(unittest.TestCase):
             self.assertIn("check your signed contract", r["reminder_text"].casefold())
             self.assertEqual(len(r["sources"]), 1)
 
+    def test_null_effective_dates_follow_the_session_law_review(self):
+        doc = yaml.safe_load((ROOT / "rules/states/AZ.yaml").read_text())
+        by_id = {r["id"]: r for r in doc["rules"]}
+        term = by_id["az-license-term-two-years"]
+        self.assertEqual(str(term["effective_date"]), "2010-07-29")
+        self.assertIn("90-day", term["verification_note"])
+        self.assertIn("ch. 166", term["verification_note"])
+        fee = by_id["az-license-late-renewal-fee"]
+        self.assertIsNone(fee["effective_date"])
+        self.assertEqual(fee["status"], "drop")
+        report = by_id["az-disclosure-subdivision-public-report"]
+        self.assertEqual(str(report["effective_date"]), "2024-09-14")
+        self.assertIn("ch. 41", report["verification_note"])
+        self.assertIn("ch. 52, which does not amend", report["verification_note"])
+        self.assertIn("90-day", report["verification_note"])
+        self.assertNotEqual(report.get("status"), "drop")
+
 
 if __name__ == "__main__":
     unittest.main()
