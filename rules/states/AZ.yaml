@@ -7,7 +7,7 @@ disclaimer: Reminders of published text only, not legal advice. Contract-term re
   Arizona REALTORS purchase contract (Feb 2026); a signed contract or counteroffer can change the days.
 source_policy:
   statute_and_adre_rules: at least 2 sources, at least 1 official (A.R.S., A.A.C., ADRE, or CFR)
-  contract_terms: 'single source allowed: current Arizona REALTORS form edition, labeled "standard contract
+  contract_terms: 'source_type standard_contract_form (CI: exactly 1 source allowed, caveat field required); single source allowed: current Arizona REALTORS form edition, labeled "standard contract
     form, Feb 2026" (Jerry, 2026-10-12)'
 provenance:
   dataset: https://github.com/Redefine-Reach/research-director/pull/9
@@ -382,7 +382,9 @@ rules:
     apply under the standard AZ purchase contract; check your signed contract, since counteroffers can
     change the days.'
   applies_to: both
-  source_type: standard contract form, Feb 2026
+  source_type: standard_contract_form
+  source_edition: Feb 2026
+  caveat: 'These days come from the standard Arizona REALTORS purchase contract (Feb 2026). Check your signed contract, since a counteroffer or addendum can change them.'
   sources:
   - url: https://www.aaronline.com/wp-content/uploads/2026/02/02/Residential-Resale-Real-Estate-Purchase-Contract-Form-February-2026-PROOF-SampleProt-1.pdf
     publisher: Arizona Association of REALTORS
@@ -394,6 +396,7 @@ rules:
     retrieved_date: '2026-10-12'
   effective_date: 2026-02
   last_checked: '2026-10-12'
+  last_verified: '2026-10-12'
   confidence: medium
   notes: 'The calendar-day sentence and the exclude-the-start-day sentence were read in both the February
     2026 sample and the August 2024 final. The February 2026 filename contains PROOF. The AAR forms index
@@ -421,7 +424,9 @@ rules:
     is a blank filled in on that contract. These days apply under the standard AZ purchase contract; check
     your signed contract, since counteroffers can change the days.'
   applies_to: buyer-side
-  source_type: standard contract form, Feb 2026
+  source_type: standard_contract_form
+  source_edition: Feb 2026
+  caveat: 'These days come from the standard Arizona REALTORS purchase contract (Feb 2026). Check your signed contract, since a counteroffer or addendum can change them.'
   sources:
   - url: https://www.aaronline.com/wp-content/uploads/2026/02/02/Residential-Resale-Real-Estate-Purchase-Contract-Form-February-2026-PROOF-SampleProt-1.pdf
     publisher: Arizona Association of REALTORS
@@ -432,6 +437,7 @@ rules:
     retrieved_date: '2026-10-12'
   effective_date: 2026-02
   last_checked: '2026-10-12'
+  last_verified: '2026-10-12'
   confidence: medium
   notes: 'Both sources are AAR editions of the same form, dated August 2024 (filename FINAL) and February
     2026 (filename contains PROOF; forms index lists February 2026 as the current sample). No non-AAR
@@ -454,7 +460,9 @@ rules:
     days. These days apply under the standard AZ purchase contract; check your signed contract, since
     counteroffers can change the days.'
   applies_to: buyer-side
-  source_type: standard contract form, Feb 2026
+  source_type: standard_contract_form
+  source_edition: Feb 2026
+  caveat: 'These days come from the standard Arizona REALTORS purchase contract (Feb 2026). Check your signed contract, since a counteroffer or addendum can change them.'
   sources:
   - url: https://www.aaronline.com/wp-content/uploads/2026/02/02/Residential-Resale-Real-Estate-Purchase-Contract-Form-February-2026-PROOF-SampleProt-1.pdf
     publisher: Arizona Association of REALTORS
@@ -464,6 +472,7 @@ rules:
     retrieved_date: '2026-10-12'
   effective_date: 2026-02
   last_checked: '2026-10-12'
+  last_verified: '2026-10-12'
   confidence: medium
   notes: 'The printed default is ten calendar days under the contract''s day clause. The blank is part
     of the form, so a different written number replaces the ten for that contract. Both sources are AAR
@@ -487,7 +496,9 @@ rules:
     for that notice. These days apply under the standard AZ purchase contract; check your signed contract,
     since counteroffers can change the days.'
   applies_to: buyer-side
-  source_type: standard contract form, Feb 2026
+  source_type: standard_contract_form
+  source_edition: Feb 2026
+  caveat: 'These days come from the standard Arizona REALTORS purchase contract (Feb 2026). Check your signed contract, since a counteroffer or addendum can change them.'
   sources:
   - url: https://www.aaronline.com/wp-content/uploads/2026/02/02/Residential-Resale-Real-Estate-Purchase-Contract-Form-February-2026-PROOF-SampleProt-1.pdf
     publisher: Arizona Association of REALTORS
@@ -500,6 +511,7 @@ rules:
     retrieved_date: '2026-10-12'
   effective_date: 2026-02
   last_checked: '2026-10-12'
+  last_verified: '2026-10-12'
   confidence: medium
   notes: 'There is no separate day count for the BINSR. It is due by the end of the inspection period,
     which prints as ten days unless the blank is filled in. The BINSR form on the AAR forms index is dated
@@ -524,7 +536,9 @@ rules:
     apply under the standard AZ purchase contract; check your signed contract, since counteroffers can
     change the days.'
   applies_to: seller-side
-  source_type: standard contract form, Feb 2026
+  source_type: standard_contract_form
+  source_edition: Feb 2026
+  caveat: 'These days come from the standard Arizona REALTORS purchase contract (Feb 2026). Check your signed contract, since a counteroffer or addendum can change them.'
   sources:
   - url: https://www.aaronline.com/wp-content/uploads/2026/02/02/Residential-Resale-Real-Estate-Purchase-Contract-Form-February-2026-PROOF-SampleProt-1.pdf
     publisher: Arizona Association of REALTORS
@@ -536,6 +550,7 @@ rules:
     retrieved_date: '2026-10-12'
   effective_date: 2026-02
   last_checked: '2026-10-12'
+  last_verified: '2026-10-12'
   confidence: medium
   notes: 'The purchase-contract editions of February 2026 and August 2024 both print ''five (5) days or
     _____ days.'' The October 2022 BINSR says ''five (5) days or otherwise specified days.'' The forms
@@ -561,7 +576,9 @@ rules:
     comes first. That five is not printed with a blank. These days apply under the standard AZ purchase
     contract; check your signed contract, since counteroffers can change the days.'
   applies_to: buyer-side
-  source_type: standard contract form, Feb 2026
+  source_type: standard_contract_form
+  source_edition: Feb 2026
+  caveat: 'These days come from the standard Arizona REALTORS purchase contract (Feb 2026). Check your signed contract, since a counteroffer or addendum can change them.'
   sources:
   - url: https://www.aaronline.com/wp-content/uploads/2026/02/02/Residential-Resale-Real-Estate-Purchase-Contract-Form-February-2026-PROOF-SampleProt-1.pdf
     publisher: Arizona Association of REALTORS
@@ -575,6 +592,7 @@ rules:
     retrieved_date: '2026-10-12'
   effective_date: 2026-02
   last_checked: '2026-10-12'
+  last_verified: '2026-10-12'
   confidence: medium
   notes: 'This five-day buyer period is printed as five days, not as ''five days or a blank,'' unlike
     the seller''s response period. Both sources are AAR contract editions. The October 2022 BINSR has
@@ -596,7 +614,9 @@ rules:
     arrives late in or after the inspection period. These days apply under the standard AZ purchase contract;
     check your signed contract, since counteroffers can change the days.'
   applies_to: buyer-side
-  source_type: standard contract form, Feb 2026
+  source_type: standard_contract_form
+  source_edition: Feb 2026
+  caveat: 'These days come from the standard Arizona REALTORS purchase contract (Feb 2026). Check your signed contract, since a counteroffer or addendum can change them.'
   sources:
   - url: https://www.aaronline.com/wp-content/uploads/2026/02/02/Residential-Resale-Real-Estate-Purchase-Contract-Form-February-2026-PROOF-SampleProt-1.pdf
     publisher: Arizona Association of REALTORS
@@ -607,6 +627,7 @@ rules:
     retrieved_date: '2026-10-12'
   effective_date: 2026-02
   last_checked: '2026-10-12'
+  last_verified: '2026-10-12'
   confidence: medium
   notes: 'Delivery of the SPDS itself is a separate three-day item. Both sentences were read in the August
     2024 final and the February 2026 sample. The SPDS form listed on the AAR forms index is ''Residential
@@ -628,7 +649,9 @@ rules:
     as updated February 2023. These days apply under the standard AZ purchase contract; check your signed
     contract, since counteroffers can change the days.'
   applies_to: seller-side
-  source_type: standard contract form, Feb 2026
+  source_type: standard_contract_form
+  source_edition: Feb 2026
+  caveat: 'These days come from the standard Arizona REALTORS purchase contract (Feb 2026). Check your signed contract, since a counteroffer or addendum can change them.'
   sources:
   - url: https://www.aaronline.com/wp-content/uploads/2026/02/02/Residential-Resale-Real-Estate-Purchase-Contract-Form-February-2026-PROOF-SampleProt-1.pdf
     publisher: Arizona Association of REALTORS
@@ -638,6 +661,7 @@ rules:
     retrieved_date: '2026-10-12'
   effective_date: 2026-02
   last_checked: '2026-10-12'
+  last_verified: '2026-10-12'
   confidence: medium
   notes: 'No Arizona statute retrieved in this pass names the SPDS or the three-day delivery. The three
     days are a term of these AAR contract editions. The ADRE-hosted Buyer Advisory (file name January
@@ -662,7 +686,9 @@ rules:
     LSU form on the AAR forms index is dated February 2017. These days apply under the standard AZ purchase
     contract; check your signed contract, since counteroffers can change the days.'
   applies_to: buyer-side
-  source_type: standard contract form, Feb 2026
+  source_type: standard_contract_form
+  source_edition: Feb 2026
+  caveat: 'These days come from the standard Arizona REALTORS purchase contract (Feb 2026). Check your signed contract, since a counteroffer or addendum can change them.'
   sources:
   - url: https://www.aaronline.com/wp-content/uploads/2026/02/02/Residential-Resale-Real-Estate-Purchase-Contract-Form-February-2026-PROOF-SampleProt-1.pdf
     publisher: Arizona Association of REALTORS
@@ -673,6 +699,7 @@ rules:
     retrieved_date: '2026-10-12'
   effective_date: 2026-02
   last_checked: '2026-10-12'
+  last_verified: '2026-10-12'
   confidence: medium
   notes: 'The ten-day LSU delivery is not the loan-approval deadline. The same financing section says
     the buyer''s obligation is contingent on loan approval without prior-to-document conditions no later
@@ -699,7 +726,9 @@ rules:
     federal law says otherwise. These days apply under the standard AZ purchase contract; check your signed
     contract, since counteroffers can change the days.'
   applies_to: buyer-side
-  source_type: standard contract form, Feb 2026
+  source_type: standard_contract_form
+  source_edition: Feb 2026
+  caveat: 'These days come from the standard Arizona REALTORS purchase contract (Feb 2026). Check your signed contract, since a counteroffer or addendum can change them.'
   sources:
   - url: https://www.aaronline.com/wp-content/uploads/2026/02/02/Residential-Resale-Real-Estate-Purchase-Contract-Form-February-2026-PROOF-SampleProt-1.pdf
     publisher: Arizona Association of REALTORS
@@ -712,6 +741,7 @@ rules:
     retrieved_date: '2026-10-12'
   effective_date: 2026-02
   last_checked: '2026-10-12'
+  last_verified: '2026-10-12'
   confidence: medium
   notes: 'The five days run from notice of the appraised value, not from contract acceptance. The contract
     does not print a deadline for ordering the appraisal. The federal-law clause is in the form and was
@@ -736,7 +766,9 @@ rules:
     company to issue the commitment. These days apply under the standard AZ purchase contract; check your
     signed contract, since counteroffers can change the days.'
   applies_to: buyer-side
-  source_type: standard contract form, Feb 2026
+  source_type: standard_contract_form
+  source_edition: Feb 2026
+  caveat: 'These days come from the standard Arizona REALTORS purchase contract (Feb 2026). Check your signed contract, since a counteroffer or addendum can change them.'
   sources:
   - url: https://www.aaronline.com/wp-content/uploads/2026/02/02/Residential-Resale-Real-Estate-Purchase-Contract-Form-February-2026-PROOF-SampleProt-1.pdf
     publisher: Arizona Association of REALTORS
@@ -749,6 +781,7 @@ rules:
     retrieved_date: '2026-10-12'
   effective_date: 2026-02
   last_checked: '2026-10-12'
+  last_verified: '2026-10-12'
   confidence: medium
   notes: 'The buyer attachment in the February 2026 sample cites section 3c for both the title commitment
     and the CC&Rs. That five-day CC&R review is the title-exception review. It is not the HOA resale-disclosure
@@ -860,7 +893,9 @@ rules:
     day both are open. These days apply under the standard AZ purchase contract; check your signed contract,
     since counteroffers can change the days.'
   applies_to: both
-  source_type: standard contract form, Feb 2026
+  source_type: standard_contract_form
+  source_edition: Feb 2026
+  caveat: 'These days come from the standard Arizona REALTORS purchase contract (Feb 2026). Check your signed contract, since a counteroffer or addendum can change them.'
   sources:
   - url: https://www.aaronline.com/wp-content/uploads/2026/02/02/Residential-Resale-Real-Estate-Purchase-Contract-Form-February-2026-PROOF-SampleProt-1.pdf
     publisher: Arizona Association of REALTORS
@@ -873,6 +908,7 @@ rules:
     retrieved_date: '2026-10-12'
   effective_date: 2026-02
   last_checked: '2026-10-12'
+  last_verified: '2026-10-12'
   confidence: medium
   notes: 'The AAR forms index lists a separate Cure Period Notice dated February 2019. That notice form
     was not fetched. The three-day period is in the purchase contract. The February 2026 text also says
@@ -897,7 +933,9 @@ rules:
     notice, and the seller keeps utilities on until close of escrow. These days apply under the standard
     AZ purchase contract; check your signed contract, since counteroffers can change the days.'
   applies_to: both
-  source_type: standard contract form, Feb 2026
+  source_type: standard_contract_form
+  source_edition: Feb 2026
+  caveat: 'These days come from the standard Arizona REALTORS purchase contract (Feb 2026). Check your signed contract, since a counteroffer or addendum can change them.'
   sources:
   - url: https://www.aaronline.com/wp-content/uploads/2026/02/02/Residential-Resale-Real-Estate-Purchase-Contract-Form-February-2026-PROOF-SampleProt-1.pdf
     publisher: Arizona Association of REALTORS
@@ -912,6 +950,7 @@ rules:
     retrieved_date: '2026-10-12'
   effective_date: 2026-02
   last_checked: '2026-10-12'
+  last_verified: '2026-10-12'
   confidence: medium
   notes: 'The August 2024 final contains the same walkthrough paragraph: reasonable access, reasonable
     notice, utilities on until close of escrow, and no printed day count. The buyer attachment cites section
@@ -1315,7 +1354,9 @@ rules:
     the standard AZ purchase contract; check your signed contract, since counteroffers can change the
     days.'
   applies_to: seller-side
-  source_type: standard contract form, Feb 2026
+  source_type: standard_contract_form
+  source_edition: Feb 2026
+  caveat: 'These days come from the standard Arizona REALTORS purchase contract (Feb 2026). Check your signed contract, since a counteroffer or addendum can change them.'
   sources:
   - url: https://www.aaronline.com/wp-content/uploads/2026/02/02/Residential-Resale-Real-Estate-Purchase-Contract-Form-February-2026-PROOF-SampleProt-1.pdf
     publisher: Arizona Association of REALTORS
@@ -1329,6 +1370,7 @@ rules:
     retrieved_date: '2026-10-12'
   effective_date: 2026-02
   last_checked: '2026-10-12'
+  last_verified: '2026-10-12'
   confidence: medium
   notes: 'Both sources are AAR contract editions and the sentences match. This five-day contractual delivery
     is not A.R.S. § 33-422''s seven-days-before-transfer rule, and the contract''s disapproval window
