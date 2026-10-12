@@ -67,25 +67,22 @@ via the box's Exa search): bio, 24-month production as published, 15 channel sco
 Profile field-by-field, and a 90-day game plan. Locked template (`assets/template.html`) rendered by
 `assets/render.py` (jinja2 + weasyprint) from small per-section JSON files; delivered via `present-file`.
 
-### advisorreach-site
-Team ARIN's way to change `https://advisorreach.ai` (the ARIN Lane): clones
-`Redefine-Reach/advisorreach-site` over HTTPS as the team machine user `ar-team-arin`, whose token
-`scripts/git-credential-wttc-oauth.py` gets from WTTC's GitHub OAuth Client through the box's OmegaAI MCP
-key (nothing stored), edits only `public/` on an `arin/*` branch, runs the copy and link contract tests with node,
-pushes the branch, and confirms the release by `git ls-remote` of `production` and
-`https://advisorreach.ai/release-identity.json`. The site repo's `arin-promote.yml` validates,
-promotes and deploys. A Lead Magnet page goes under `public/m/<name>/`. Contract:
-`tests/advisorreach-site.test.mjs`, `tests/git-credential-wttc-oauth.test.mjs`.
-
 ### lead-magnets
 How any box's ARIN builds a Lead Magnet end to end, with no developer: the leads are kept by the
 box workspace's Form Capture install (an OmegaAI component, form-capture repo), a Form Capture webhook
-with a secret header calls a Box Script ARIN writes at `/opt/data/cgi-bin/<name>` (served at
-`/scripts/<name>` by the customer-boxes `box-scripts` container), long work goes to an api_server run,
-and the page is published with the box's site skill. `scripts/form_capture.py` calls the install's
+with a secret header calls the skill's Box Script, `scripts/box_script.py`, installed at
+`/opt/data/cgi-bin/<name>` (served at `/scripts/<name>` by the customer-boxes `box-scripts` container).
+The script checks every field against the magnet's `magnet.json`, saves the submission as a job and
+starts the skill's worker, `scripts/worker.py`, in its own session; the worker makes the result with one
+run of the box's ARIN (`POST /v1/runs`) whose prompt is the magnet's `what` plus the checked product
+fields only, then calls the magnet's own `deliver.py`, which uses the submitted contact values only.
+`scripts/magnet.py` creates a magnet's folder and secret, checks its two files, installs the script and
+worker byte for byte, posts its test values, shows its log and switches it off. The run
+never sends anything and never sees the submission. The page is published with the box's site skill. `scripts/form_capture.py` calls the install's
 `FormCapture` methods through the hosted OmegaAI MCP with the box's key (status, add/list/remove
 webhooks, submissions); it never installs Form Capture and never prints a header value. Names no
-particular magnet: each one is written down in a box-local skill under
+particular magnet, result type, delivery channel or customer: each one is written down in a
+box-local skill under
 `/opt/data/skills/lead-magnet-builds/<name>/`. Installed only on boxes with `MCP_QUERY_OMEGA_API_KEY`
 (customer-boxes entrypoint, `# BEGIN omega-only-skills`). Contract: `tests/lead-magnets.test.mjs`.
 

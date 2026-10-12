@@ -6,8 +6,7 @@ Library"). Its install at "Component Installs/Form Capture" in this box's OmegaA
 hook URL that a website form posts to, keeps every submission as a row of Data/Submissions, and POSTs
 each submission as JSON to every matching row of Data/Webhooks (url, headers, optional form). This
 script only calls the install's FormCapture methods with the box's key (MCP_QUERY_OMEGA_API_KEY), the
-same MCP client as skills/feeder-markets/scripts/cas_pull.py and
-skills/advisorreach-site/scripts/git-credential-wttc-oauth.py.
+same MCP client as skills/feeder-markets/scripts/cas_pull.py.
 
   form_capture.py status
   form_capture.py add-webhook --url <https://...> [--form <form>] [--header-file <path>]
