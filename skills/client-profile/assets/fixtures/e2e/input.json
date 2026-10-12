@@ -1,0 +1,13 @@
+{
+  "name": "Dana Whitfield",
+  "city": "Scottsdale",
+  "type": "buyer",
+  "candidate": 1,
+  "evidence": {
+    "url": "https://example.com/dana-whitfield",
+    "title": "Dana Whitfield, broker",
+    "excerpt": "Dana Whitfield is a broker working in Scottsdale.",
+    "origin": "web",
+    "query": "\"Dana Whitfield\" \"Scottsdale\" professional profile company"
+  }
+}

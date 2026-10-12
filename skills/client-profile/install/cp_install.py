@@ -125,17 +125,40 @@ def same_path(left: Path, right: Path) -> bool:
     return left.resolve() == right.resolve()
 
 
+def remove_path(path: Path) -> None:
+    if path.is_symlink() or (path.exists() and not path.is_dir()):
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
 def copy_skill(dest: Path) -> None:
-    # Running from the installed tree (SKILL.md's path) must not delete itself.
-    if same_path(SKILL_SRC, dest):
+    # Running from the installed tree must not delete itself.
+    if SKILL_SRC.resolve() == dest.resolve():
         return
-    if dest.exists():
-        shutil.rmtree(dest)
-    shutil.copytree(
-        SKILL_SRC,
-        dest,
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.tmp"),
-    )
+    staging = Path(str(dest) + ".tmp")
+    replaced = Path(str(dest) + ".old")
+    remove_path(staging)
+    try:
+        shutil.copytree(
+            SKILL_SRC,
+            staging,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.tmp"),
+        )
+    except Exception:
+        remove_path(staging)
+        raise
+    remove_path(replaced)
+    if dest.exists() or dest.is_symlink():
+        os.replace(dest, replaced)
+        try:
+            os.replace(staging, dest)
+        except Exception:
+            os.replace(replaced, dest)
+            raise
+        remove_path(replaced)
+        return
+    os.replace(staging, dest)
 
 
 def write_soul_block(soul_path: Path, before: str) -> None:
@@ -192,6 +215,7 @@ def cmd_install(slug: str | None) -> None:
         emit({"ok": False, "error": "soul_missing", "message": "SOUL.md is not on this box."}, 1)
     before = read_soul(p["soul"])
     before_sha = sha256(before)
+    # Copy first. A failed copy must leave SOUL.md untouched.
     copy_skill(p["skill"])
     existing = load_config(p["cfg"]) or {}
     existing["enabled"] = True
@@ -249,7 +273,7 @@ def cmd_uninstall() -> None:
         "config": public_config(load_config(p["cfg"])),
         "enabled": False,
         "data_kept": True,
-        "message": "Client data was kept. Purge or revoke it if you want it gone.",
+        "message": "Client data was kept. Run purge or revoke if you want it gone.",
     })
 
 

@@ -202,6 +202,18 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def parse_instant(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
 def data_root() -> Path:
     raw = os.environ.get("CLIENT_PROFILE_ROOT")
     return Path(raw) if raw else Path("/opt/data/client-profile")
@@ -645,6 +657,23 @@ def claim_targets(brief: dict) -> list[tuple[str, dict, bool]]:
     return found
 
 
+def evidence_consent_errors(path: Path, rows: list[dict]) -> list[dict]:
+    """Each evidence item must have been added after consent was recorded."""
+    if not is_consent_required():
+        return []
+    recorded = parse_instant((load_consent(path) or {}).get("recorded_at"))
+    errors: list[dict] = []
+    for row in rows:
+        added = parse_instant(row.get("added_at"))
+        if recorded is None or added is None or not added > recorded:
+            err: dict = {"code": "evidence_before_consent"}
+            evidence_id = row.get("evidence_id")
+            if isinstance(evidence_id, str):
+                err["evidence_id"] = evidence_id
+            errors.append(err)
+    return errors
+
+
 def evaluate_brief(path: Path, brief: dict) -> dict:
     schema = load_schema()
     errors: list[dict] = []
@@ -662,6 +691,7 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
         }
     errors.extend(screen_brief(brief))
     rows = load_evidence(path)
+    errors.extend(evidence_consent_errors(path, rows))
     known = {row["evidence_id"]: row for row in rows}
     confirmed = confirmed_ids(rows)
     style = brief["communication_style"]
@@ -816,9 +846,21 @@ def render_sources(sources: list) -> str:
     return "".join(parts)
 
 
-def try_weasyprint(html_path: Path, pdf_path: Path) -> bool:
+def weasyprint_binary() -> str | None:
+    override = os.environ.get("WEASYPRINT_BIN", "").strip()
+    if override:
+        if os.path.isfile(override) and os.access(override, os.X_OK):
+            return override
+        return None
     binary = "/usr/bin/weasyprint"
-    if not os.path.isfile(binary) or not os.access(binary, os.X_OK):
+    if os.path.isfile(binary) and os.access(binary, os.X_OK):
+        return binary
+    return None
+
+
+def try_weasyprint(html_path: Path, pdf_path: Path) -> bool:
+    binary = weasyprint_binary()
+    if not binary:
         return False
     proc = subprocess.run(
         [binary, str(html_path), str(pdf_path)],
@@ -1122,15 +1164,23 @@ BLOCK_MARKER_RE = re.compile(r"<<<(?:END_)?UNTRUSTED_EVIDENCE[^>\n]*>>>")
 
 def fence_field(value: object) -> str:
     text = value if isinstance(value, str) else ""
-    return BLOCK_MARKER_RE.sub(" ", text).replace("\r", "")
+    text = text.replace("\r", "")
+    text = BLOCK_MARKER_RE.sub(" ", text)
+    text = text.replace("<<<END_UNTRUSTED_EVIDENCE", " ")
+    text = text.replace("<<<UNTRUSTED_EVIDENCE", " ")
+    return text
 
 
-def cmd_evidence_block(client_id: str, opts: dict[str, list[str]]) -> None:
+def cmd_evidence_render(client_id: str, opts: dict[str, list[str]]) -> None:
     gate(actor_of(opts), mutate=False)
     path = require_client(client_id)
     require_consent(path)
+    rows = load_evidence(path)
+    timing = evidence_consent_errors(path, rows)
+    if timing:
+        emit({"ok": False, "errors": timing}, 1)
     blocks: list[str] = []
-    for row in load_evidence(path):
+    for row in rows:
         if row.get("identity_status") != "confirmed":
             continue
         evidence_id = row.get("evidence_id") or ""
@@ -1643,13 +1693,13 @@ def main(argv: list[str]) -> None:
             fail("usage", "queries <client_id>")
         cmd_queries(positional[0], opts)
     if command == "evidence":
-        if not rest or rest[0] not in {"add", "block"}:
-            fail("usage", "evidence add|block <client_id>")
+        if not rest or rest[0] not in {"add", "block", "render"}:
+            fail("usage", "evidence add|render|block <client_id>")
         positional, opts = parse_flags(rest[1:])
         if len(positional) != 1:
-            fail("usage", "evidence add|block <client_id>")
-        if rest[0] == "block":
-            cmd_evidence_block(positional[0], opts)
+            fail("usage", "evidence add|render|block <client_id>")
+        if rest[0] in {"block", "render"}:
+            cmd_evidence_render(positional[0], opts)
         cmd_evidence_add(positional[0], opts)
     if command == "identity":
         if not rest or rest[0] not in {"candidates", "confirm"}:
