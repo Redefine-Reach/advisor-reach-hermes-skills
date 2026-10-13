@@ -1,0 +1,4 @@
+{
+  "must_not_describe": "Morning brief or daily update",
+  "must_say": ["Do not handle daily brief", "day-open"]
+}

@@ -1,0 +1,79 @@
+{
+  "snapshot": "Public-source appointment brief for a confirmed identity.",
+  "identity_match": {
+    "level": "confirmed",
+    "basis": "Owner selected candidate 1 from public profiles."
+  },
+  "communication_style": {
+    "disc_hypothesis": "Working hypothesis only: steady and concrete. This is a hypothesis, not a diagnosis.",
+    "confidence": "medium",
+    "evidence_ids": ["__EV1__"]
+  },
+  "how_to_communicate": [
+    {
+      "text": "Lead with the agenda and one concrete next step.",
+      "evidence_ids": ["__EV1__"]
+    }
+  ],
+  "appointment_playbook": {
+    "opening": {
+      "text": "Thanks for the time. Here is the agenda for this appointment.",
+      "evidence_ids": ["__EV1__"]
+    },
+    "lead_points": [
+      {
+        "text": "Confirm the goal for this appointment.",
+        "evidence_ids": ["__EV1__"]
+      },
+      {
+        "text": "Ask which decision they want to make today.",
+        "evidence_ids": ["__EV1__"]
+      },
+      {
+        "text": "Agree on the next step before ending.",
+        "evidence_ids": ["__EV1__"]
+      }
+    ],
+    "questions": ["What does a useful outcome look like?"],
+    "avoid": ["Do not guess facts that are not in the sources."],
+    "close": "Restate the next step and the open questions."
+  },
+  "verified_facts": [
+    {
+      "text": "A public page ties this name and city to a local professional role.",
+      "evidence_ids": ["__EV1__"],
+      "confidence": "medium"
+    }
+  ],
+  "client_stated": [],
+  "observations": [
+    {
+      "text": "The public page uses plain, specific language.",
+      "evidence_ids": ["__EV1__"],
+      "confidence": "medium"
+    }
+  ],
+  "hypotheses": [
+    {
+      "text": "A structured agenda may fit this appointment.",
+      "evidence_ids": ["__EV1__"],
+      "confidence": "medium"
+    }
+  ],
+  "recommendations": [
+    {
+      "text": "Open with the agenda, then ask what they want from the meeting.",
+      "evidence_ids": ["__EV1__"]
+    }
+  ],
+  "what_we_dont_know": [
+    "What they want from this appointment is not in the sources.",
+    "Budget and timing are not in the sources."
+  ],
+  "guardrail_notice": "Verify before use. This brief is a working hypothesis from public sources, not a diagnosis. Do not steer on protected characteristics.",
+  "appendix": {
+    "low_confidence": [],
+    "sources": []
+  },
+  "verify_before_use": true
+}

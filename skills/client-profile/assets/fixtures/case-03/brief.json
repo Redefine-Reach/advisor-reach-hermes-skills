@@ -1,0 +1,50 @@
+{
+  "snapshot": "Little public information was found for this appointment.",
+  "identity_match": {
+    "level": "confirmed",
+    "basis": "Owner confirmed the only candidate. Public searches did not show a professional profile."
+  },
+  "communication_style": {
+    "disc_hypothesis": "insufficient evidence",
+    "confidence": "high",
+    "evidence_ids": []
+  },
+  "how_to_communicate": [],
+  "appointment_playbook": {
+    "opening": {
+      "text": "Confirm you have the right person and ask what they want from the meeting.",
+      "evidence_ids": ["__EV1__"]
+    },
+    "lead_points": [
+      {
+        "text": "Say that public sources did not show a professional profile.",
+        "evidence_ids": ["__EV1__"]
+      },
+      {
+        "text": "Ask what outcome would make the appointment useful.",
+        "evidence_ids": ["__EV1__"]
+      },
+      {
+        "text": "Leave time for them to fill the gaps.",
+        "evidence_ids": ["__EV1__"]
+      }
+    ],
+    "questions": ["What should we cover today?"],
+    "avoid": ["Do not invent a communication style."],
+    "close": "Restate what is still unknown."
+  },
+  "verified_facts": [],
+  "client_stated": [],
+  "observations": [],
+  "hypotheses": [],
+  "recommendations": [],
+  "what_we_dont_know": [
+    "No professional role was found in public sources.",
+    "No company affiliation was found in public sources.",
+    "Goals for the appointment are not in the sources.",
+    "Timing and budget are not in the sources."
+  ],
+  "guardrail_notice": "Verify before use. This brief is a working hypothesis from public sources, not a diagnosis. Do not steer on protected characteristics.",
+  "appendix": {"low_confidence": [], "sources": []},
+  "verify_before_use": true
+}

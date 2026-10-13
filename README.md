@@ -67,6 +67,29 @@ via the box's Exa search): bio, 24-month production as published, 15 channel sco
 Profile field-by-field, and a 90-day game plan. Locked template (`assets/template.html`) rendered by
 `assets/render.py` (jinja2 + weasyprint) from small per-section JSON files; delivered via `present-file`.
 
+### client-profile
+Appointment brief for one named person the owner is about to meet (buyer, listing, or other).
+Intake is name, city, and appointment type. `scripts/cp.py` builds name-and-city queries, holds
+evidence, requires an identity pick, and validates a cited DISC-lens brief (fair-housing screen
+in code, non-empty unknowns). Render uses the locked `assets/template.html` and WeasyPrint when
+the box has it. Delivery is an opaque file in `ARTIFACT_DIR` with a 7-day expiry. Research
+waits until the owner records that client's consent (`consent_required` defaults to true); the
+owner sends the consent text from their own phone. The enable
+flag is `/opt/data/client-profile/config.json`, not an environment variable. Install is
+files-only (`install/cp_install.py`). No CRM write, Human Design, people-data vendor, or street
+address. Contract: `tests/client-profile.test.mjs`. Merging here does not reach boxes until
+`SKILLS_REF` advances.
+
+### advisorreach-site
+Team ARIN's way to change `https://advisorreach.ai` (the ARIN Lane): clones
+`Redefine-Reach/advisorreach-site` over HTTPS as the team machine user `ar-team-arin`, whose token
+`scripts/git-credential-wttc-oauth.py` gets from WTTC's GitHub OAuth Client through the box's OmegaAI MCP
+key (nothing stored), edits only `public/` on an `arin/*` branch, runs the copy and link contract tests with node,
+pushes the branch, and confirms the release by `git ls-remote` of `production` and
+`https://advisorreach.ai/release-identity.json`. The site repo's `arin-promote.yml` validates,
+promotes and deploys. A Lead Magnet page goes under `public/m/<name>/`. Contract:
+`tests/advisorreach-site.test.mjs`, `tests/git-credential-wttc-oauth.test.mjs`.
+
 ### lead-magnets
 How any box's ARIN builds a Lead Magnet end to end, with no developer: the leads are kept by the
 box workspace's Form Capture install (an OmegaAI component, form-capture repo), a Form Capture webhook
