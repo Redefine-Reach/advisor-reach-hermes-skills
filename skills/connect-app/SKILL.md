@@ -65,7 +65,9 @@ see their password, a code, or a token, and neither does this box.
 2. `COMPOSIO_GET_TOOL_SCHEMAS` for the tool(s) you will call, if the search result did
    not already include arguments.
 3. `COMPOSIO_MULTI_EXECUTE_TOOL` with properly formed `arguments` -- and, when the app has
-   more than one connected account, `"account": "<alias or id>"` on each tool:
+   more than one connected account, `"account": "<alias or id>"` on each tool.
+   Do not use this step to send email. Gmail send, reply, forward, and send-draft
+   go through `email-send-confirmed`. For every other tool:
    - the user named one ("my personal gmail", "the work calendar") -> use that alias;
    - they did not, and the request only makes sense for one -> ask once, briefly ("Work or
      personal Gmail?"), then pass it;
@@ -81,12 +83,21 @@ see their password, a code, or a token, and neither does this box.
 - One link per app per attempt, and never repeat an old link -- each works once.
 - Never reveal the link to anyone but the user who asked.
 - Anything that sends, posts, deletes, or changes data in the user's account
-  (send an email, post to Slack, create a calendar event, update a HubSpot record)
+  (post to Slack, create a calendar event, update a HubSpot record)
   requires explicit authorization for that exact action and scope. Reuse valid,
   current authorization for the named action and account. Confirm only when
   authorization is missing or the scope has materially changed, summarizing exactly
   what will be sent or changed **and which account it goes from** when there are
-  several. Reading relevant information is fine without asking.
+  several. That reuse rule does not apply to email. Reading relevant information
+  is fine without asking.
+- Email from the advisor's Gmail is `email-send-confirmed` only. Never call
+  `GMAIL_SEND_EMAIL`, `GMAIL_REPLY_TO_THREAD`, `GMAIL_FORWARD_MESSAGE`,
+  `GMAIL_SEND_DRAFT`, or `GMAIL_CREATE_EMAIL_DRAFT`, including through
+  `COMPOSIO_MULTI_EXECUTE_TOOL`. Do not create a draft and then send it. Stage
+  with `email-send-confirmed`, relay its `attestation` verbatim, and run its
+  `send` only after the owner replies exactly `SEND` or `/approve`. A prior yes
+  to use Gmail is not that confirm. If that script is missing, say so and stop.
+  Do not send the email from here.
 - `action: "remove"` deletes a connected account -- only with the user's explicit yes, and
   never to "fix" a failed sign-in.
 - If `COMPOSIO_MANAGE_CONNECTIONS` says a toolkit slug is unknown, do not guess another
