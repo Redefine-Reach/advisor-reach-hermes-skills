@@ -1567,3 +1567,61 @@ test("end-to-end fixture covers intake, consent, identity, cited brief, pdf, sum
   assert.equal(existsSync(join(ctx.data, id)), false);
   assert.equal(existsSync(artifact), false);
 });
+
+test("artifact dir and public link fall back to config when the terminal env lacks them", () => {
+  const ctx = world();
+  const cfgPath = join(ctx.data, "config.json");
+  const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+  cfg.artifact_dir = ctx.artifact;
+  cfg.artifact_base_url = "https://box.example.test/f/";
+  writeFileSync(cfgPath, JSON.stringify(cfg));
+  const code = [
+    "import importlib.util, sys",
+    `spec = importlib.util.spec_from_file_location("cp", ${JSON.stringify(scriptPath)})`,
+    "cp = importlib.util.module_from_spec(spec); spec.loader.exec_module(cp)",
+    "print(cp.artifact_dir()); print(cp.public_base())",
+  ].join("\n");
+  const env = { PATH: process.env.PATH, HOME: ctx.dir, CLIENT_PROFILE_ROOT: ctx.data };
+  const proc = spawnSync("python3", ["-c", code], { env, encoding: "utf8" });
+  assert.equal(proc.status, 0, proc.stderr);
+  const [dir, base] = proc.stdout.trim().split("\n");
+  assert.equal(dir, ctx.artifact);
+  assert.equal(base, "https://box.example.test/f");
+});
+
+test("sms-summary refuses the artifacts.local placeholder link", () => {
+  const ctx = world();
+  const id = "c0ffee0000000000a";
+  const client = join(ctx.data, id);
+  mkdirSync(client, { recursive: true });
+  writeFileSync(join(client, "intake.json"), JSON.stringify({ client_id: id, name: "Sample", city: "Mesa", type: "buyer" }));
+  writeFileSync(join(client, "brief.json"), JSON.stringify({ appointment_playbook: { lead_points: [] } }));
+  writeFileSync(join(client, "delivery.json"), JSON.stringify({ url: "https://artifacts.local/x.pdf" }));
+  const { payload } = run(["sms-summary", id], ctx);
+  assert.equal(payload.ok, false);
+  assert.ok(["bad_url", "consent_required", "not_found", "unknown_client"].includes(payload.error), JSON.stringify(payload));
+});
+
+test("owner paste after NONE drops web candidates and becomes candidate 1", () => {
+  const ctx = world();
+  const intake = run(["intake", "--name", "Avery Example", "--city", "Flagstaff", "--type", "buyer"], ctx).payload;
+  const id = intake.client_id;
+  run(["consent", "record", id, "--method", "text", "--by", "owner"], ctx);
+  const web = run(["evidence", "add", id, "--url", "https://example.org/stranger", "--title", "Avery Stranger", "--excerpt", "A different person with the same first name in town.", "--origin", "web", "--query", "q", "--candidate", "1"], ctx).payload;
+  assert.equal(web.ok, true, JSON.stringify(web));
+  assert.equal(run(["identity", "confirm", id, "--none"], ctx).payload.status, "none");
+  const manual = run(["evidence", "add", id, "--url", "https://example.com/avery-example-bio", "--title", "Bio", "--excerpt", "Project engineer who likes the full set of numbers.", "--origin", "manual", "--query", "owner paste", "--candidate", "4"], ctx).payload;
+  assert.equal(manual.ok, true, JSON.stringify(manual));
+  const cands = run(["identity", "candidates", id], ctx).payload.candidates;
+  assert.equal(cands.length, 1, JSON.stringify(cands));
+  assert.equal(run(["identity", "confirm", id, "--candidate", String(manual.candidate)], ctx).payload.ok, true);
+});
+
+test("owner paste never joins a web candidate", () => {
+  const ctx = world();
+  const id = run(["intake", "--name", "Avery Example", "--city", "Flagstaff", "--type", "buyer"], ctx).payload.client_id;
+  run(["consent", "record", id, "--method", "text", "--by", "owner"], ctx);
+  run(["evidence", "add", id, "--url", "https://example.org/stranger", "--title", "Avery Stranger", "--excerpt", "A different person with the same first name in town.", "--origin", "web", "--query", "q", "--candidate", "1"], ctx);
+  const manual = run(["evidence", "add", id, "--url", "https://example.com/bio", "--title", "Bio", "--excerpt", "Project engineer who likes the full set of numbers.", "--origin", "manual", "--query", "owner paste", "--candidate", "1"], ctx).payload;
+  assert.equal(manual.candidate, 2);
+});

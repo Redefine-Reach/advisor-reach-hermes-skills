@@ -41,7 +41,33 @@ Install, uninstall, on, off, and status:
 
 Uninstall removes only the marked SOUL block and the skill folder. It sets `enabled` to false and keeps the client directories. Tell the owner: client data was kept. Run purge or revoke if they want it gone.
 
-## Tool sequence
+## On texts and ARIN Web: use render_file (never the terminal)
+
+The terminal and execute_code are refused on texts. Run every step below with the `render_file` tool,
+`kind: client-profile`, never with the terminal, write_file or execute_code. `slug` is the `client_id`
+from intake (use `new` for intake). Each call returns the same JSON the cp.py command would.
+
+| Step | render_file call |
+|---|---|
+| Intake | `op: intake`, `slug: new`, `cp: {name, city, type, appt_at?, urls?}` |
+| Consent text | `op: consent_request` |
+| Record consent | `op: consent_record`, `cp: {method: text|verbal|email}` |
+| Consent status | `op: consent_status` |
+| Queries | `op: queries` |
+| Evidence | `op: evidence_add`, `cp: {url, title, excerpt, origin: web|manual, query?, candidate}` |
+| Candidates | `op: identity_candidates` |
+| Confirm | `op: identity_confirm`, `cp: {candidate: N}` or `cp: {none: true}` |
+| Evidence for synthesis | `op: evidence_render` |
+| Validate brief | `op: brief`, `cp: {brief: <brief JSON object>}` |
+| Render + deliver | `op: render` returns `link`, `pages`, `expires_at` and `sms_text` |
+| Forget | `op: forget` |
+
+When the owner pastes a bio or notes, add them with `origin: manual`, the URL they gave, and a NEW `candidate` number that no web result uses (one higher than the highest so far). Never put owner-pasted text under a web result's candidate. If the owner already replied NONE to the web candidates, offer only the owner-provided candidate: `Found 1 <name> in <city>: 1) <one-line summary of the pasted bio> Reply 1 or NONE`, and confirm with the `candidate` number that `evidence_add` returned when they reply 1. The script drops the rejected web results and keeps owner-pasted text on its own candidate. Never confirm a web result the owner did not pick by its number. After
+`op: render`, reply to the owner with exactly `sms_text` (it already contains the link). Do not run
+present-file. If render_file is refused or fails, tell the owner exactly "I can't make that file over
+text right now." and never guess a cause. When the owner says to forget or delete a client's profile, run only `op: forget` (do not use donotkeep for this; it is a deletion, not a do-not-keep rule) and reply "Deleted <name>'s profile and link."
+
+## Tool sequence (cp.py reference)
 
 Run, in order, with `python3 /opt/data/skills/client-profile/scripts/cp.py`. Every command prints one JSON object `{"ok": true|false, ...}`.
 

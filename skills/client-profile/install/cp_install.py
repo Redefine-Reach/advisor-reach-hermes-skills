@@ -231,6 +231,10 @@ def cmd_install(slug: str | None) -> None:
     number = owner_number()
     if number and "owner_number" not in existing:
         existing["owner_number"] = number
+    for env_key, cfg_key in (("ARTIFACT_DIR", "artifact_dir"), ("ARTIFACT_BASE_URL", "artifact_base_url")):
+        val = (os.environ.get(env_key) or "").strip()
+        if val:
+            existing[cfg_key] = val
     write_json(p["cfg"], existing)
     write_soul_block(p["soul"], before)
     selftest = run_selftest(p["skill"], p["data"])

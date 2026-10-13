@@ -227,8 +227,19 @@ def audit_path() -> Path:
     return data_root().parent / "audit" / "client-profile.jsonl"
 
 
+def _cfg_value(key: str) -> str:
+    try:
+        cfg = json.loads(config_path().read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    val = cfg.get(key) if isinstance(cfg, dict) else ""
+    return val.strip() if isinstance(val, str) else ""
+
+
 def artifact_dir() -> Path:
-    raw = os.environ.get("ARTIFACT_DIR")
+    # The agent's terminal tool runs with a filtered env, so fall back to the
+    # values the installer recorded from the box env (served at /f/).
+    raw = os.environ.get("ARTIFACT_DIR") or _cfg_value("artifact_dir")
     return Path(raw) if raw else data_root() / "artifacts"
 
 
@@ -1145,10 +1156,26 @@ def cmd_evidence_add(client_id: str, opts: dict[str, list[str]]) -> None:
         record["inaccessible"] = True
         record["reason"] = "private_or_login_walled_instagram"
     rows = load_evidence(path)
+    if origin == "manual":
+        # Owner-pasted evidence never shares a candidate with web results. After the owner
+        # replied NONE to the web candidates, those are dropped and the paste becomes candidate 1.
+        ident = path / "identity.json"
+        rejected = False
+        if ident.is_file():
+            try:
+                rejected = json.loads(ident.read_text(encoding="utf-8")).get("status") == "none"
+            except Exception:
+                rejected = False
+        if rejected:
+            rows = [r for r in rows if r.get("origin") == "manual"]
+            ident.unlink()
+        web_nums = {int(r.get("candidate") or 0) for r in rows if r.get("origin") != "manual"}
+        if record["candidate"] in web_nums:
+            record["candidate"] = max(int(r.get("candidate") or 0) for r in rows) + 1
     rows.append(record)
     save_evidence(path, rows)
     audit("evidence_add", client_id, {"evidence": 1}, actor)
-    result: dict = {"ok": True, "evidence_id": evidence_id}
+    result: dict = {"ok": True, "evidence_id": evidence_id, "candidate": record["candidate"]}
     if inaccessible:
         result["inaccessible"] = True
         result["fetched"] = False
@@ -1327,7 +1354,7 @@ def cmd_render(client_id: str, opts: dict[str, list[str]]) -> None:
 
 
 def public_base() -> str:
-    raw = os.environ.get("ARTIFACT_BASE_URL") or "https://artifacts.local"
+    raw = os.environ.get("ARTIFACT_BASE_URL") or _cfg_value("artifact_base_url") or "https://artifacts.local"
     return raw.rstrip("/")
 
 
@@ -1390,6 +1417,8 @@ def cmd_sms(client_id: str, opts: dict[str, list[str]]) -> None:
     url = delivery.get("url") or ""
     if not url.startswith("https://") and not url.startswith("http://"):
         fail("bad_url", "Delivery URL is not public.")
+    if url.startswith("https://artifacts.local/"):
+        fail("bad_url", "Delivery URL is a placeholder; ARTIFACT_BASE_URL is not set. Re-run install from the box shell.")
     level = (brief.get("identity_match") or {}).get("level") or "confirmed"
     disc = (brief.get("communication_style") or {}).get("disc_hypothesis") or ""
     leads = (brief.get("appointment_playbook") or {}).get("lead_points") or []
@@ -1406,12 +1435,15 @@ def cmd_sms(client_id: str, opts: dict[str, list[str]]) -> None:
     def assemble(style_text: str, left: str, right: str) -> str:
         return f"{banner}{identity}{style_text} 1) {left} 2) {right} {url}".strip()
 
+    # Keep the style hunch: cap it first, then trim the lead points evenly; drop style last.
+    if len(style) > 72:
+        style = shrink(style.rstrip("."), 71) + "."
     text = assemble(style, first, second)
-    while len(text) > 300 and (len(first) > 24 or len(second) > 24 or style):
-        if len(first) > 24:
-            first = shrink(first, max(24, len(first) - 30))
-        elif len(second) > 24:
-            second = shrink(second, max(24, len(second) - 30))
+    while len(text) > 300 and (len(first) > 40 or len(second) > 40 or style):
+        if len(first) >= len(second) and len(first) > 40:
+            first = shrink(first, max(40, len(first) - 10))
+        elif len(second) > 40:
+            second = shrink(second, max(40, len(second) - 10))
         else:
             style = ""
         text = assemble(style, first, second)
