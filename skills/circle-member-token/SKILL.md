@@ -9,6 +9,12 @@ required_environment_variables:
 
 # Circle — member access token
 
+**On every surface, texts included: use the `circle_read` tool first** when it is available. It
+mints the member token and runs the read for you (actions: members, me, search_members,
+member_posts, spaces, space_posts, search, post). Texts cannot run curl or code, so on a text
+`circle_read` is the only way to read Circle. Commenting is not available over text yet: draft the
+comment and say it can be posted from ARIN Web. The curl steps below are for ARIN Web.
+
 **Circle is AdvisorReach's own community at `https://advisorreach.circle.so`
 (circle.so), and this skill is the ONLY way to reach it.** It is not a Composio
 app: do not open `connect-app`, do not call `COMPOSIO_SEARCH_TOOLS` for it, and
