@@ -6,8 +6,7 @@ Library"). Its install at "Component Installs/Form Capture" in this box's OmegaA
 hook URL that a website form posts to, keeps every submission as a row of Data/Submissions, and POSTs
 each submission as JSON to every matching row of Data/Webhooks (url, headers, optional form). This
 script only calls the install's FormCapture methods with the box's key (MCP_QUERY_OMEGA_API_KEY), the
-same MCP client as skills/feeder-markets/scripts/cas_pull.py and
-skills/advisorreach-site/scripts/git-credential-wttc-oauth.py.
+same MCP client as skills/feeder-markets/scripts/cas_pull.py.
 
   form_capture.py status
   form_capture.py add-webhook --url <https://...> [--form <form>] [--header-file <path>]
@@ -75,10 +74,17 @@ class Mcp:
         msg = self.request("tools/call", {"name": name, "arguments": arguments})
         if "error" in msg:
             raise RuntimeError("%s failed: %s" % (name, json.dumps(msg["error"])[:300]))
-        payload = json.loads(msg["result"]["content"][0]["text"])
-        if payload.get("ok") is not True:
-            raise RuntimeError("%s failed: %s" % (name, str(payload.get("error"))[:300]))
-        return payload.get("data")
+        result = msg["result"]
+        payload = json.loads(result["content"][0]["text"])
+        if result.get("isError"):
+            raise RuntimeError("%s failed: %s" % (name, json.dumps(payload)[:300]))
+        # Two answer shapes (seen 2026-10-12): an envelope {"ok", "data" | "error"} (`run`), or the
+        # tool's data itself (`list_workspaces` answers {"workspaces", "home-app-id", ...}).
+        if isinstance(payload, dict) and "ok" in payload:
+            if payload.get("ok") is not True:
+                raise RuntimeError("%s failed: %s" % (name, str(payload.get("error"))[:300]))
+            return payload.get("data")
+        return payload
 
 
 def connect():
@@ -100,7 +106,10 @@ def connect():
 def call(mcp, app_id, method, arg):
     data = mcp.tool("run", {"app_id": app_id, "page_path": INSTALL_PAGE, "protocol": PROTOCOL,
                             "method": method, "args": [arg]})
-    # `qo run` answers a list of solutions; a FormCapture method has exactly one.
+    # `run` answers its solutions as a list, either bare or (2026-10-12) as {"path", "result": [...]};
+    # a FormCapture method has exactly one.
+    if isinstance(data, dict) and isinstance(data.get("result"), list):
+        data = data["result"]
     if isinstance(data, list):
         data = data[0] if data else {}
     if not isinstance(data, dict):
