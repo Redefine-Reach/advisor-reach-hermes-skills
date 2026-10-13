@@ -1158,7 +1158,8 @@ def cmd_evidence_add(client_id: str, opts: dict[str, list[str]]) -> None:
     rows = load_evidence(path)
     if origin == "manual":
         # Owner-pasted evidence never shares a candidate with web results. After the owner
-        # replied NONE to the web candidates, those are dropped and the paste becomes candidate 1.
+        # replied NONE, the public matches are dropped and whoever remains is numbered from 1,
+        # so the pasted notes are 1 when they are the only candidate left.
         ident = path / "identity.json"
         rejected = False
         if ident.is_file():
@@ -1169,9 +1170,19 @@ def cmd_evidence_add(client_id: str, opts: dict[str, list[str]]) -> None:
         if rejected:
             rows = [r for r in rows if r.get("origin") == "manual"]
             ident.unlink()
-        web_nums = {int(r.get("candidate") or 0) for r in rows if r.get("origin") != "manual"}
-        if record["candidate"] in web_nums:
-            record["candidate"] = max(int(r.get("candidate") or 0) for r in rows) + 1
+            mapping: dict[int, int] = {}
+            next_n = 1
+            for row in rows:
+                old = int(row.get("candidate") or 0)
+                if old not in mapping:
+                    mapping[old] = next_n
+                    next_n += 1
+                row["candidate"] = mapping[old]
+            record["candidate"] = next_n
+        else:
+            web_nums = {int(r.get("candidate") or 0) for r in rows if r.get("origin") != "manual"}
+            if record["candidate"] in web_nums:
+                record["candidate"] = max(int(r.get("candidate") or 0) for r in rows) + 1
     rows.append(record)
     save_evidence(path, rows)
     audit("evidence_add", client_id, {"evidence": 1}, actor)

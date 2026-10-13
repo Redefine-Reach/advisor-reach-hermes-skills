@@ -1612,9 +1612,87 @@ test("owner paste after NONE drops web candidates and becomes candidate 1", () =
   assert.equal(run(["identity", "confirm", id, "--none"], ctx).payload.status, "none");
   const manual = run(["evidence", "add", id, "--url", "https://example.com/avery-example-bio", "--title", "Bio", "--excerpt", "Project engineer who likes the full set of numbers.", "--origin", "manual", "--query", "owner paste", "--candidate", "4"], ctx).payload;
   assert.equal(manual.ok, true, JSON.stringify(manual));
+  assert.equal(manual.candidate, 1);
   const cands = run(["identity", "candidates", id], ctx).payload.candidates;
   assert.equal(cands.length, 1, JSON.stringify(cands));
-  assert.equal(run(["identity", "confirm", id, "--candidate", String(manual.candidate)], ctx).payload.ok, true);
+  assert.equal(cands[0].n, 1);
+  assert.equal(run(["identity", "confirm", id, "--candidate", "1"], ctx).payload.ok, true);
+});
+
+test("NONE then pasted notes are candidate 1, and reply 1 renders the brief pdf", () => {
+  const ctx = world();
+  const intake = run(["intake", "--name", "Avery Example", "--city", "Flagstaff", "--type", "buyer"], ctx);
+  assert.equal(intake.payload.ok, true, intake.stdout);
+  const id = intake.payload.client_id;
+  recordConsent(ctx, id);
+  addEvidence(ctx, id, {
+    url: "https://example.org/avery-one",
+    title: "Avery Public One",
+    excerpt: "A public profile that is not the person the owner meant.",
+    origin: "web",
+    query: '"Avery Example" "Flagstaff"',
+    candidate: 1,
+  });
+  addEvidence(ctx, id, {
+    url: "https://example.org/avery-two",
+    title: "Avery Public Two",
+    excerpt: "A second public profile with the same name.",
+    origin: "web",
+    query: '"Avery Example" "Flagstaff"',
+    candidate: 2,
+  });
+  const none = run(["identity", "confirm", id, "--none"], ctx);
+  assert.equal(none.payload.status, "none");
+  const manual = run(
+    [
+      "evidence",
+      "add",
+      id,
+      "--url",
+      "https://example.com/avery-example-notes",
+      "--title",
+      "Owner notes",
+      "--excerpt",
+      "Project engineer who likes the full set of numbers.",
+      "--origin",
+      "manual",
+      "--query",
+      "owner paste",
+      "--candidate",
+      "2",
+    ],
+    ctx,
+  ).payload;
+  assert.equal(manual.ok, true, JSON.stringify(manual));
+  assert.equal(manual.candidate, 1);
+  const cands = run(["identity", "candidates", id], ctx).payload.candidates;
+  assert.equal(cands.length, 1, JSON.stringify(cands));
+  assert.equal(cands[0].n, 1);
+  const stale = run(["identity", "confirm", id, "--candidate", "2"], ctx);
+  assert.equal(stale.payload.ok, false, stale.stdout);
+  assert.equal(stale.payload.error, "unknown_candidate");
+  const confirmed = run(["identity", "confirm", id, "--candidate", "1"], ctx);
+  assert.equal(confirmed.payload.ok, true, confirmed.stdout);
+  assert.equal(confirmed.payload.candidate, 1);
+  assert.deepEqual(confirmed.payload.evidence_ids, [manual.evidence_id]);
+  const brief = loadGood([manual.evidence_id]);
+  const checked = validate(ctx, id, brief);
+  assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
+  const converter = join(ctx.dir, "weasyprint");
+  writeFileSync(
+    converter,
+    "#!/usr/bin/env python3\nimport pathlib, sys\nhtml = pathlib.Path(sys.argv[1]).read_bytes()\npathlib.Path(sys.argv[2]).write_bytes(b'%PDF-1.4\\n' + html + b'\\n%%EOF\\n')\n",
+  );
+  chmodSync(converter, 0o755);
+  const rendered = run(["brief", "render", id, "--actor", "owner"], ctx, { WEASYPRINT_BIN: converter });
+  assert.equal(rendered.payload.ok, true, rendered.stdout + rendered.stderr);
+  assert.equal(rendered.payload.pdf, true, JSON.stringify(rendered.payload));
+  const pdf = readFileSync(join(ctx.data, id, "brief.pdf"));
+  assert.equal(pdf.subarray(0, 5).toString(), "%PDF-");
+  const pdfText = pdf.toString("utf8");
+  assert.equal(pdfText.includes(manual.evidence_id), true);
+  assert.equal(pdfText.includes("Avery Example"), true);
+  assert.equal(pdfText.includes("Flagstaff"), true);
 });
 
 test("owner paste never joins a web candidate", () => {
