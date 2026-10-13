@@ -13,7 +13,7 @@ This skill composes the opening brief. The `daily-brief` coordinator owns the re
 
 At the start of every invocation, resolve `HERMES_HOME` from the runtime context or environment, then read `HERMES_HOME/skill-preferences/day-open-rollcall.md` if it exists. Apply customer choices about order, emphasis, sections, detail, and compatible workflow choices. If a verified authorized job supplies an output format, follow that explicit format as well. Existing installed daily skills and customer-customized job prompts are context to reuse, not originals to replace or silently migrate. Do not treat preferences or a job prompt as permission to send, publish, schedule, connect an account, change a record, or access another tenant.
 
-When the advisor explicitly changes these brief preferences, read the file before writing. If absent, create the `skill-preferences` directory and this preference file safely. Preserve unrelated content, write only the requested preference change, and read back the saved file to verify it. If writing or readback fails, say so plainly and continue with the requested brief. A preference does not change the facts or action authority behind a brief.
+When the advisor states an explicit preference, or corrects the same choice a second time, load `learning-loop` and run its script. Do not ask for approval and do not write that new choice into this preference file. Keep reading this file when it already exists, for older choices. Before ranking, follow `learning-loop` `apply --kind daily-brief`, including after `/new`. If that result and this file disagree on order or length, follow `apply`. A preference does not change the facts or action authority behind a brief. Do not write a client procedure with the file tool.
 
 ## Build the brief
 
