@@ -98,15 +98,22 @@ Silence, an earlier yes, or "text my clients" is not consent. Consent is
 destination, this From number, and this body. That is the same rule as
 email outreach: the irreversible step needs its own go-ahead.
 
-## Turn 2 — SEND or cancel
+## Turn 2 — SEND or NO
 
-Wait for the owner's next message.
+Wait for the owner's next message. The attestation already tells them:
+Reply SEND to send, or NO to drop it.
 
 - If it is exactly `SEND` or `/approve` (after trimming; either case), and
   you showed that draft's attestation, run `send` once with that
   `--draft-id`, `--confirm` set to their message, and `--attest yes`.
-- Anything else cancels. Run `cancel` for that draft and tell them it was
-  not sent. A vague "yes", "go ahead", or "send it" is not a confirm.
+- If it is `NO` or `skip` (after trimming; either case), run the `cancel`
+  command for that draft and tell them it was not sent.
+- Any other reply does not send. Run the `cancel` command for that draft
+  and tell them it was not sent. A vague "yes", "go ahead", or "send it"
+  is not a confirm.
+
+Do not ask the owner to answer with a carrier opt-out keyword. `NO` and
+`skip` are the words that drop a staged draft.
 
 `--attest yes` is allowed only after you displayed the staged attestation.
 If you did not, stop. Do not pass `--attest yes` to get the script to send.
@@ -153,10 +160,29 @@ When the owner says not to text someone again, run `deny` with their
 approver and that destination. That only updates the local file. It does
 not send.
 
-Never tell the owner to reply `Stop` or `STOP`. That is the carrier
-keyword. `/stop` is the Hermes pause, and it is not how a third party is
-opted out here. Carrier STOP is still enforced by Telnyx later; this file
-is the check you run first.
+An inbound from that destination whose whole body is a single carrier
+opt-out keyword is recorded on the same list. Do not send. Telnyx's
+default opt-out keywords are STOP, STOPALL, STOP ALL, UNSUBSCRIBE,
+CANCEL, END, and QUIT. REVOKE and OPTOUT are extra guards and are
+treated the same way. Never ask the owner to send one of those words.
+START and UNSTOP opt back in.
+HELP is the help word. Never ask the owner to send HELP either.
+`/stop` is the Hermes pause, and it is not how a third party is opted out
+here. The recipient can still opt out with their carrier. Telnyx enforces
+that later; this file is the check you run first.
+
+## If the owner opts out
+
+If the owner texts a plain-words opt-out, any reasonable request to stop
+the texts, including "please stop texting me", do not argue.
+Send exactly one confirmation text, and send nothing after that.
+START and UNSTOP opt back in.
+
+Unsubscribing the owner number, blocking later texts, and honoring START
+and UNSTOP are carrier and Hermes gateway behavior. HELP is also answered
+by Telnyx, not by asking the owner to send it. This repository cannot do
+that part. If the text still reaches you, send that one confirmation
+text and then stop.
 
 ## Audit
 
