@@ -827,13 +827,27 @@ def html_escape(value: str) -> str:
     )
 
 
+def counted(value: object, singular: str, plural: str) -> str:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = 0
+    word = singular if number == 1 else plural
+    return f"{number} {word}"
+
+
+def cite_suffix(item: object) -> str:
+    if not isinstance(item, dict):
+        return ""
+    ids = ", ".join(html_escape(i) for i in item.get("evidence_ids") or [])
+    return f' <span class="cite">{ids}</span>' if ids else ""
+
+
 def cited_html(item: object) -> str:
     if not isinstance(item, dict):
         return "<p>None recorded.</p>"
     text = html_escape(item.get("text") or "")
-    ids = ", ".join(html_escape(i) for i in item.get("evidence_ids") or [])
-    cite = f" <span class=\"cite\">{ids}</span>" if ids else ""
-    return f"<p>{text}{cite}</p>"
+    return f"<p>{text}{cite_suffix(item)}</p>"
 
 
 def render_items(items: list) -> str:
@@ -845,11 +859,9 @@ def render_items(items: list) -> str:
             parts.append(f"<li>{html_escape(item)}</li>")
             continue
         text = html_escape(item.get("text") or "")
-        ids = ", ".join(html_escape(i) for i in item.get("evidence_ids") or [])
         conf = item.get("confidence")
         extra = f" <span class=\"conf\">{html_escape(conf)}</span>" if conf else ""
-        cite = f" <span class=\"cite\">{ids}</span>" if ids else ""
-        parts.append(f"<li>{text}{extra}{cite}</li>")
+        parts.append(f"<li>{text}{extra}{cite_suffix(item)}</li>")
     parts.append("</ul>")
     return "".join(parts)
 
@@ -871,7 +883,7 @@ def build_html(path: Path, brief: dict) -> str:
     appt_html = f" · {html_escape(appt)}" if appt else ""
     pricing = play.get("pricing_conversation")
     if pricing:
-        pricing_html = f"<h2>Pricing conversation</h2><p>{html_escape(pricing.get('text') or '')}</p>"
+        pricing_html = "<h2>Pricing conversation</h2>" + cited_html(pricing)
     elif intake.get("type") == "listing":
         pricing_html = "<h2>Pricing conversation</h2><p>Missing.</p>"
     else:
@@ -881,8 +893,8 @@ def build_html(path: Path, brief: dict) -> str:
         search_notice = f"<p class=\"banner\">{html_escape(SEARCH_UNAVAILABLE)}</p>"
     elif search_doc and search_doc.get("status") == "done":
         notice = (
-            f"Searched {search_doc.get('query_count')} public queries and kept "
-            f"{search_doc.get('source_count')} sources."
+            f"Searched {counted(search_doc.get('query_count'), 'public query', 'public queries')} "
+            f"and kept {counted(search_doc.get('source_count'), 'source', 'sources')}."
         )
         note = search_doc.get("excluded_note") or ""
         if isinstance(note, str) and note.strip():
@@ -908,7 +920,7 @@ def build_html(path: Path, brief: dict) -> str:
         "{{DISC}}": html_escape(style.get("disc_hypothesis") or ""),
         "{{DISC_CONFIDENCE}}": html_escape(style.get("confidence") or ""),
         "{{HOW}}": render_items(brief.get("how_to_communicate") or []),
-        "{{OPENING}}": html_escape((play.get("opening") or {}).get("text") or ""),
+        "{{OPENING}}": html_escape((play.get("opening") or {}).get("text") or "") + cite_suffix(play.get("opening")),
         "{{LEADS}}": render_items(play.get("lead_points") or []),
         "{{QUESTIONS}}": render_items(play.get("questions") or []),
         "{{AVOID}}": render_items(play.get("avoid") or []),
@@ -2510,12 +2522,30 @@ def cmd_deliver(client_id: str, opts: dict[str, list[str]]) -> None:
     emit({"ok": True, "url": url, "expires_at": record["expires_at"]})
 
 
+_DANGLING_WORDS = {
+    "a", "an", "the", "with", "of", "to", "for", "and", "or", "this", "is", "not", "only",
+}
+
+
 def shrink(text: str, limit: int) -> str:
+    """Shorten to limit characters, ending on a sentence or a whole word."""
     if len(text) <= limit:
         return text
     if limit <= 1:
         return "…"
-    return text[: limit - 1].rstrip() + "…"
+    room = text[: limit - 1].rstrip()
+    period = room.rfind(". ")
+    if period >= 20:
+        return room[: period + 1].rstrip()
+    if " " in room:
+        trimmed = room.rsplit(" ", 1)[0].rstrip(" ,;:")
+        while trimmed and trimmed.split()[-1].casefold().strip(".,;:") in _DANGLING_WORDS and " " in trimmed:
+            trimmed = trimmed.rsplit(" ", 1)[0].rstrip(" ,;:")
+        if trimmed:
+            room = trimmed
+    if room.endswith("."):
+        return room
+    return room + "…"
 
 
 def cmd_sms(client_id: str, opts: dict[str, list[str]]) -> None:
@@ -2549,8 +2579,9 @@ def cmd_sms(client_id: str, opts: dict[str, list[str]]) -> None:
         return f"{banner}{identity}{style_text} 1) {left} 2) {right} {url}".strip()
 
     # Keep the style hunch: cap it first, then trim the lead points evenly; drop style last.
+    # Cut on a word. Do not add a period after the ellipsis ("hypoth….").
     if len(style) > 72:
-        style = shrink(style.rstrip("."), 71) + "."
+        style = shrink(style, 72)
     text = assemble(style, first, second)
     while len(text) > 300 and (len(first) > 40 or len(second) > 40 or style):
         if len(first) >= len(second) and len(first) > 40:
