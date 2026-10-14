@@ -3202,6 +3202,8 @@ test("a company anchor drops Phoenix city-only namesakes and keeps the company s
   const recorder = "https://www.axios.com/local/phoenix/david-marshall-recorder";
   const legislator = "https://www.azleg.gov/members/david-marshall";
   const companyPage = "https://example.com/advisorreach/david-marshall";
+  const journal = "https://advisorreach.ai/journal/david-marshall";
+  const snippetPage = "https://news.example.com/david-marshall-note";
   const pages = [
     {
       url: recorder,
@@ -3217,6 +3219,17 @@ test("a company anchor drops Phoenix city-only namesakes and keeps the company s
       url: companyPage,
       title: "David Marshall at AdvisorReach",
       text: "David Marshall leads AdvisorReach in Phoenix.",
+    },
+    {
+      url: journal,
+      title: "David Marshall journal",
+      text: "David Marshall writes about Phoenix buyers.",
+    },
+    {
+      url: snippetPage,
+      title: "David Marshall note",
+      text: "David Marshall spoke at a Phoenix event.",
+      highlights: ["The note names AdvisorReach."],
     },
   ];
   const server = createServer((req, res) => {
@@ -3253,25 +3266,71 @@ test("a company anchor drops Phoenix city-only namesakes and keeps the company s
     });
     assert.equal(searched.payload.ok, true, searched.stdout + searched.stderr);
     const urls = searched.payload.sources.map((item) => item.url);
-    assert.deepEqual(urls, [companyPage]);
+    assert.deepEqual(urls, [companyPage, journal, snippetPage]);
     assert.equal(searched.stdout.includes(recorder), false);
     assert.equal(searched.stdout.includes(legislator), false);
     assert.equal(searched.payload.conflict, false);
     assert.equal(searched.payload.excluded_people, 2);
     assert.deepEqual(searched.payload.counts, {
-      raw: 18,
-      deduped: 3,
-      name_matched: 3,
-      anchor_kept: 1,
+      raw: 30,
+      deduped: 5,
+      name_matched: 5,
+      anchor_kept: 3,
     });
     const stored = JSON.parse(readFileSync(join(ctx.data, id, "search.json"), "utf8"));
     assert.deepEqual(stored.counts, searched.payload.counts);
     assert.equal(stored.conflict, false);
+    assert.deepEqual(
+      stored.dropped.map((item) => item.url),
+      [recorder, legislator],
+    );
+    assert.ok(stored.dropped.every((item) => item.reason === "namesake"));
     const evidence = readFileSync(join(ctx.data, id, "evidence.jsonl"), "utf8");
     assert.equal(evidence.includes(recorder), false);
     assert.equal(evidence.includes(legislator), false);
     assert.equal(evidence.includes(companyPage), true);
     assert.equal(evidence.includes("AdvisorReach"), true);
+    assert.equal(evidence.includes(journal), true);
+    assert.equal(evidence.includes(snippetPage), true);
+    const skipped = await runAsync(["identity", "candidates", id, "--actor", "owner"], ctx, {
+      EXA_API_KEY: "exa-test-key",
+      EXA_API_BASE: `http://127.0.0.1:${port}`,
+    });
+    assert.equal(skipped.payload.status, "matches", skipped.stdout + skipped.stderr);
+    assert.doesNotMatch(skipped.stdout, /couldn't find/);
+    const freshId = run(
+      [
+        "intake",
+        "--actor",
+        "owner",
+        "--name",
+        "David Marshall",
+        "--city",
+        "Phoenix",
+        "--type",
+        "buyer",
+        "--company",
+        "AdvisorReach",
+      ],
+      ctx,
+    ).payload.client_id;
+    assert.equal(existsSync(join(ctx.data, freshId, "search.json")), false);
+    const auto = await runAsync(["identity", "candidates", freshId, "--actor", "owner"], ctx, {
+      EXA_API_KEY: "exa-test-key",
+      EXA_API_BASE: `http://127.0.0.1:${port}`,
+    });
+    assert.equal(auto.payload.ok, true, auto.stdout + auto.stderr);
+    assert.equal(auto.payload.status, "matches");
+    assert.equal(auto.payload.candidates.length, 1);
+    assert.doesNotMatch(auto.stdout, /couldn't find/);
+    assert.doesNotMatch(auto.payload.candidates[0].label, /recorder|legislator/i);
+    const autoStored = JSON.parse(readFileSync(join(ctx.data, freshId, "search.json"), "utf8"));
+    assert.equal(autoStored.status, "done");
+    assert.equal(autoStored.source_count, 3);
+    assert.deepEqual(
+      autoStored.dropped.map((item) => item.url),
+      [recorder, legislator],
+    );
     const listed = run(["identity", "candidates", id], ctx);
     assert.equal(listed.payload.ok, true, listed.stdout);
     assert.equal(listed.payload.candidates.length, 1);

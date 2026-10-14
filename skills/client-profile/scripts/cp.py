@@ -247,7 +247,15 @@ PURGE_DAYS = 90
 ARTIFACT_DAYS = 7
 
 
+# Set while identity, brief, or render runs search in-process. The search
+# result stays in the folder; the caller prints its own JSON.
+_emit_sink: list[tuple[dict, int]] | None = None
+
+
 def emit(obj: dict, code: int = 0) -> None:
+    if _emit_sink is not None:
+        _emit_sink.append((obj, code))
+        raise SystemExit(code)
     sys.stdout.write(json.dumps(obj, separators=(",", ":"), ensure_ascii=False) + "\n")
     raise SystemExit(code)
 
@@ -1654,10 +1662,19 @@ def result_text(row: dict) -> str:
     text = row.get("text")
     if isinstance(text, str) and text.strip():
         return text
+    return result_snippet(row)
+
+
+def result_snippet(row: dict) -> str:
+    parts: list[str] = []
+    for key in ("snippet", "summary"):
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(value)
     highlights = row.get("highlights")
     if isinstance(highlights, list):
-        return " ".join(part for part in highlights if isinstance(part, str))
-    return ""
+        parts.extend(part for part in highlights if isinstance(part, str) and part.strip())
+    return " ".join(parts)
 
 
 def load_search(path: Path) -> dict | None:
@@ -1692,6 +1709,34 @@ def search_file_missing(path: Path) -> bool:
 def require_search_file(path: Path) -> None:
     if search_file_missing(path):
         fail("search_required", SEARCH_REQUIRED)
+
+
+def ensure_search(client_id: str, path: Path, opts: dict[str, list[str]]) -> None:
+    """Run search when a later step was called before it. Never call that a miss."""
+    global _emit_sink
+    if not search_file_missing(path):
+        return
+    # No Exa key means the search itself cannot run. Do not write couldnt_find.
+    if not exa_key():
+        require_search_file(path)
+    sink: list[tuple[dict, int]] = []
+    previous = _emit_sink
+    _emit_sink = sink
+    try:
+        cmd_search(client_id, opts)
+    except SystemExit:
+        pass
+    finally:
+        _emit_sink = previous
+    if not sink:
+        fail("search_required", SEARCH_REQUIRED)
+    payload, code = sink[-1]
+    if code and not (path / "search.json").is_file():
+        error = payload.get("error") if isinstance(payload, dict) else ""
+        message = payload.get("message") if isinstance(payload, dict) else ""
+        if error == "search_unavailable":
+            fail("search_required", SEARCH_REQUIRED)
+        fail(str(error or "search_required"), str(message or SEARCH_REQUIRED))
 
 
 def search_conflicts(path: Path) -> bool:
@@ -1910,16 +1955,39 @@ def given_urls(intake: dict) -> list[str]:
     return [item for item in (intake.get("urls") or []) if isinstance(item, str)]
 
 
-def source_matches_anchors(title: str, excerpt: str, url: str, intake: dict) -> bool:
-    """Company or a given url beats a city. City alone never identifies a person."""
-    blob = f"{title or ''} {excerpt or ''}"
+def company_token(company: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (company or "").casefold())
+
+
+def company_domain_anywhere(url: str, blob: str, company: str) -> bool:
+    """True when the company name appears as a domain on the page or in its text."""
+    slug = company_token(company)
+    if len(slug) < 3:
+        return False
+    host = host_of(url)
+    if host and any(label == slug for label in host.split(".")):
+        return True
+    hay = f"{url or ''} {blob or ''}".casefold()
+    return re.search(rf"(?<![a-z0-9]){re.escape(slug)}\.[a-z]{{2,}}(?![a-z0-9])", hay) is not None
+
+
+def source_matches_anchors(
+    title: str,
+    excerpt: str,
+    url: str,
+    intake: dict,
+    snippet: str = "",
+) -> bool:
+    """Company name, company domain, or a given url. City alone never identifies a person."""
+    blob = f"{title or ''} {excerpt or ''} {snippet or ''}"
     company = (intake.get("company") or "").strip()
     role = (intake.get("role") or "").strip()
     urls = given_urls(intake)
     company_hit = bool(company) and phrase_present(blob, company)
+    domain_hit = bool(company) and company_domain_anywhere(url, blob, company)
     link_hit = link_matches(url, urls) or domain_matches(url, urls)
     if company or urls:
-        return company_hit or link_hit
+        return company_hit or domain_hit or link_hit
     city_hit = any(phrase_present(blob, phrase) for phrase in place_phrases(intake.get("city") or ""))
     if not city_hit:
         return False
@@ -1952,6 +2020,7 @@ def write_couldnt_find(
     inaccessible: list[dict],
     codes: list[str],
     counts: dict | None = None,
+    dropped: list[dict] | None = None,
 ) -> None:
     stamp_search(path, {
         "status": "couldnt_find",
@@ -1964,6 +2033,7 @@ def write_couldnt_find(
         "profile_count": 0,
         "conflict": False,
         "counts": counts or search_count(0, 0, 0, 0),
+        "dropped": dropped or [],
     })
     audit("search", client_id, {"queries": len(queries), "sources": 0}, actor)
     missed = {
@@ -2043,9 +2113,17 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
                 seen.add(key_url)
                 title = raw.get("title") if isinstance(raw.get("title"), str) else ""
                 text = result_text(raw)
-                item = {"url": url, "title": title, "text": text, "query": query["q"], "target": query.get("target") or ""}
+                snippet = result_snippet(raw)
+                item = {
+                    "url": url,
+                    "title": title,
+                    "text": text,
+                    "snippet": snippet,
+                    "query": query["q"],
+                    "target": query.get("target") or "",
+                }
                 found.append(item)
-                if not text.strip():
+                if not text.strip() and not snippet.strip():
                     need_text.append(url)
         if need_text:
             filled = exa_post("/contents", {"urls": need_text, "text": {"maxCharacters": EXA_TEXT_CHARS}}, key)
@@ -2060,6 +2138,8 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
                 if not raw:
                     continue
                 item["text"] = result_text(raw)
+                if not item.get("snippet"):
+                    item["snippet"] = result_snippet(raw)
                 if not item["title"] and isinstance(raw.get("title"), str):
                     item["title"] = raw["title"]
     except ExaError:
@@ -2069,12 +2149,16 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
             search_count(raw_count, len(found), 0, 0),
         )
     kept: list[dict] = []
+    dropped: list[dict] = []
     for item in found:
-        blob = f"{item['title']} {item['text']}"
+        snippet = item.get("snippet") or ""
+        blob = f"{item['title']} {item['text']} {snippet}"
         if not full_name_match(blob, first, last):
+            dropped.append({"url": item["url"], "reason": "name_mismatch"})
             continue
-        cleaned, _ = sanitize_untrusted(item["text"] or item["title"])
+        cleaned, _ = sanitize_untrusted(item["text"] or snippet or item["title"])
         if not cleaned:
+            dropped.append({"url": item["url"], "reason": "empty_text"})
             continue
         title_clean, _ = sanitize_untrusted(item["title"] or item["url"])
         if len(cleaned) > EXCERPT_CAP:
@@ -2083,24 +2167,28 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
             "url": item["url"],
             "title": title_clean or item["url"],
             "excerpt": cleaned,
+            "text": item["text"] or "",
+            "snippet": snippet,
             "query": item["query"],
             "target": item["target"],
         })
     tally = search_count(raw_count, len(found), len(kept), 0)
     if not kept:
         save_evidence(path, rows)
-        write_couldnt_find(path, client_id, actor, queries, inaccessible, codes, tally)
-    # A city alone does not make a page this person. Pages that fail the
-    # company, url, or city-plus-role/state check are left out.
+        write_couldnt_find(path, client_id, actor, queries, inaccessible, codes, tally, dropped)
+    # A city alone does not make a page this person. A company page stays when
+    # the full name is on it and the company name, company domain, or a given
+    # url is on it too.
     matched: list[dict] = []
     excluded_markers: list[str] = []
     excluded_pages = 0
     for item in kept:
         marker = profile_marker(item["url"])
         item["profile"] = marker
-        if source_matches_anchors(item["title"], item["excerpt"], item["url"], intake):
+        if source_matches_anchors(item["title"], item["text"] or item["excerpt"], item["url"], intake, item.get("snippet") or ""):
             matched.append(item)
             continue
+        dropped.append({"url": item["url"], "reason": "namesake"})
         if marker:
             if marker not in excluded_markers:
                 excluded_markers.append(marker)
@@ -2124,6 +2212,7 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
             "excluded_people": excluded_people,
             "excluded_note": note,
             "counts": tally,
+            "dropped": dropped,
         })
         audit("search", client_id, {"queries": len(queries), "sources": 0}, actor)
         missed = {
@@ -2207,6 +2296,7 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
         "excluded_people": excluded_people,
         "excluded_note": note,
         "counts": tally,
+        "dropped": dropped,
     }
     stamp_search(path, stored)
     audit("search", client_id, {"queries": len(queries), "sources": len(sources)}, actor)
@@ -2365,13 +2455,14 @@ def stop_identity(path: Path, status: str, message: str) -> None:
 def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
     gate(actor_of(opts), mutate=False)
     path = require_client(client_id)
-    require_search_file(path)
+    ensure_search(client_id, path, opts)
     intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
     rows = load_evidence(path)
     usable = [row for row in rows if row.get("identity_status") != "inaccessible"]
     public = [row for row in usable if row.get("origin") == "web"]
     parts = split_name(intake.get("name") or "")
-    # couldnt_find is only after a search ran. A skipped search is search_required.
+    # couldn't find is only after a real search kept 0 sources.
+    # A missing search file is search_required, and only when Exa cannot run.
     # Owner notes do not count as a person.
     if not public:
         if search_needs_anchor(path):
@@ -2423,7 +2514,7 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
 def cmd_confirm(client_id: str, opts: dict[str, list[str]]) -> None:
     actor = gate(actor_of(opts), mutate=True)
     path = require_client(client_id)
-    require_search_file(path)
+    ensure_search(client_id, path, opts)
     none = "none" in opts
     candidate_raw = flag(opts, "candidate")
     if none and candidate_raw:
@@ -2490,7 +2581,7 @@ def cmd_confirm(client_id: str, opts: dict[str, list[str]]) -> None:
 def cmd_validate(client_id: str, brief_file: str, opts: dict[str, list[str]]) -> None:
     actor = gate(actor_of(opts), mutate=True)
     path = require_client(client_id)
-    require_search_file(path)
+    ensure_search(client_id, path, opts)
     refuse_unnamed_reuse(path, opts)
     source = Path(brief_file)
     if not source.is_file():
@@ -2517,7 +2608,7 @@ def cmd_validate(client_id: str, brief_file: str, opts: dict[str, list[str]]) ->
 def cmd_render(client_id: str, opts: dict[str, list[str]]) -> None:
     actor = gate(actor_of(opts), mutate=True)
     path = require_client(client_id)
-    require_search_file(path)
+    ensure_search(client_id, path, opts)
     refuse_unnamed_reuse(path, opts)
     brief_path = path / "brief.json"
     if not brief_path.is_file():
