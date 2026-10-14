@@ -815,6 +815,14 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
     return {"ok": True, "errors": [], "warnings": warnings, "brief": brief}
 
 
+def counted(n: object, one: str, many: str) -> str:
+    try:
+        count = int(n)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        count = 0
+    return f"{count} {one if count == 1 else many}"
+
+
 def html_escape(value: str) -> str:
     return (
         str(value)
@@ -879,8 +887,8 @@ def build_html(path: Path, brief: dict) -> str:
         search_notice = f"<p class=\"banner\">{html_escape(SEARCH_UNAVAILABLE)}</p>"
     elif search_doc and search_doc.get("status") == "done":
         notice = (
-            f"Searched {search_doc.get('query_count')} public queries and kept "
-            f"{search_doc.get('source_count')} sources."
+            f"Searched {counted(search_doc.get('query_count'), 'public query', 'public queries')} and kept "
+            f"{counted(search_doc.get('source_count'), 'source', 'sources')}."
         )
         note = search_doc.get("excluded_note") or ""
         if isinstance(note, str) and note.strip():
@@ -2601,11 +2609,27 @@ def cmd_deliver(client_id: str, opts: dict[str, list[str]]) -> None:
 
 
 def shrink(text: str, limit: int) -> str:
+    """Shorten owner-facing SMS text on a word or sentence boundary."""
     if len(text) <= limit:
         return text
     if limit <= 1:
         return "…"
-    return text[: limit - 1].rstrip() + "…"
+    parts = [part for part in re.split(r"(?<=[.!?])\s+", text) if part]
+    kept = ""
+    for part in parts:
+        nxt = part if not kept else kept + " " + part
+        if len(nxt) <= limit:
+            kept = nxt
+        else:
+            break
+    if kept and kept.strip() and len(kept) < len(text):
+        return kept
+    room = text[: limit - 1].rstrip()
+    if " " in room:
+        room = room.rsplit(" ", 1)[0].rstrip(" ,;:")
+    if not room:
+        room = text[: limit - 1].rstrip()
+    return room.rstrip(".") + "…"
 
 
 def cmd_sms(client_id: str, opts: dict[str, list[str]]) -> None:
@@ -2640,7 +2664,8 @@ def cmd_sms(client_id: str, opts: dict[str, list[str]]) -> None:
 
     # Keep the style hunch: cap it first, then trim the lead points evenly; drop style last.
     if len(style) > 72:
-        style = shrink(style.rstrip("."), 71) + "."
+        trimmed = shrink(style.rstrip("."), 72)
+        style = trimmed if trimmed.endswith((".", "!", "?", "…")) else trimmed + "."
     text = assemble(style, first, second)
     while len(text) > 300 and (len(first) > 40 or len(second) > 40 or style):
         if len(first) >= len(second) and len(first) > 40:
