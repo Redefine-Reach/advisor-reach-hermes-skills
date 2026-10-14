@@ -59,6 +59,11 @@ mailbox it sends from, the schedule — and do it only after they say yes.
 5. Add leads: a JSON list of `{"email": "…", "first_name": "…", "last_name": "…"}` in a file, then
    `smartlead.py add-leads <campaign_id> --file <path>`.
 
+**A/B variants and custom fields.** In the file you give `save-sequences`, an email can carry several versions of itself: instead of `subject` and `email_body`, give
+`"variant_distribution_type": "MANUAL_EQUAL"` and a `"seq_variants"` list of `{"variant_label": "A", "subject": "…", "email_body": "…"}` (then "B", "C"); the Database Funnel campaign is built this way, with three versions of its first email.
+In the file you give `add-leads`, a lead can carry `"custom_fields": {"market": "Boise, ID"}` and the email uses it as `{{market}}`. SmartLead keeps a lead's custom fields as they were on the day it was added,
+so a field you want to change for leads already in a campaign means a new campaign with the leads added again; a draft has sent nothing, so that is safe.
+
 ## Send or stop (ask first, every time)
 
     python3 /opt/data/skills/smartlead-campaigns/scripts/smartlead.py start <campaign_id>
