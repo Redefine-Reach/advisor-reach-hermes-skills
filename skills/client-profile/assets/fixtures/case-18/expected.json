@@ -1,0 +1,4 @@
+{
+  "bad_tokens": ["yes", "not-the-token"],
+  "deletes": false
+}
