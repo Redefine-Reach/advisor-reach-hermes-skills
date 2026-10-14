@@ -7,11 +7,12 @@ Config:    $CLIENT_PROFILE_ROOT/config.json  {"enabled": true|false, ...}
            Research is public information only. Never contact the client or lead.
 Audit:     <root>/../audit/client-profile.jsonl
 
-Network is used only by `search`, and only to call Exa when a key is set.
+Network is used only by `search` and `profile`, and only to call Exa when a key is set.
 No CRM write, no Human Design, no street-address field.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import os
@@ -23,6 +24,7 @@ import sys
 import urllib.error
 import urllib.request
 import zlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -32,6 +34,7 @@ HERE = Path(__file__).resolve().parent
 ASSETS = HERE.parent / "assets"
 SCHEMA_PATH = ASSETS / "brief.schema.json"
 TEMPLATE_PATH = ASSETS / "template.html"
+PROFILE_TEMPLATE_PATH = ASSETS / "profile-template.html"
 
 CLIENT_RE = re.compile(r"^c[0-9a-f]{16}$")
 EVIDENCE_RE = re.compile(r"^ev_[0-9a-f]{8,32}$")
@@ -1629,8 +1632,12 @@ def canon_url(url: str) -> str:
 class ExaError(Exception):
     """Exa refused the call or returned a body this skill cannot use."""
 
+    def __init__(self, message: str, reason: str = "unreachable") -> None:
+        super().__init__(message)
+        self.reason = reason
 
-def exa_post(path: str, payload: dict, key: str) -> dict:
+
+def exa_post(path: str, payload: dict, key: str, timeout: int = 25) -> dict:
     req = urllib.request.Request(
         exa_url(path),
         data=json.dumps(payload).encode("utf-8"),
@@ -1643,18 +1650,32 @@ def exa_post(path: str, payload: dict, key: str) -> dict:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=25) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
-        raise ExaError(f"Exa returned HTTP {exc.code}.") from exc
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise ExaError("Exa could not be reached.") from exc
+        if exc.code in (401, 403):
+            reason = "auth"
+        elif exc.code == 429:
+            reason = "rate_limited"
+        elif exc.code == 408:
+            reason = "timeout"
+        else:
+            reason = "unreachable"
+        raise ExaError(f"Exa returned HTTP {exc.code}.", reason) from exc
+    except TimeoutError as exc:
+        raise ExaError("Exa could not be reached.", "timeout") from exc
+    except urllib.error.URLError as exc:
+        reason = "timeout" if "timed out" in str(getattr(exc, "reason", exc)).lower() else "unreachable"
+        raise ExaError("Exa could not be reached.", reason) from exc
+    except OSError as exc:
+        reason = "timeout" if "timed out" in str(exc).lower() else "unreachable"
+        raise ExaError("Exa could not be reached.", reason) from exc
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ExaError("Exa returned a non-JSON response.") from exc
+        raise ExaError("Exa returned a non-JSON response.", "unreachable") from exc
     if not isinstance(parsed, dict):
-        raise ExaError("Exa returned an unexpected response.")
+        raise ExaError("Exa returned an unexpected response.", "unreachable")
     return parsed
 
 
@@ -2921,7 +2942,15 @@ def cmd_wrong_identity(client_id: str, opts: dict[str, list[str]]) -> None:
 
 def cmd_delete_client(client_id: str, opts: dict[str, list[str]], action: str) -> None:
     # Per-client delete stays available when the skill is off (uninstall keeps the data).
+    # A client id (c + 16 hex) is never a profile record key.
     actor = gate(actor_of(opts), mutate=False)
+    if not CLIENT_RE.fullmatch(client_id or ""):
+        folder = profile_store_path(client_id)
+        if folder is None:
+            fail("unknown_client", "Unknown client id.")
+        removed_artifact = delete_profile_record(folder)
+        audit(action, client_id, {"profiles": 1, "artifacts": removed_artifact}, actor)
+        emit({"ok": True, "deleted": True})
     path = require_client(client_id)
     removed_artifact = delete_profile(path)
     audit(action, client_id, {"profiles": 1, "artifacts": removed_artifact}, actor)
@@ -3070,6 +3099,1055 @@ def cmd_export(client_id: str, opts: dict[str, list[str]]) -> None:
     emit(redact_export(payload))
 
 
+PROFILE_UNAVAILABLE_SAY = (
+    "Search isn't working on my side right now, so I didn't build the profile."
+)
+PROFILE_NOTHING = "Nothing public in his own words."
+PROFILE_SECTIONS = ("client_stated", "observations", "hypotheses", "recommendations")
+PROFILE_INSTRUCTIONS = (
+    "Write exactly four sections from the evidence: client_stated, observations, "
+    "hypotheses, recommendations. Each section has 1 to 3 items of "
+    '{text, sources: [n]} using the source numbers above. client_stated may be '
+    'the exact sentence "Nothing public in his own words." with an empty sources list. '
+    "Do not write the header, the identity line, the banner, the guardrail, or the source list. "
+    "Rate identity High, Medium, or Low. Public information only. "
+    "Fair housing: do not profile or steer on protected characteristics."
+)
+
+
+def profile_slug(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (name or "").casefold()).strip("-")
+    return slug or "person"
+
+
+def profile_record_key(name: str, city: str, company: str) -> str:
+    """Name slug plus a short hash of city and company. The model does not invent it."""
+    material = f"{(city or '').casefold()}|{company_slug(company)}"
+    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:6]
+    return f"{profile_slug(name)}-{digest}"
+
+
+def profile_fingerprint(name: str, city: str, company: str, urls: list[str], appt_type: str) -> str:
+    payload = {
+        "name": (name or "").casefold().strip(),
+        "city": (city or "").casefold().strip(),
+        "company": company_slug(company),
+        "urls": sorted(canon_url(url) for url in urls if canon_url(url)),
+        "type": appt_type,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def profile_folder(record: str) -> Path:
+    if (
+        not isinstance(record, str)
+        or CLIENT_RE.fullmatch(record)
+        or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", record)
+    ):
+        fail("unknown_profile", "Unknown profile record.")
+    return data_root() / "profiles" / record
+
+
+def profile_store_path(record: str) -> Path | None:
+    if (
+        not isinstance(record, str)
+        or CLIENT_RE.fullmatch(record)
+        or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", record)
+    ):
+        return None
+    folder = data_root() / "profiles" / record
+    if folder.is_dir() and (folder / "profile.json").is_file():
+        return folder
+    return None
+
+
+def load_profile_doc(record: str) -> dict | None:
+    folder = profile_store_path(record)
+    if folder is None:
+        return None
+    try:
+        doc = json.loads((folder / "profile.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def save_profile_doc(doc: dict) -> None:
+    folder = profile_folder(str(doc.get("record") or ""))
+    folder.mkdir(parents=True, exist_ok=True)
+    write_json(folder / "profile.json", doc)
+
+
+def delete_profile_record(folder: Path) -> int:
+    removed = 0
+    file_path = folder / "profile.json"
+    if file_path.is_file():
+        try:
+            doc = json.loads(file_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            doc = {}
+        delivery = doc.get("delivery") if isinstance(doc, dict) else None
+        if isinstance(delivery, dict):
+            artifact = artifact_to_delete(delivery)
+            if artifact and artifact.is_file():
+                artifact.unlink()
+                removed = 1
+    shutil.rmtree(folder)
+    return removed
+
+
+def profile_fresh(doc: dict) -> bool:
+    raw = doc.get("ran_at")
+    if not isinstance(raw, str):
+        return False
+    try:
+        ran = datetime.fromisoformat(raw)
+    except ValueError:
+        return False
+    if ran.tzinfo is None:
+        ran = ran.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - ran < timedelta(hours=24)
+
+
+def name_as_phrase(text: str, name: str) -> bool:
+    """Full name as a phrase, with an optional middle initial or one middle token.
+
+    "Riley Smith and Ann Example" does not match "Riley Example".
+    "Last, First" counts. Scattered first and last names do not.
+    """
+    tokens = name_tokens(name)
+    if len(tokens) < 2:
+        return False
+    first = re.escape(tokens[0])
+    last = re.escape(tokens[-1])
+    middle = r"(?:\s+(?:[A-Za-z]\.?|[A-Za-z][A-Za-z'-]{1,}))?"
+    forward = rf"(?<!\w){first}{middle}\s+{last}(?!\w)"
+    reverse = rf"(?<!\w){last}\s*,\s*{first}(?!\w)"
+    blob = text or ""
+    return re.search(forward, blob, re.IGNORECASE) is not None or re.search(reverse, blob, re.IGNORECASE) is not None
+
+
+def page_anchor_kind(page: dict, company: str, city: str, urls: list[str]) -> str:
+    """Owner link, company ignoring case and spacing, or the city when no company was given."""
+    url = page.get("url") or ""
+    blob = f"{page.get('title') or ''} {page.get('text') or ''} {page.get('snippet') or ''}"
+    if urls and (link_matches(url, urls) or domain_matches(url, urls)):
+        return "link"
+    if company:
+        slug = company_slug(company)
+        if len(slug) < 3:
+            return ""
+        normalized = re.sub(r"[^a-z0-9]", "", blob.casefold())
+        host_norm = re.sub(r"[^a-z0-9]", "", host_of(url))
+        url_norm = re.sub(r"[^a-z0-9]", "", url.casefold())
+        if slug in normalized or slug in host_norm or slug in url_norm or company_host_hit(url, company):
+            return "company"
+        return ""
+    if any(phrase_present(blob, phrase) for phrase in place_phrases(city)):
+        return "city"
+    return ""
+
+
+def left_out_note(count: int) -> str:
+    if count <= 0:
+        return ""
+    if count == 1:
+        return "1 other page with this name was left out."
+    return f"{count} other pages with this name were left out."
+
+
+def profile_level(pages: list[dict]) -> str:
+    anchored = [page for page in pages if page.get("anchored")]
+    strong = any(page.get("anchor_kind") in {"company", "link"} for page in anchored)
+    if len(anchored) >= 2 and strong:
+        return "High"
+    return "Medium"
+
+
+def identity_block(pages: list[dict], owner_picked: bool) -> dict:
+    level = profile_level(pages)
+    line = f"Owner-picked. {level}." if owner_picked else f"{level}."
+    anchored = sum(1 for page in pages if page.get("anchored"))
+    if level == "High":
+        basis = f"{anchored} anchored sources include the company or a link the owner gave."
+    elif anchored == 1:
+        basis = "One anchored source."
+    else:
+        basis = f"{anchored} anchored sources."
+    return {"level": level, "basis": basis, "line": line}
+
+
+def profile_banner(doc: dict) -> str:
+    kept = len(doc.get("sources") or [])
+    total = int(doc.get("query_count") or 0)
+    failed = int(doc.get("searches_failed") or 0)
+    source_word = "source" if kept == 1 else "sources"
+    if failed and total:
+        ran = max(total - failed, 0)
+        return f"{ran} of {total} searches ran and kept {kept} {source_word}."
+    search_word = "search" if total == 1 else "searches"
+    return f"Kept {kept} {source_word} from {total} {search_word}."
+
+
+def choice_label(pages: list[dict]) -> str:
+    linkedin = next((page for page in pages if linkedin_handle(page.get("url") or "")), None)
+    page = linkedin or pages[0]
+    handle = linkedin_handle(page.get("url") or "")
+    title = (page.get("title") or "Profile").strip() or "Profile"
+    if len(title) > 80:
+        title = title[:79].rstrip() + "…"
+    if handle:
+        return f"{title} — linkedin.com/in/{handle}"
+    host = host_of(page.get("url") or "") or "web"
+    return f"{title} — {host}"
+
+
+def fence_sources(sources: list[dict]) -> str:
+    blocks = []
+    for src in sources:
+        blocks.append(
+            "\n".join([
+                f'<<<UNTRUSTED_EVIDENCE id="{src["n"]}">>>',
+                f"title: {src.get('title') or ''}",
+                f"url: {src.get('url') or ''}",
+                f"excerpt: {src.get('excerpt') or ''}",
+                "<<<END_UNTRUSTED_EVIDENCE>>>",
+            ])
+        )
+    return "\n".join(blocks)
+
+
+def number_sources(pages: list[dict]) -> list[dict]:
+    sources = []
+    for index, page in enumerate(pages, start=1):
+        sources.append({
+            "n": index,
+            "url": page.get("url") or "",
+            "title": page.get("title") or "",
+            "host": page.get("host") or host_of(page.get("url") or ""),
+            "excerpt": page.get("excerpt") or "",
+            "anchored": bool(page.get("anchored")),
+            "anchor_kind": page.get("anchor_kind") or "",
+        })
+    return sources
+
+
+def anchor_say(name: str, company: str, city: str) -> str:
+    if company and city:
+        tie = f"{company} or {city}"
+    else:
+        tie = company or city
+    return (
+        f"I found pages for {name} but none tie to {tie}. "
+        "Send a profile link, a LinkedIn, or a company site."
+    )
+
+
+def people_say(name: str, city: str, choices: list[dict]) -> str:
+    bits = [f"{choice['reply']}) {choice['label']}" for choice in choices]
+    listed = " ".join(bits)
+    count = len(choices)
+    if count <= 1:
+        where = f" in {city}" if city else ""
+        return f"Found 1 {name}{where}: {listed}. Reply 1 or NONE."
+    noun = name if name.endswith("s") else f"{name}s"
+    if count == 2:
+        return f"I found 2 {noun}: {listed}. Reply 1, 2 or NONE."
+    last = count
+    middle = ", ".join(str(number) for number in range(1, last))
+    return f"I found {count} {noun}: {listed}. Reply {middle} or {last} or NONE."
+
+
+def payload_failure_reason(payload: dict) -> str | None:
+    if not exa_payload_failed(payload):
+        return None
+    blob = json.dumps(payload, ensure_ascii=False).lower()
+    if "unauthor" in blob or "forbidden" in blob or "invalid api key" in blob:
+        return "auth"
+    if "rate" in blob and "limit" in blob:
+        return "rate_limited"
+    if "timed out" in blob or "timeout" in blob:
+        return "timeout"
+    return "unreachable"
+
+
+def emit_profile_unavailable(reason: str) -> None:
+    emit({
+        "ok": False,
+        "error": "search_unavailable",
+        "status": "search_unavailable",
+        "reason": reason,
+        "say": PROFILE_UNAVAILABLE_SAY,
+    }, 1)
+
+
+def run_profile_queries(queries: list[dict], key: str) -> list[tuple[dict | None, str | None]]:
+    results: list[tuple[dict | None, str | None] | None] = [None] * len(queries)
+
+    def one(index: int, query: dict) -> tuple[int, dict | None, str | None]:
+        try:
+            payload = exa_post("/search", exa_search_body(query), key, timeout=20)
+        except ExaError as exc:
+            return index, None, exc.reason
+        return index, payload, None
+
+    workers = max(1, min(len(queries), 8))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(one, index, query) for index, query in enumerate(queries)]
+        for future in as_completed(futures):
+            index, payload, reason = future.result()
+            results[index] = (payload, reason)
+    return [item if item is not None else (None, "unreachable") for item in results]
+
+
+def collect_profile_pages(queries: list[dict], key: str) -> tuple[list[dict], int, int, str]:
+    """Return pages in query order, searches_failed, and queries_succeeded.
+
+    Any auth failure aborts before a result is stored. Other partial failures
+    keep pages when a later step still sees the name.
+    """
+    packed = run_profile_queries(queries, key)
+    failed = 0
+    auth = False
+    first_reason = ""
+    payloads: list[dict | None] = []
+    for payload, reason in packed:
+        if reason:
+            failed += 1
+            if not first_reason:
+                first_reason = reason
+            if reason == "auth":
+                auth = True
+            payloads.append(None)
+            continue
+        why = payload_failure_reason(payload or {})
+        if why:
+            failed += 1
+            if not first_reason:
+                first_reason = why
+            if why == "auth":
+                auth = True
+            payloads.append(None)
+            continue
+        payloads.append(payload if isinstance(payload, dict) else None)
+    if auth:
+        emit_profile_unavailable("auth")
+    found: list[dict] = []
+    seen: set[str] = set()
+    for index, query in enumerate(queries):
+        payload = payloads[index]
+        if not payload:
+            continue
+        for raw in payload.get("results") or []:
+            if not isinstance(raw, dict):
+                continue
+            url = raw.get("url") if isinstance(raw.get("url"), str) else ""
+            if not is_http_url(url) or dangerous_url(url) or is_instagram(url):
+                continue
+            canon = canon_url(url)
+            if not canon or canon in seen:
+                continue
+            seen.add(canon)
+            title = raw.get("title") if isinstance(raw.get("title"), str) else ""
+            text = result_text(raw)
+            snippet = result_snippet(raw)
+            found.append({
+                "url": url,
+                "title": title,
+                "text": text,
+                "snippet": snippet,
+                "query": query.get("q") or "",
+                "target": query.get("target") or "",
+            })
+    need_text = [page["url"] for page in found if not (page["text"] or "").strip() and not (page["snippet"] or "").strip()]
+    if need_text:
+        try:
+            filled = exa_post(
+                "/contents",
+                {"urls": need_text, "text": {"maxCharacters": EXA_TEXT_CHARS}},
+                key,
+                timeout=20,
+            )
+        except ExaError as exc:
+            if exc.reason == "auth":
+                emit_profile_unavailable("auth")
+            filled = {}
+        if isinstance(filled, dict):
+            why = payload_failure_reason(filled)
+            if why == "auth":
+                emit_profile_unavailable("auth")
+            if not why:
+                by_url = {}
+                for raw in filled.get("results") or []:
+                    if isinstance(raw, dict) and isinstance(raw.get("url"), str):
+                        by_url[canon_url(raw["url"])] = raw
+                for page in found:
+                    if (page["text"] or "").strip():
+                        continue
+                    raw = by_url.get(canon_url(page["url"]))
+                    if not raw:
+                        continue
+                    page["text"] = result_text(raw)
+                    if not page["snippet"]:
+                        page["snippet"] = result_snippet(raw)
+                    if not page["title"] and isinstance(raw.get("title"), str):
+                        page["title"] = raw["title"]
+    return found, failed, len(queries) - failed, first_reason or "unreachable"
+
+
+def classify_profile_pages(
+    found: list[dict],
+    name: str,
+    company: str,
+    city: str,
+    urls: list[str],
+) -> tuple[str, list[list[dict]], int]:
+    """Return one|many|needs_anchor|no_match, people, and the left-out count."""
+    named: list[dict] = []
+    for page in found:
+        blob = f"{page.get('title') or ''} {page.get('text') or ''} {page.get('snippet') or ''}"
+        if not name_as_phrase(blob, name):
+            continue
+        excerpt, _ = sanitize_untrusted(page.get("text") or page.get("snippet") or page.get("title") or "")
+        title, _ = sanitize_untrusted(page.get("title") or page.get("url") or "")
+        if not excerpt:
+            continue
+        if len(excerpt) > EXCERPT_CAP:
+            excerpt = excerpt[:EXCERPT_CAP]
+        kind = page_anchor_kind(page, company, city, urls)
+        named.append({
+            "url": page["url"],
+            "title": title or page["url"],
+            "excerpt": excerpt,
+            "host": host_of(page["url"]),
+            "anchored": bool(kind),
+            "anchor_kind": kind,
+        })
+    if not named:
+        return "no_match", [], 0
+    handles: list[str] = []
+    for page in named:
+        if not page["anchored"]:
+            continue
+        handle = linkedin_handle(page["url"])
+        if handle and handle not in handles:
+            handles.append(handle)
+    handle_set = set(handles)
+    kept: list[dict] = []
+    left = 0
+    for page in named:
+        handle = linkedin_handle(page["url"])
+        if page["anchored"] or (handle and handle in handle_set):
+            kept.append(page)
+            continue
+        left += 1
+    if not kept:
+        return "needs_anchor", [], left
+    if len(handles) >= 2:
+        people: list[list[dict]] = []
+        attached: set[int] = set()
+        for handle in handles:
+            pages = [page for page in kept if linkedin_handle(page["url"]) == handle]
+            people.append(pages)
+            attached.update(id(page) for page in pages)
+        for page in kept:
+            if id(page) not in attached:
+                left += 1
+        return "many", people, left
+    return "one", [kept], left
+
+
+def build_people(groups: list[list[dict]]) -> list[dict]:
+    people = []
+    for index, pages in enumerate(groups, start=1):
+        people.append({
+            "reply": index,
+            "label": choice_label(pages),
+            "pages": pages,
+        })
+    return people
+
+
+def public_profile(doc: dict) -> dict:
+    status = doc.get("status")
+    pending = doc.get("pending") if isinstance(doc.get("pending"), dict) else {}
+    payload: dict = {
+        "ok": True,
+        "status": status,
+        "record": doc.get("record"),
+    }
+    if status == "ready":
+        payload["identity"] = doc.get("identity")
+        payload["sources"] = [
+            {
+                "n": src.get("n"),
+                "url": src.get("url"),
+                "title": src.get("title"),
+                "host": src.get("host") or host_of(src.get("url") or ""),
+            }
+            for src in doc.get("sources") or []
+            if isinstance(src, dict)
+        ]
+        payload["evidence"] = doc.get("evidence") or ""
+        payload["instructions"] = PROFILE_INSTRUCTIONS
+        payload["pending"] = {
+            "awaiting": bool(pending.get("awaiting")),
+            "prompt": pending.get("prompt") or "",
+            "choices": [
+                {"reply": choice.get("reply"), "label": choice.get("label")}
+                for choice in pending.get("choices") or []
+                if isinstance(choice, dict)
+            ],
+        }
+        payload["next"] = "write"
+        note = doc.get("left_out_note") or ""
+        if note:
+            payload["left_out"] = doc.get("left_out") or 0
+            payload["left_out_note"] = note
+        if doc.get("searches_failed"):
+            payload["searches_failed"] = doc.get("searches_failed")
+        payload["query_count"] = doc.get("query_count") or 0
+        payload["queries_succeeded"] = doc.get("queries_succeeded") or 0
+        payload["queries"] = doc.get("queries") or []
+        payload["banner"] = doc.get("banner") or ""
+        return payload
+    if status == "needs_disambiguation":
+        payload["say"] = doc.get("say") or pending.get("prompt") or ""
+        payload["choices"] = [
+            {"reply": choice.get("reply"), "label": choice.get("label")}
+            for choice in pending.get("choices") or []
+            if isinstance(choice, dict)
+        ]
+        payload["pending"] = {
+            "awaiting": True,
+            "prompt": pending.get("prompt") or payload["say"],
+            "choices": payload["choices"],
+        }
+        payload["next"] = "reply"
+        return payload
+    if status in {"needs_anchor", "no_match", "none"}:
+        payload["say"] = doc.get("say") or ""
+        payload["query_count"] = doc.get("query_count") or 0
+        payload["queries_succeeded"] = doc.get("queries_succeeded") or 0
+        payload["name_hits"] = doc.get("name_hits") or 0
+        payload["next"] = "stop"
+        if status == "none":
+            payload["reply"] = "NONE"
+        return payload
+    payload["say"] = doc.get("say") or ""
+    payload["next"] = "stop"
+    return payload
+
+
+def open_profile_docs() -> list[dict]:
+    root = data_root() / "profiles"
+    if not root.is_dir():
+        return []
+    found: list[tuple[float, dict]] = []
+    for child in root.iterdir():
+        file_path = child / "profile.json"
+        if not file_path.is_file():
+            continue
+        try:
+            doc = json.loads(file_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(doc, dict):
+            continue
+        pending = doc.get("pending") if isinstance(doc.get("pending"), dict) else {}
+        if not pending.get("awaiting"):
+            continue
+        if doc.get("status") not in {"ready", "needs_disambiguation"}:
+            continue
+        try:
+            stamp = file_path.stat().st_mtime
+        except OSError:
+            stamp = 0
+        found.append((stamp, doc))
+    found.sort(key=lambda item: item[0], reverse=True)
+    return [doc for _, doc in found]
+
+
+def parse_profile_reply(positional: list[str], opts: dict[str, list[str]]) -> str | None:
+    raw = flag(opts, "reply")
+    if raw is None:
+        raw = flag(opts, "pick")
+    if raw is None and positional:
+        raw = positional[0]
+    if raw is None:
+        return None
+    text = raw.strip()
+    if re.fullmatch(r"(?:reply\s+)?none\.?", text, re.IGNORECASE):
+        return "NONE"
+    match = re.fullmatch(r"(?:reply\s+)?(\d+)\.?", text, re.IGNORECASE)
+    if match:
+        return str(int(match.group(1)))
+    return "INVALID"
+
+
+def apply_profile_reply(doc: dict, reply: str, actor: str) -> None:
+    pending = doc.get("pending") if isinstance(doc.get("pending"), dict) else {}
+    choices = [choice for choice in pending.get("choices") or [] if isinstance(choice, dict)]
+    prompt = pending.get("prompt") or doc.get("say") or "Reply with a number from the list, or NONE."
+    if reply == "INVALID" or reply == "":
+        emit({
+            "ok": True,
+            "status": doc.get("status"),
+            "record": doc.get("record"),
+            "say": prompt,
+            "next": "reply",
+        })
+    if reply == "NONE":
+        doc["status"] = "none"
+        doc["pick"] = "NONE"
+        doc["say"] = "We will not build the profile."
+        doc["next"] = "stop"
+        doc["owner_picked"] = False
+        pending["awaiting"] = False
+        pending["closed"] = "none"
+        doc["pending"] = pending
+        save_profile_doc(doc)
+        audit("profile_reply", doc.get("record"), {"reply": 0}, actor)
+        emit(public_profile(doc))
+    match = None
+    if reply.isdigit():
+        number = int(reply)
+        match = next((choice for choice in choices if choice.get("reply") == number), None)
+    if match is None:
+        emit({
+            "ok": True,
+            "status": doc.get("status"),
+            "record": doc.get("record"),
+            "say": prompt,
+            "next": "reply",
+        })
+    pages = [page for page in match.get("pages") or [] if isinstance(page, dict)]
+    sources = number_sources(pages)
+    doc["sources"] = sources
+    doc["evidence"] = fence_sources(sources)
+    doc["owner_picked"] = True
+    doc["identity"] = identity_block(pages, True)
+    doc["status"] = "ready"
+    doc["pick"] = match.get("reply")
+    doc["next"] = "write"
+    doc.pop("say", None)
+    doc["banner"] = profile_banner(doc)
+    pending["awaiting"] = False
+    pending["closed"] = "picked"
+    doc["pending"] = pending
+    save_profile_doc(doc)
+    audit("profile_reply", doc.get("record"), {"reply": int(reply)}, actor)
+    emit(public_profile(doc))
+
+
+def finish_profile_doc(
+    *,
+    record: str,
+    fingerprint: str,
+    intake: dict,
+    queries: list[dict],
+    found: list[dict],
+    failed: int,
+    succeeded: int,
+) -> dict:
+    name = intake["name"]
+    city = intake["city"]
+    company = intake.get("company") or ""
+    urls = list(intake.get("urls") or [])
+    kind, groups, left = classify_profile_pages(found, name, company, city, urls)
+    if failed and kind == "no_match":
+        reason = "unreachable"
+        emit_profile_unavailable(reason)
+    people = build_people(groups) if groups else []
+    note = left_out_note(left)
+    query_text = [query.get("q") or "" for query in queries]
+    base = {
+        "record": record,
+        "fingerprint": fingerprint,
+        "ran_at": now_iso(),
+        "intake": intake,
+        "query_count": len(queries),
+        "queries_succeeded": succeeded,
+        "queries": query_text,
+        "searches_failed": failed,
+        "left_out": left,
+        "left_out_note": note,
+        "name_hits": len(found),
+        "people": people,
+        "pick": None,
+        "owner_picked": False,
+        "sections": None,
+        "delivery": None,
+    }
+    if kind == "no_match":
+        base.update({
+            "status": "no_match",
+            "say": "couldn't find",
+            "next": "stop",
+            "sources": [],
+            "evidence": "",
+            "identity": None,
+            "pending": {"awaiting": False, "prompt": "couldn't find", "choices": []},
+            "name_hits": 0,
+        })
+        return base
+    if kind == "needs_anchor":
+        say = anchor_say(name, company, city)
+        base.update({
+            "status": "needs_anchor",
+            "say": say,
+            "next": "stop",
+            "sources": [],
+            "evidence": "",
+            "identity": None,
+            "pending": {"awaiting": False, "prompt": say, "choices": []},
+        })
+        return base
+    if kind == "many":
+        say = people_say(name, city, people)
+        choices = [{"reply": person["reply"], "label": person["label"], "pages": person["pages"]} for person in people]
+        base.update({
+            "status": "needs_disambiguation",
+            "say": say,
+            "next": "reply",
+            "sources": [],
+            "evidence": "",
+            "identity": None,
+            "pending": {"awaiting": True, "prompt": say, "choices": choices, "closed": None},
+        })
+        return base
+    pages = people[0]["pages"]
+    sources = number_sources(pages)
+    prompt = people_say(name, city, people)
+    choices = [{"reply": 1, "label": people[0]["label"], "pages": pages}]
+    base.update({
+        "status": "ready",
+        "next": "write",
+        "sources": sources,
+        "evidence": fence_sources(sources),
+        "identity": identity_block(pages, False),
+        "pending": {"awaiting": True, "prompt": prompt, "choices": choices, "closed": None},
+        "banner": "",
+    })
+    base["banner"] = profile_banner(base)
+    return base
+
+
+def cmd_profile(positional: list[str], opts: dict[str, list[str]]) -> None:
+    actor = gate(actor_of(opts), mutate=True)
+    reply = parse_profile_reply(positional, opts)
+    name = flag(opts, "name")
+    city = flag(opts, "city")
+    if reply and not (name and name.strip()):
+        opened = open_profile_docs()
+        if not opened:
+            fail(
+                "no_pending",
+                "No profile is waiting for a reply. Start with the person's name and city.",
+            )
+        apply_profile_reply(opened[0], reply, actor or "unspecified")
+        return
+    if not name or not name.strip():
+        fail("missing_name", "Name is required.")
+    if not city or not city.strip():
+        fail("missing_city", "City is required.")
+    appt_type = (flag(opts, "type") or "buyer").lower()
+    if appt_type not in {"buyer", "listing", "other"}:
+        fail("bad_type", "Type must be buyer, listing, or other.")
+    urls = list(opts.get("url") or [])
+    for url in urls:
+        if dangerous_url(url) or not is_http_url(url):
+            fail("rejected_url", "Only http(s) URLs are accepted.")
+    company = flag(opts, "company") or ""
+    clean_name, _ = redact(name)
+    clean_city, _ = redact(city)
+    clean_company, _ = redact(company) if company else ("", [])
+    if not clean_name:
+        fail("name_empty_after_redaction", "Name was empty after removing blocked tokens.")
+    if not clean_city:
+        fail("city_empty_after_redaction", "City was empty after removing blocked tokens.")
+    if MINOR_RE.search(clean_name) or MINOR_RE.search(clean_city):
+        fail("minor", "Subject appears to be a minor. Stop.")
+    stored_urls = [url for url in urls if not is_instagram(url)]
+    fingerprint = profile_fingerprint(clean_name, clean_city, clean_company, stored_urls, appt_type)
+    record = profile_record_key(clean_name, clean_city, clean_company)
+    existing = load_profile_doc(record)
+    reusable = bool(
+        existing
+        and existing.get("fingerprint") == fingerprint
+        and profile_fresh(existing)
+        and existing.get("status") != "search_unavailable"
+    )
+    if reusable and existing is not None:
+        if reply:
+            apply_profile_reply(existing, reply, actor or "unspecified")
+            return
+        audit("profile", record, {"reused": 1}, actor)
+        emit(public_profile(existing))
+    if reply == "NONE":
+        fail(
+            "no_pending",
+            "No profile is waiting for a reply. Start with the person's name and city.",
+        )
+    queries, _, _ = build_queries(clean_name, clean_city, stored_urls, clean_company)
+    if not queries:
+        fail("no_queries", "No safe name-and-city query could be built.")
+    key = exa_key()
+    if not key:
+        emit_profile_unavailable("no_key")
+    found, failed, succeeded, failure_reason = collect_profile_pages(queries, key)
+    if failed and succeeded == 0:
+        emit_profile_unavailable(failure_reason)
+    intake = {
+        "name": clean_name,
+        "city": clean_city,
+        "company": clean_company,
+        "urls": stored_urls,
+        "type": appt_type,
+    }
+    # Name hits are counted inside finish. A partial failure with no usable
+    # name phrase is search_unavailable, and that path does not store a file.
+    preview_named = False
+    for page in found:
+        blob = f"{page.get('title') or ''} {page.get('text') or ''} {page.get('snippet') or ''}"
+        if name_as_phrase(blob, clean_name):
+            preview_named = True
+            break
+    if failed and not preview_named:
+        emit_profile_unavailable(failure_reason)
+    doc = finish_profile_doc(
+        record=record,
+        fingerprint=fingerprint,
+        intake=intake,
+        queries=queries,
+        found=found,
+        failed=failed,
+        succeeded=succeeded,
+    )
+    save_profile_doc(doc)
+    audit("profile", record, {"queries": len(queries), "sources": len(doc.get("sources") or [])}, actor)
+    if reply:
+        apply_profile_reply(doc, reply, actor or "unspecified")
+        return
+    emit(public_profile(doc))
+
+
+def section_html(items: list[dict]) -> str:
+    rows = ["<ul>"]
+    for item in items:
+        cites = item.get("sources") or []
+        cite = ""
+        if cites:
+            cite = ' <span class="cite">[' + ", ".join(str(number) for number in cites) + "]</span>"
+        rows.append(f"<li>{html_escape(item.get('text') or '')}{cite}</li>")
+    rows.append("</ul>")
+    return "".join(rows)
+
+
+def profile_sources_html(sources: list[dict]) -> str:
+    rows = ['<ul class="sources">']
+    for src in sources:
+        title = html_escape(src.get("title") or "")
+        url = html_escape(src.get("url") or "")
+        rows.append(f"<li>[{src.get('n')}] {title} — {url}</li>")
+    rows.append("</ul>")
+    return "".join(rows)
+
+
+def validate_profile_sections(raw: object, source_count: int) -> dict:
+    if not isinstance(raw, dict):
+        fail("bad_sections", "Sections must be an object.")
+    extra = [key for key in raw if key not in PROFILE_SECTIONS]
+    missing = [key for key in PROFILE_SECTIONS if key not in raw]
+    if extra or missing:
+        fail(
+            "bad_sections",
+            "Sections must be client_stated, observations, hypotheses, and recommendations.",
+        )
+    cleaned: dict[str, list[dict]] = {}
+    for key in PROFILE_SECTIONS:
+        items = raw[key]
+        if not isinstance(items, list) or not items or len(items) > 3:
+            fail("bad_sections", f"{key} needs 1 to 3 items.")
+        parsed: list[dict] = []
+        for item in items:
+            if not isinstance(item, dict):
+                fail("bad_sections", f"{key} items must be objects.")
+            text = item.get("text")
+            if not isinstance(text, str) or not text.strip():
+                fail("bad_sections", f"{key} needs text.")
+            sources = item.get("sources", [])
+            if sources is None:
+                sources = []
+            if not isinstance(sources, list):
+                fail("bad_sections", f"{key} sources must be source numbers from the profile.")
+            numbers: list[int] = []
+            for number in sources:
+                if isinstance(number, bool) or not isinstance(number, int) or number < 1 or number > source_count:
+                    fail("bad_sections", f"{key} sources must be source numbers from the profile.")
+                numbers.append(number)
+            stripped = text.strip()
+            if key == "client_stated" and stripped == PROFILE_NOTHING and not numbers:
+                parsed.append({"text": stripped, "sources": []})
+                continue
+            if not numbers:
+                fail("bad_sections", f"{key} items must cite a source number.")
+            parsed.append({"text": stripped, "sources": numbers})
+        cleaned[key] = parsed
+    errors = screen_brief({"sections": cleaned})
+    if errors:
+        safe = []
+        for err in errors:
+            safe.append({field: value for field, value in err.items() if field != "text"})
+        fail("rejected", "The sections were rejected.", {"errors": safe})
+    return cleaned
+
+
+def render_profile_document(doc: dict, sections: dict) -> tuple[str, int, bool]:
+    folder = profile_folder(str(doc.get("record") or ""))
+    template = PROFILE_TEMPLATE_PATH.read_text(encoding="utf-8")
+    intake = doc.get("intake") or {}
+    banner = doc.get("banner") or profile_banner(doc)
+    note = doc.get("left_out_note") or ""
+    stated = section_html(sections["client_stated"])
+    observations = section_html(sections["observations"])
+    hypotheses = section_html(sections["hypotheses"])
+    recommendations = section_html(sections["recommendations"])
+    sources_html = profile_sources_html(doc.get("sources") or [])
+    html_path = folder / "profile.html"
+    pdf_path = folder / "profile.pdf"
+
+    def paint(banner_text: str, note_text: str) -> tuple[str, int | None]:
+        mapping = {
+            "{{H_NAME}}": html_escape(intake.get("name") or ""),
+            "{{H_CITY}}": html_escape(intake.get("city") or ""),
+            "{{H_TYPE}}": html_escape((intake.get("type") or "buyer").capitalize()),
+            "{{H_IDENTITY}}": html_escape((doc.get("identity") or {}).get("line") or ""),
+            "{{H_BANNER}}": html_escape(banner_text),
+            "{{H_GUARD}}": html_escape(guardrail_const()),
+            "{{H_LEFT}}": html_escape(note_text),
+            "{{H_STATED}}": stated,
+            "{{H_OBS}}": observations,
+            "{{H_HYP}}": hypotheses,
+            "{{H_REC}}": recommendations,
+            "{{H_SOURCES}}": sources_html,
+        }
+        html_out = fill_template(template, mapping)
+        html_path.write_text(html_out, encoding="utf-8")
+        if pdf_path.exists():
+            pdf_path.unlink()
+        return html_out, weasyprint_document_pages(html_path, pdf_path)
+
+    html, document_pages = paint(banner, note)
+    guard = 0
+    while document_pages is not None and document_pages > 1 and guard < 8:
+        if note:
+            note = ""
+        elif len(banner) > 48:
+            banner = shrink(banner, max(48, len(banner) - 24))
+        else:
+            break
+        guard += 1
+        html, document_pages = paint(banner, note)
+    wrote_pdf = pdf_path.is_file() and pdf_path.stat().st_size > 0
+    if document_pages is not None and document_pages > 0:
+        pages = document_pages
+    else:
+        pages = estimate_pages(html)
+    return html, pages, wrote_pdf
+
+
+def deliver_profile_file(doc: dict) -> dict:
+    folder = profile_folder(str(doc.get("record") or ""))
+    pdf_path = folder / "profile.pdf"
+    html_path = folder / "profile.html"
+    if pdf_path.is_file():
+        source = pdf_path
+        suffix = ".pdf"
+    elif html_path.is_file():
+        source = html_path
+        suffix = ".html"
+    else:
+        fail("not_rendered", "Render the profile before delivery.")
+    dest_dir = artifact_dir()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    filename = secrets.token_hex(16) + suffix
+    dest = dest_dir / filename
+    shutil.copyfile(source, dest)
+    delivered = datetime.now(timezone.utc)
+    expires = delivered + timedelta(days=ARTIFACT_DAYS)
+    url = public_base() + "/" + filename
+    record = {
+        "filename": filename,
+        "url": url,
+        "delivered_at": delivered.isoformat(),
+        "expires_at": expires.isoformat(),
+        "artifact_path": str(dest.resolve()),
+    }
+    return record
+
+
+def profile_sms(doc: dict, url: str) -> str:
+    name = ((doc.get("intake") or {}).get("name") or "").strip()
+    line = ((doc.get("identity") or {}).get("line") or "Medium.").strip()
+    if line and line[-1] not in ".!?":
+        line = line + "."
+    text = f"Verify before use. {name}. Identity: {line} {url}".strip()
+    if len(text) > 300:
+        text = f"Verify before use. {name}. {url}"
+    return text
+
+
+def cmd_write(positional: list[str], opts: dict[str, list[str]]) -> None:
+    actor = gate(actor_of(opts), mutate=True)
+    if len(positional) != 1:
+        fail("usage", "write <record> --sections <path>")
+    record = positional[0]
+    doc = load_profile_doc(record)
+    if doc is None:
+        fail("unknown_profile", "Unknown profile record.")
+    if doc.get("status") != "ready":
+        say = doc.get("say") or ((doc.get("pending") or {}).get("prompt") if isinstance(doc.get("pending"), dict) else "") or ""
+        emit({
+            "ok": False,
+            "error": "not_ready",
+            "status": doc.get("status"),
+            "record": record,
+            "say": say,
+        }, 1)
+    sections_path = flag(opts, "sections")
+    if not sections_path:
+        fail("usage", "write <record> --sections <path>")
+    try:
+        raw = json.loads(Path(sections_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        fail("bad_sections", "Sections file must be JSON.")
+    sources = doc.get("sources") or []
+    cleaned = validate_profile_sections(raw, len(sources))
+    _html, pages, wrote_pdf = render_profile_document(doc, cleaned)
+    delivery = deliver_profile_file(doc)
+    sms = profile_sms(doc, delivery["url"])
+    doc["sections"] = cleaned
+    doc["delivery"] = delivery
+    save_profile_doc(doc)
+    audit("write", record, {"pages": pages, "pdf": 1 if wrote_pdf else 0}, actor)
+    payload = {
+        "ok": True,
+        "record": record,
+        "pages": pages,
+        "pdf": wrote_pdf,
+        "html": True,
+        "link": delivery["url"],
+        "expires_at": delivery["expires_at"],
+        "sms_text": sms,
+    }
+    if not wrote_pdf:
+        payload["pdf_skipped"] = "weasyprint_unavailable"
+    if CONFIRMED_WORD.search(sms):
+        fail("identity_overclaim", "Rate identity confidence High, Medium, or Low.")
+    emit(payload)
+
+
 def main(argv: list[str]) -> None:
     reject_address_flag(argv)
     if len(argv) < 2:
@@ -3153,6 +4231,12 @@ def main(argv: list[str]) -> None:
         if len(positional) != 1:
             fail("usage", "delete <client_id>")
         cmd_delete_client(positional[0], opts, "delete")
+    if command == "profile":
+        positional, opts = parse_flags(rest)
+        cmd_profile(positional, opts)
+    if command == "write":
+        positional, opts = parse_flags(rest)
+        cmd_write(positional, opts)
     if command == "consent":
         if not rest or rest[0] != "revoke":
             fail("usage", "delete <client_id> removes this client. consent revoke is the same delete.")
