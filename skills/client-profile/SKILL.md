@@ -78,7 +78,7 @@ Run, in order, with `python3 /opt/data/skills/client-profile/scripts/cp.py`. Eve
 4. **Candidates.** `cp.py identity candidates <client_id>`  
    Add the search results first. An empty list before any evidence means you have not searched yet.
    If `status` is `couldnt_find`, stop. Tell the owner exactly `couldn't find`. Do not brief and do not guess another person who shares only a first name.
-   If `status` is `need_profile_link`, ask the advisor for a profile link. Do not guess. Do not offer a numbered list.
+   If `status` is `need_profile_link`, ask the advisor for a profile link. Add that link with `evidence add` (`--origin web`). The link is saved on the intake and unblocks the name. A page search found on its own does not. Do not guess.
    Otherwise text the owner: `Found N <name> in <city>: 1) … 2) … Reply 1, 2 or NONE`
 5. **Confirm.** On `1` or `2`: `cp.py identity confirm <client_id> --candidate N`  
    On `NONE`: `cp.py identity confirm <client_id> --none` and stop. No brief without a selected candidate.

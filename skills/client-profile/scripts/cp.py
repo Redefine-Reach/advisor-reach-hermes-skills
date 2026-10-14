@@ -202,6 +202,11 @@ EXCERPT_CAP = 1200
 LEVEL_RANK = {"low": 0, "medium": 1, "high": 2}
 CONFIRMED_WORD = re.compile(r"\bconfirmed\b", re.IGNORECASE)
 NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v", "phd", "md", "esq"}
+NAME_TITLES = {
+    "mr", "mrs", "ms", "miss", "mx", "dr", "prof", "professor", "rev",
+    "reverend", "hon", "honorable", "sir", "dame", "lady", "lord",
+    "capt", "captain", "col", "colonel", "gen", "general", "sgt", "coach",
+}
 # Both the given name and the surname have to be common. A rare surname is not.
 COMMON_GIVEN = frozenset({
     "james", "john", "robert", "michael", "william", "david", "richard", "joseph",
@@ -706,9 +711,17 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
         for source in (brief.get("appendix") or {}).get("sources") or []:
             if isinstance(source, dict) and source.get("url"):
                 cited_urls.add(canon_url(source["url"]))
+        confirmed_urls = {
+            canon_url(row.get("url") or "")
+            for row in rows
+            if row.get("identity_status") == "confirmed" and row.get("url")
+        }
         for source in search_doc.get("sources") or []:
             url = source.get("url") or ""
-            if url and canon_url(url) not in cited_urls:
+            # Other people's profiles stay in search.json. Cite only the person who was picked.
+            if not url or canon_url(url) not in confirmed_urls:
+                continue
+            if canon_url(url) not in cited_urls:
                 errors.append({"code": "uncited_source", "path": "/appendix/sources", "url": url})
     if insufficient:
         if style.get("confidence") != "low":
@@ -953,11 +966,15 @@ def reject_address_flag(argv: list[str]) -> None:
 
 
 def name_tokens(name: str) -> list[str]:
-    tokens: list[str] = []
+    raw_tokens: list[str] = []
     for raw in re.split(r"\s+", (name or "").strip()):
         cleaned = raw.strip(".,;:\"'`“”")
-        if not cleaned:
-            continue
+        if cleaned:
+            raw_tokens.append(cleaned)
+    while raw_tokens and raw_tokens[0].casefold().rstrip(".") in NAME_TITLES:
+        raw_tokens.pop(0)
+    tokens: list[str] = []
+    for cleaned in raw_tokens:
         if cleaned.casefold().rstrip(".") in NAME_SUFFIXES:
             continue
         tokens.append(cleaned)
@@ -985,11 +1002,15 @@ def is_common_name(first: str, last: str) -> bool:
     return first.casefold() in COMMON_GIVEN and last.casefold() in COMMON_SURNAMES
 
 
-def has_profile_url(intake: dict) -> bool:
-    for url in intake.get("urls") or []:
-        if is_http_url(url) and not is_instagram(url):
-            return True
-    return False
+def has_profile_url(intake: dict, rows: list[dict] | None = None) -> bool:
+    urls = [url for url in (intake.get("urls") or []) if isinstance(url, str)]
+    for row in rows or []:
+        # Search hits do not count. A link the advisor added does.
+        if row.get("via") == "exa" or row.get("origin") != "web":
+            continue
+        if isinstance(row.get("url"), str):
+            urls.append(row["url"])
+    return any(is_http_url(url) and not is_instagram(url) for url in urls)
 
 
 def row_name_match(row: dict, first: str, last: str) -> bool:
@@ -1440,35 +1461,46 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
         if marker and marker not in profiles:
             profiles.append(marker)
         item["profile"] = marker
-    profile_n = {marker: index + 1 for index, marker in enumerate(profiles)}
-    if len(profiles) == 1 or not profiles:
-        shared = 1
-    else:
-        shared = len(profiles) + 1
+    used = [int(row.get("candidate") or 0) for row in rows]
+    start = (max(used) + 1) if used else 1
+    profile_n = {marker: start + index for index, marker in enumerate(profiles)}
+
+    def candidate_numbers(item: dict) -> list[int]:
+        if item["profile"]:
+            return [profile_n[item["profile"]]]
+        if len(profiles) > 1:
+            # News, company, and podcast pages belong with each profile, not a leftover person.
+            return list(profile_n.values())
+        if profiles:
+            return [profile_n[profiles[0]]]
+        return [start]
+
     sources = []
     for item in kept:
-        number = profile_n.get(item["profile"]) or shared
-        evidence_id = "ev_" + secrets.token_hex(8)
-        rows.append({
-            "evidence_id": evidence_id,
-            "url": item["url"],
-            "title": item["title"],
-            "excerpt": item["excerpt"],
-            "origin": "web",
-            "query": item["query"],
-            "candidate": number,
-            "identity_status": "unconfirmed",
-            "added_at": now_iso(),
-            "fetched": True,
-            "via": "exa",
-            "target": item["target"],
-        })
-        sources.append({
-            "evidence_id": evidence_id,
-            "url": item["url"],
-            "title": item["title"],
-            "target": item["target"],
-        })
+        for number in candidate_numbers(item):
+            evidence_id = "ev_" + secrets.token_hex(8)
+            rows.append({
+                "evidence_id": evidence_id,
+                "url": item["url"],
+                "title": item["title"],
+                "excerpt": item["excerpt"],
+                "origin": "web",
+                "query": item["query"],
+                "candidate": number,
+                "identity_status": "unconfirmed",
+                "added_at": now_iso(),
+                "fetched": True,
+                "via": "exa",
+                "target": item["target"],
+                "profile": item["profile"],
+            })
+            sources.append({
+                "evidence_id": evidence_id,
+                "url": item["url"],
+                "title": item["title"],
+                "target": item["target"],
+                "candidate": number,
+            })
     save_evidence(path, rows)
     write_json(path / "search.json", {
         "status": "done",
@@ -1570,6 +1602,13 @@ def cmd_evidence_add(client_id: str, opts: dict[str, list[str]]) -> None:
                 record["candidate"] = max(int(r.get("candidate") or 0) for r in rows) + 1
     rows.append(record)
     save_evidence(path, rows)
+    if origin == "web" and is_http_url(url) and not is_instagram(url):
+        intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
+        stored = [item for item in (intake.get("urls") or []) if isinstance(item, str)]
+        if url not in stored:
+            stored.append(url)
+            intake["urls"] = stored
+            write_json(path / "intake.json", intake)
     audit("evidence_add", client_id, {"evidence": 1}, actor)
     result: dict = {"ok": True, "evidence_id": evidence_id, "candidate": record["candidate"]}
     if inaccessible:
@@ -1634,11 +1673,11 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
         stop_identity(path, "couldnt_find", "couldn't find")
     first, last = parts
     manual = [row for row in usable if row.get("origin") == "manual"]
-    if is_common_name(first, last) and not has_profile_url(intake) and not manual:
+    if is_common_name(first, last) and not has_profile_url(intake, usable) and not manual:
         stop_identity(path, "need_profile_link", "This name is common. Send a profile link instead of a guess.")
     grouped: dict[int, list[dict]] = {}
     for row in usable:
-        if is_common_name(first, last) and not has_profile_url(intake) and row.get("origin") != "manual":
+        if is_common_name(first, last) and not has_profile_url(intake, usable) and row.get("origin") != "manual":
             continue
         if not row_name_match(row, first, last):
             continue
@@ -1700,7 +1739,7 @@ def cmd_confirm(client_id: str, opts: dict[str, list[str]]) -> None:
     if not parts:
         fail("couldnt_find", "couldn't find")
     first, last = parts
-    if is_common_name(first, last) and not has_profile_url(intake):
+    if is_common_name(first, last) and not has_profile_url(intake, rows):
         if any(row.get("origin") != "manual" for row in matched):
             fail("need_profile_link", "This name is common. Send a profile link instead of a guess.")
     named = [row for row in matched if row_name_match(row, first, last)]
