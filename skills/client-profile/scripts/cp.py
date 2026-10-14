@@ -184,8 +184,10 @@ WARNING_TEXT = {
     "instructions_removed": "Instruction-like lines were removed from untrusted text.",
 }
 
-QUERY_CAP = 8
-# Six public targets, always. Known profile URLs fill any room left under the cap.
+QUERY_CAP = 10
+# Six public targets, then a name-plus-work search and a LinkedIn profile search.
+# Known profile URLs fill any room left under the cap.
+CONTENTS_CAP = 5
 QUERY_TARGETS = (
     {"target": "linkedin", "stem": "LinkedIn", "include_domains": ["linkedin.com"]},
     {"target": "x", "stem": "X", "include_domains": ["x.com", "twitter.com"]},
@@ -1350,18 +1352,94 @@ def shorten_one_prose(brief: dict) -> bool:
     return True
 
 
-def build_queries(name: str, city: str, urls: list[str], company: str = "") -> tuple[list[dict], list[dict], list[str]]:
+def person_name_slug(first: str, last: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", f"{first}{last}".casefold())
+
+
+def name_domain_hit(url: str, first: str, last: str) -> bool:
+    """davidmarshall.ai is this person's site. A shared news host is not."""
+    slug = person_name_slug(first, last)
+    if len(slug) < 6:
+        return False
+    host = host_of(url)
+    if not host or host in SOCIAL_HOSTS:
+        return False
+    labels = [label for label in host.split(".") if label not in {"www", "com", "ai", "net", "org", "io", "co"}]
+    return any(label == slug or slug in label for label in labels)
+
+
+def key_page_urls(hosts: list[str]) -> list[str]:
+    """Home, about, team, journal, and podcast. Five pages, one contents call."""
+    urls: list[str] = []
+
+    def push(url: str) -> None:
+        if url not in urls and len(urls) < CONTENTS_CAP:
+            urls.append(url)
+
+    for host in hosts:
+        push(f"https://{host}/")
+        push(f"https://{host}/about")
+    for host in hosts:
+        for path in ("team", "journal", "podcast"):
+            push(f"https://{host}/{path}")
+    return urls
+
+
+def sites_to_fetch(found: list[dict], intake: dict, first: str, last: str) -> list[str]:
+    """Personal and company hosts that are already known or turned up in search."""
+    company = intake.get("company") or ""
+    name_hosts: list[str] = []
+    company_hosts: list[str] = []
+    other_hosts: list[str] = []
+
+    def place(url: str, allow_other: bool) -> None:
+        host = host_of(url)
+        if not host or host in SOCIAL_HOSTS:
+            return
+        if host in name_hosts or host in company_hosts or host in other_hosts:
+            return
+        if name_domain_hit(url, first, last):
+            name_hosts.append(host)
+        elif company_host_hit(url, company):
+            company_hosts.append(host)
+        elif allow_other:
+            other_hosts.append(host)
+
+    for url in given_urls(intake):
+        if isinstance(url, str) and is_http_url(url) and not is_instagram(url):
+            place(url, True)
+    blobs = []
+    for item in found:
+        place(item.get("url") or "", False)
+        blobs.append(item.get("corpus") or "")
+        blobs.append(item.get("text") or "")
+        blobs.append(item.get("snippet") or "")
+    for link in re.findall(r"https?://[^\s\"'<>)\]]+", " ".join(blobs)):
+        place(link.rstrip(".,;"), False)
+    return name_hosts + company_hosts + other_hosts
+
+
+def build_queries(
+    name: str,
+    city: str,
+    urls: list[str],
+    company: str = "",
+    role: str = "",
+) -> tuple[list[dict], list[dict], list[str]]:
     codes: list[str] = []
     clean_name, name_codes = redact(name)
     clean_city, city_codes = redact(city)
     clean_company, company_codes = redact(company) if company else ("", [])
+    clean_role, role_codes = redact(role) if role else ("", [])
     codes.extend(name_codes)
     codes.extend(city_codes)
     codes.extend(company_codes)
+    codes.extend(role_codes)
     if (
         contains_blocked_token(clean_name)
         or contains_blocked_token(clean_city)
         or contains_blocked_token(clean_company)
+        or contains_blocked_token(clean_role)
     ):
         fail("address_token_in_query", "A query would have contained a blocked token.")
     queries: list[dict] = []
@@ -1385,6 +1463,25 @@ def build_queries(name: str, city: str, urls: list[str], company: str = "") -> t
         if spec.get("type"):
             item["type"] = spec["type"]
         queries.append(item)
+    # The six city queries miss a personal site and the /in/ profile when those
+    # pages do not repeat the city and the company in the top hits.
+    work = clean_company or clean_role
+    quoted_work = escape_quotes(work)
+    if clean_name and work:
+        queries.append({
+            "q": f'"{quoted_name}" "{quoted_work}"',
+            "target": "name_work",
+        })
+    if clean_name and (work or clean_city):
+        if work:
+            profile_q = f'"{quoted_name}" "{quoted_work}" site:linkedin.com/in'
+        else:
+            profile_q = f'"{quoted_name}" "{quoted_city}" site:linkedin.com/in'
+        queries.append({
+            "q": profile_q,
+            "target": "linkedin_profile",
+            "include_domains": ["linkedin.com"],
+        })
     company_hosts: list[str] = []
     for url in urls:
         if not isinstance(url, str) or not is_http_url(url) or is_instagram(url):
@@ -1569,6 +1666,7 @@ def cmd_queries(client_id: str, opts: dict[str, list[str]]) -> None:
         intake.get("city") or "",
         urls,
         intake.get("company") or "",
+        intake.get("role") or "",
     )
     if not queries:
         fail("no_queries", "No safe name-and-city query could be built.")
@@ -1949,13 +2047,15 @@ def place_phrases(city: str) -> list[str]:
 
 
 def profile_marker(url: str) -> str:
+    handle = linkedin_handle(url)
+    if handle:
+        # /in/dkmarshall and /posts/dkmarshall_... are one person.
+        return "linkedin:" + handle
     parsed = urlparse(url or "")
     host = (parsed.hostname or "").lower()
     if host.startswith("www."):
         host = host[4:]
     slug = (parsed.path or "").rstrip("/").lower()
-    if host == "linkedin.com" and slug.startswith("/in/") and slug != "/in":
-        return "linkedin:" + slug
     if host in {"x.com", "twitter.com"} and slug.count("/") == 1 and slug != "/":
         return "x:" + slug
     return ""
@@ -2115,7 +2215,13 @@ def source_matches_anchors(title: str, excerpt: str, url: str, intake: dict, sni
         or company_host_hit(url, company)
         or company_slug_hit(url, company)
     )
+    parts = split_name(intake.get("name") or "")
+    # A site whose domain is the person's name is their site even when the
+    # page never repeats the company. davidmarshall.ai is the case.
+    name_site = bool(parts) and name_domain_hit(url, parts[0], parts[1]) and full_name_match(blob, parts[0], parts[1])
     link_hit = link_matches(url, urls) or domain_matches(url, urls)
+    if name_site:
+        return True
     if company or urls:
         return company_hit or link_hit
     city_hit = any(phrase_present(blob, phrase) for phrase in place_phrases(intake.get("city") or ""))
@@ -2229,6 +2335,7 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
         intake.get("city") or "",
         urls,
         intake.get("company") or "",
+        intake.get("role") or "",
     )
     if not queries:
         fail("no_queries", "No safe name-and-city query could be built.")
@@ -2301,10 +2408,14 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
     if succeeded == 0:
         save_evidence(path, rows)
         write_search_unavailable(path, client_id, actor, queries, raw_count)
-    if need_text:
+    fetch_urls = list(need_text)
+    for page in key_page_urls(sites_to_fetch(found, intake, first, last)):
+        if canon_url(page) not in {canon_url(item) for item in fetch_urls}:
+            fetch_urls.append(page)
+    if fetch_urls:
         try:
             filled = exa_post("/contents", {
-                "urls": need_text,
+                "urls": fetch_urls[: 12],
                 "text": {"maxCharacters": EXA_TEXT_CHARS},
                 "highlights": {"maxCharacters": 2000},
                 "extras": {"links": 10},
@@ -2317,12 +2428,12 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
                 if isinstance(raw, dict) and isinstance(raw.get("url"), str):
                     by_url[canon_url(raw["url"])] = raw
         for item in found:
-            if item["text"].strip():
-                continue
             raw = by_url.get(canon_url(item["url"]))
             if not raw:
                 continue
-            item["text"] = result_text(raw)
+            fetched_text = result_text(raw)
+            if fetched_text and not item["text"].strip():
+                item["text"] = fetched_text
             fetched_snippet = result_snippet(raw)
             if fetched_snippet:
                 item["snippet"] = f"{item.get('snippet') or ''} {fetched_snippet}".strip()
@@ -2331,6 +2442,24 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
                 item["corpus"] = f"{item.get('corpus') or ''} {fetched_corpus}".strip()
             if not item["title"] and isinstance(raw.get("title"), str):
                 item["title"] = raw["title"]
+        for raw in by_url.values():
+            url = raw.get("url") if isinstance(raw.get("url"), str) else ""
+            key_url = canon_url(url)
+            if not key_url or key_url in seen or not is_http_url(url) or is_instagram(url):
+                continue
+            seen.add(key_url)
+            title = raw.get("title") if isinstance(raw.get("title"), str) else ""
+            text = result_text(raw)
+            snippet = result_snippet(raw)
+            found.append({
+                "url": url,
+                "title": title,
+                "text": text,
+                "snippet": snippet,
+                "corpus": result_corpus(raw),
+                "query": "site page",
+                "target": "site_page",
+            })
     dropped: list[dict] = []
     kept: list[dict] = []
     for item in found:
@@ -2384,7 +2513,9 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
                 anchored_handles.add(handle)
             # The company site often links the person's LinkedIn instead of
             # repeating the employer on every post.
-            if company_host_hit(item["url"], intake.get("company") or "") or company_slug_hit(corpus, intake.get("company") or ""):
+            company_name = intake.get("company") or ""
+            on_name_site = name_domain_hit(item["url"], first, last)
+            if company_host_hit(item["url"], company_name) or company_slug_hit(corpus, company_name) or on_name_site:
                 anchored_handles.update(mentioned_linkedin_handles(corpus))
             continue
         pending.append(item)
