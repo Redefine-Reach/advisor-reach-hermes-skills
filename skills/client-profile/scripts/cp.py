@@ -206,8 +206,9 @@ OWN_INTAKE_REQUIRED = (
 REUSE_NAME = (
     "A later intake is a different person. Name this client to reuse that record."
 )
+SEARCH_REQUIRED = "Run search first."
 NEED_ANCHOR = (
-    "Identity confidence is Low. No source matches this city, company, role, or link. "
+    "Identity confidence is Low. No source matches this company, link, or city plus role or state. "
     "Send a profile link or company."
 )
 EXA_TOP = 3
@@ -712,6 +713,8 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
         sources = full_name_source_count(rows, candidate, first, last)
         matches = web_match_count(rows, first, last)
         allowed = allowed_identity_level(sources, matches)
+        if search_conflicts(path):
+            allowed = "low"
         claimed = brief["identity_match"]["level"]
         if LEVEL_RANK[claimed] > LEVEL_RANK[allowed]:
             brief["identity_match"]["level"] = allowed
@@ -1592,6 +1595,20 @@ def search_needs_anchor(path: Path) -> bool:
     return bool(doc and doc.get("status") == "need_anchor")
 
 
+def search_file_missing(path: Path) -> bool:
+    return not (path / "search.json").is_file()
+
+
+def require_search_file(path: Path) -> None:
+    if search_file_missing(path):
+        fail("search_required", SEARCH_REQUIRED)
+
+
+def search_conflicts(path: Path) -> bool:
+    doc = load_search(path)
+    return bool(doc and doc.get("conflict") is True)
+
+
 def names_equal(left: str, right: str) -> bool:
     return (left or "").strip().casefold() == (right or "").strip().casefold()
 
@@ -1728,19 +1745,105 @@ def link_matches(url: str, given: list[str]) -> bool:
     return False
 
 
-def source_matches_anchors(title: str, excerpt: str, url: str, intake: dict) -> bool:
-    blob = f"{title or ''} {excerpt or ''}"
-    for phrase in place_phrases(intake.get("city") or ""):
-        if phrase_present(blob, phrase):
+STATE_NAMES = {
+    "al": "alabama", "ak": "alaska", "az": "arizona", "ar": "arkansas",
+    "ca": "california", "co": "colorado", "ct": "connecticut", "de": "delaware",
+    "dc": "district of columbia", "fl": "florida", "ga": "georgia", "hi": "hawaii",
+    "id": "idaho", "il": "illinois", "in": "indiana", "ia": "iowa",
+    "ks": "kansas", "ky": "kentucky", "la": "louisiana", "me": "maine",
+    "md": "maryland", "ma": "massachusetts", "mi": "michigan", "mn": "minnesota",
+    "ms": "mississippi", "mo": "missouri", "mt": "montana", "ne": "nebraska",
+    "nv": "nevada", "nh": "new hampshire", "nj": "new jersey", "nm": "new mexico",
+    "ny": "new york", "nc": "north carolina", "nd": "north dakota", "oh": "ohio",
+    "ok": "oklahoma", "or": "oregon", "pa": "pennsylvania", "ri": "rhode island",
+    "sc": "south carolina", "sd": "south dakota", "tn": "tennessee", "tx": "texas",
+    "ut": "utah", "vt": "vermont", "va": "virginia", "wa": "washington",
+    "wv": "west virginia", "wi": "wisconsin", "wy": "wyoming",
+}
+SOCIAL_HOSTS = {
+    "linkedin.com", "x.com", "twitter.com", "facebook.com", "instagram.com",
+    "youtube.com", "tiktok.com",
+}
+
+
+def host_of(url: str) -> str:
+    host = (urlparse(url or "").hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def state_signals(city: str) -> tuple[list[str], list[str]]:
+    """Full state names, then uppercase abbreviations, taken from the city field."""
+    raw = (city or "").strip()
+    names: list[str] = []
+    abbrs: list[str] = []
+    match = re.search(r"(?:,|/|\s)([A-Za-z]{2})\s*$", raw)
+    if match:
+        abbr = match.group(1).casefold()
+        if abbr in STATE_NAMES:
+            abbrs.append(match.group(1).upper())
+            names.append(STATE_NAMES[abbr])
+    folded = raw.casefold()
+    for abbr, name in STATE_NAMES.items():
+        if phrase_present(folded, name) and name not in names:
+            names.append(name)
+            token = abbr.upper()
+            if token not in abbrs:
+                abbrs.append(token)
+    return names, abbrs
+
+
+def state_in_text(text: str, city: str) -> bool:
+    names, abbrs = state_signals(city)
+    for name in names:
+        if phrase_present(text, name):
             return True
+    for abbr in abbrs:
+        if re.search(rf"(?<!\w){re.escape(abbr)}(?!\w)", text or ""):
+            return True
+    return False
+
+
+def domain_matches(url: str, given: list[str]) -> bool:
+    host = host_of(url)
+    if not host or host in SOCIAL_HOSTS:
+        return False
+    for item in given:
+        other = host_of(item)
+        if other and other == host and other not in SOCIAL_HOSTS:
+            return True
+    return False
+
+
+def given_urls(intake: dict) -> list[str]:
+    return [item for item in (intake.get("urls") or []) if isinstance(item, str)]
+
+
+def source_matches_anchors(title: str, excerpt: str, url: str, intake: dict) -> bool:
+    """Company or a given url beats a city. City alone never identifies a person."""
+    blob = f"{title or ''} {excerpt or ''}"
     company = (intake.get("company") or "").strip()
-    if company and phrase_present(blob, company):
-        return True
     role = (intake.get("role") or "").strip()
-    if role and phrase_present(blob, role):
-        return True
-    urls = [item for item in (intake.get("urls") or []) if isinstance(item, str)]
-    return link_matches(url, urls)
+    urls = given_urls(intake)
+    company_hit = bool(company) and phrase_present(blob, company)
+    link_hit = link_matches(url, urls) or domain_matches(url, urls)
+    if company or urls:
+        return company_hit or link_hit
+    city_hit = any(phrase_present(blob, phrase) for phrase in place_phrases(intake.get("city") or ""))
+    if not city_hit:
+        return False
+    role_hit = bool(role) and phrase_present(blob, role)
+    return role_hit or state_in_text(blob, intake.get("city") or "")
+
+
+def search_count(raw: int, deduped: int, name_matched: int, anchor_kept: int) -> dict:
+    return {
+        "raw": raw,
+        "deduped": deduped,
+        "name_matched": name_matched,
+        "anchor_kept": anchor_kept,
+    }
 
 
 def excluded_people_note(count: int) -> str:
@@ -1758,6 +1861,7 @@ def write_couldnt_find(
     queries: list[dict],
     inaccessible: list[dict],
     codes: list[str],
+    counts: dict | None = None,
 ) -> None:
     stamp_search(path, {
         "status": "couldnt_find",
@@ -1768,6 +1872,8 @@ def write_couldnt_find(
         "source_count": 0,
         "sources": [],
         "profile_count": 0,
+        "conflict": False,
+        "counts": counts or search_count(0, 0, 0, 0),
     })
     audit("search", client_id, {"queries": len(queries), "sources": 0}, actor)
     missed = {
@@ -1809,6 +1915,8 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
             "query_count": 0,
             "source_count": 0,
             "sources": [],
+            "conflict": False,
+            "counts": search_count(0, 0, 0, 0),
         })
         fail("search_unavailable", SEARCH_UNAVAILABLE)
     parts = split_name(intake.get("name") or "")
@@ -1819,6 +1927,8 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
             "query_count": 0,
             "source_count": 0,
             "sources": [],
+            "conflict": False,
+            "counts": search_count(0, 0, 0, 0),
         })
         fail("couldnt_find", "couldn't find")
     first, last = parts
@@ -1826,12 +1936,14 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
     found: list[dict] = []
     seen: set[str] = set()
     need_text: list[str] = []
+    raw_count = 0
     try:
         for query in queries:
             payload = exa_post("/search", exa_search_body(query), key)
             for raw in payload.get("results") or []:
                 if not isinstance(raw, dict):
                     continue
+                raw_count += 1
                 url = raw.get("url") if isinstance(raw.get("url"), str) else ""
                 if not is_http_url(url) or dangerous_url(url) or is_instagram(url):
                     continue
@@ -1862,7 +1974,10 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
                     item["title"] = raw["title"]
     except ExaError:
         save_evidence(path, rows)
-        write_couldnt_find(path, client_id, actor, queries, inaccessible, codes)
+        write_couldnt_find(
+            path, client_id, actor, queries, inaccessible, codes,
+            search_count(raw_count, len(found), 0, 0),
+        )
     kept: list[dict] = []
     for item in found:
         blob = f"{item['title']} {item['text']}"
@@ -1881,22 +1996,29 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
             "query": item["query"],
             "target": item["target"],
         })
+    tally = search_count(raw_count, len(found), len(kept), 0)
     if not kept:
         save_evidence(path, rows)
-        write_couldnt_find(path, client_id, actor, queries, inaccessible, codes)
-    # Same-name pages that do not match city, company, role, or a given link
-    # are a different person. They are not facts and they are not cited.
+        write_couldnt_find(path, client_id, actor, queries, inaccessible, codes, tally)
+    # A city alone does not make a page this person. Pages that fail the
+    # company, url, or city-plus-role/state check are left out.
     matched: list[dict] = []
-    excluded_profiles: list[str] = []
+    excluded_markers: list[str] = []
+    excluded_pages = 0
     for item in kept:
         marker = profile_marker(item["url"])
         item["profile"] = marker
         if source_matches_anchors(item["title"], item["excerpt"], item["url"], intake):
             matched.append(item)
             continue
-        if marker and marker not in excluded_profiles:
-            excluded_profiles.append(marker)
-    note = excluded_people_note(len(excluded_profiles))
+        if marker:
+            if marker not in excluded_markers:
+                excluded_markers.append(marker)
+        else:
+            excluded_pages += 1
+    excluded_people = len(excluded_markers) + excluded_pages
+    note = excluded_people_note(excluded_people)
+    tally = search_count(raw_count, len(found), len(kept), len(matched))
     if not matched:
         save_evidence(path, rows)
         stamp_search(path, {
@@ -1908,8 +2030,10 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
             "source_count": 0,
             "sources": [],
             "profile_count": 0,
-            "excluded_people": len(excluded_profiles),
+            "conflict": False,
+            "excluded_people": excluded_people,
             "excluded_note": note,
+            "counts": tally,
         })
         audit("search", client_id, {"queries": len(queries), "sources": 0}, actor)
         missed = {
@@ -1919,7 +2043,7 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
             "message": NEED_ANCHOR,
             "query_count": len(queries),
             "source_count": 0,
-            "excluded_people": len(excluded_profiles),
+            "excluded_people": excluded_people,
         }
         if note:
             missed["excluded_note"] = note
@@ -1928,8 +2052,9 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
         if codes:
             missed["warnings"] = [warning(code) for code in codes]
         emit(missed, 1)
-    # One person per matching LinkedIn or X profile. A news or company page
-    # is copied only onto profiles that themselves match the anchors.
+    # One person per matching LinkedIn or X profile. A page with no profile
+    # joins that person only when there is a single profile. It is never
+    # copied onto every person.
     profiles: list[str] = []
     for item in matched:
         if item["profile"] and item["profile"] not in profiles:
@@ -1937,15 +2062,21 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
     used = [int(row.get("candidate") or 0) for row in rows]
     start = (max(used) + 1) if used else 1
     profile_n = {marker: start + index for index, marker in enumerate(profiles)}
+    loose = {"n": start + len(profiles), "ids": {}}
+    conflict = len(profiles) > 1
 
     def candidate_numbers(item: dict) -> list[int]:
         if item["profile"]:
             return [profile_n[item["profile"]]]
-        if len(profiles) > 1:
-            return list(profile_n.values())
-        if profiles:
+        if len(profiles) == 1:
             return [profile_n[profiles[0]]]
-        return [start]
+        if not profiles:
+            return [start]
+        url = item["url"]
+        if url not in loose["ids"]:
+            loose["ids"][url] = loose["n"]
+            loose["n"] += 1
+        return [loose["ids"][url]]
 
     sources = []
     for item in matched:
@@ -1982,8 +2113,10 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
         "source_count": len(sources),
         "sources": sources,
         "profile_count": len(profiles),
-        "excluded_people": len(excluded_profiles),
+        "conflict": conflict,
+        "excluded_people": excluded_people,
         "excluded_note": note,
+        "counts": tally,
     }
     stamp_search(path, stored)
     audit("search", client_id, {"queries": len(queries), "sources": len(sources)}, actor)
@@ -1993,7 +2126,9 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
         "query_count": len(queries),
         "source_count": len(sources),
         "sources": sources,
-        "excluded_people": len(excluded_profiles),
+        "excluded_people": excluded_people,
+        "conflict": conflict,
+        "counts": tally,
     }
     if note:
         result["excluded_note"] = note
@@ -2140,12 +2275,14 @@ def stop_identity(path: Path, status: str, message: str) -> None:
 def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
     gate(actor_of(opts), mutate=False)
     path = require_client(client_id)
+    require_search_file(path)
     intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
     rows = load_evidence(path)
     usable = [row for row in rows if row.get("identity_status") != "inaccessible"]
     public = [row for row in usable if row.get("origin") == "web"]
     parts = split_name(intake.get("name") or "")
-    # No public search results is couldnt_find. Owner notes do not count as a person.
+    # couldnt_find is only after a search ran. A skipped search is search_required.
+    # Owner notes do not count as a person.
     if not public:
         if search_needs_anchor(path):
             doc = load_search(path) or {}
@@ -2154,6 +2291,9 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
             if isinstance(note, str) and note and note not in message:
                 message = message + " " + note
             stop_identity(path, "need_anchor", message)
+        doc = load_search(path) or {}
+        if doc.get("status") == "unavailable":
+            fail("search_unavailable", doc.get("message") or SEARCH_UNAVAILABLE)
         stop_identity(path, "couldnt_find", "couldn't find")
     if not parts:
         stop_identity(path, "couldnt_find", "couldn't find")
@@ -2193,6 +2333,7 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
 def cmd_confirm(client_id: str, opts: dict[str, list[str]]) -> None:
     actor = gate(actor_of(opts), mutate=True)
     path = require_client(client_id)
+    require_search_file(path)
     none = "none" in opts
     candidate_raw = flag(opts, "candidate")
     if none and candidate_raw:
@@ -2259,6 +2400,7 @@ def cmd_confirm(client_id: str, opts: dict[str, list[str]]) -> None:
 def cmd_validate(client_id: str, brief_file: str, opts: dict[str, list[str]]) -> None:
     actor = gate(actor_of(opts), mutate=True)
     path = require_client(client_id)
+    require_search_file(path)
     refuse_unnamed_reuse(path, opts)
     source = Path(brief_file)
     if not source.is_file():
@@ -2285,6 +2427,7 @@ def cmd_validate(client_id: str, brief_file: str, opts: dict[str, list[str]]) ->
 def cmd_render(client_id: str, opts: dict[str, list[str]]) -> None:
     actor = gate(actor_of(opts), mutate=True)
     path = require_client(client_id)
+    require_search_file(path)
     refuse_unnamed_reuse(path, opts)
     brief_path = path / "brief.json"
     if not brief_path.is_file():

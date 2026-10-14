@@ -263,6 +263,22 @@ function citeConfirmedSearch(ctx, id, brief) {
     }));
 }
 
+function markSearchRan(ctx, id) {
+  const intake = JSON.parse(readFileSync(join(ctx.data, id, "intake.json"), "utf8"));
+  writeFileSync(
+    join(ctx.data, id, "search.json"),
+    JSON.stringify({
+      status: "done",
+      intake_name: intake.name,
+      query_count: 1,
+      source_count: 1,
+      sources: [],
+      conflict: false,
+      counts: { raw: 1, deduped: 1, name_matched: 1, anchor_kept: 1 },
+    }) + "\n",
+  );
+}
+
 function confirm(ctx, id, n) {
   const res = run(["identity", "confirm", id, "--actor", "owner", "--candidate", String(n)], ctx);
   assert.equal(res.payload && res.payload.ok, true, res.stdout + res.stderr);
@@ -1526,16 +1542,16 @@ test("end-to-end fixture covers intake, identity, cited brief, pdf, summary, pur
   assert.equal(stored.city, input.city);
   assert.equal(stored.type, input.type);
   const early = run(["identity", "candidates", id], ctx);
-  assert.equal(early.payload.ok, true, early.stdout);
-  assert.equal(early.payload.status, "couldnt_find");
-  assert.equal(early.payload.message, "couldn't find");
-  assert.deepEqual(early.payload.candidates, []);
-  assert.notDeepEqual(early.payload, { ok: true, candidates: [] });
+  assert.equal(early.payload.ok, false, early.stdout);
+  assert.equal(early.payload.error, "search_required");
+  assert.equal(early.payload.message, "Run search first.");
+  assert.equal(existsSync(join(ctx.data, id, "search.json")), false);
   const unconfirmed = run(
     ["identity", "confirm", id, "--actor", "owner", "--candidate", String(input.candidate)],
     ctx,
   );
-  assert.equal(unconfirmed.payload.error, "unknown_candidate");
+  assert.equal(unconfirmed.payload.error, "search_required");
+  assert.equal(unconfirmed.payload.message, "Run search first.");
   const evidenceId = addEvidence(ctx, id, { ...input.evidence, candidate: input.candidate });
   recordOwnSearch(ctx, id, [{ ...input.evidence, candidate: input.candidate }], [evidenceId]);
   const candidates = run(["identity", "candidates", id], ctx);
@@ -1631,6 +1647,7 @@ test("owner paste after NONE drops web candidates and becomes candidate 1", () =
   const id = intake.client_id;
   const web = run(["evidence", "add", id, "--url", "https://example.org/stranger", "--title", "Avery Stranger", "--excerpt", "A different person with the same first name in town.", "--origin", "web", "--query", "q", "--candidate", "1"], ctx).payload;
   assert.equal(web.ok, true, JSON.stringify(web));
+  markSearchRan(ctx, id);
   assert.equal(run(["identity", "confirm", id, "--none"], ctx).payload.status, "none");
   const manual = run(["evidence", "add", id, "--url", "https://example.com/avery-example-bio", "--title", "Bio", "--excerpt", "Project engineer who likes the full set of numbers.", "--origin", "manual", "--query", "owner paste", "--candidate", "4"], ctx).payload;
   assert.equal(manual.ok, true, JSON.stringify(manual));
@@ -1663,6 +1680,7 @@ test("NONE then pasted notes stay candidate 1 and do not render a brief", () => 
     query: '"Avery Example" "Flagstaff"',
     candidate: 2,
   });
+  markSearchRan(ctx, id);
   const none = run(["identity", "confirm", id, "--none"], ctx);
   assert.equal(none.payload.status, "none");
   const manual = run(
@@ -1739,6 +1757,7 @@ test("a made-up Avery in Flagstaff returns couldn't find", () => {
     query: '"Avery Quindle" "Flagstaff" LinkedIn',
     candidate: 1,
   });
+  markSearchRan(ctx, id);
   const listed = run(["identity", "candidates", id], ctx);
   assert.equal(listed.payload.ok, true, listed.stdout);
   assert.equal(listed.payload.status, "couldnt_find");
@@ -1765,6 +1784,7 @@ test("Avery with no last name in Flagstaff returns couldn't find", () => {
     query: '"Avery" "Flagstaff" news',
     candidate: 1,
   });
+  markSearchRan(ctx, id);
   const listed = run(["identity", "candidates", id], ctx);
   assert.equal(listed.payload.status, "couldnt_find");
   assert.equal(listed.payload.message, "couldn't find");
@@ -1788,6 +1808,7 @@ test("a common name asks for a profile link instead of guessing", () => {
       via: "exa",
     })}\n`,
   );
+  markSearchRan(ctx, id);
   const listed = run(["identity", "candidates", id], ctx);
   assert.equal(listed.payload.ok, true, listed.stdout);
   assert.equal(listed.payload.status, "need_profile_link");
@@ -1811,6 +1832,7 @@ test("an advisor profile link unblocks a common name", () => {
   });
   const intake = JSON.parse(readFileSync(join(ctx.data, id, "intake.json"), "utf8"));
   assert.ok(intake.urls.includes("https://www.linkedin.com/in/john-smith-example"));
+  markSearchRan(ctx, id);
   const listed = run(["identity", "candidates", id], ctx);
   assert.equal(listed.payload.status, "matches", JSON.stringify(listed.payload));
   assert.equal(listed.payload.candidates.length, 1);
@@ -1837,6 +1859,7 @@ test("a leading title is not the given name", () => {
     query: "q",
     candidate: 2,
   });
+  markSearchRan(ctx, id);
   const listed = run(["identity", "candidates", id], ctx);
   assert.equal(listed.payload.candidates.length, 1, JSON.stringify(listed.payload));
   assert.equal(listed.payload.candidates[0].n, 1);
@@ -1987,7 +2010,7 @@ test("search runs every Exa query, fetches pages, dedupes, and cites each source
           results: [{
             url: "https://example.com/red-rock",
             title: "Dana Whitfield at Red Rock",
-            text: "Dana Whitfield leads the Scottsdale desk at Red Rock Realty.",
+            text: "Dana Whitfield, a broker, leads the Scottsdale desk at Red Rock Realty.",
           }],
         };
       } else if (domains.includes("linkedin.com")) {
@@ -2005,14 +2028,14 @@ test("search runs every Exa query, fetches pages, dedupes, and cites each source
       } else if (body.category === "news") {
         payload = {
           results: [
-            { url: "https://news.example.com/dana", title: "Dana Whitfield interview", text: "Dana Whitfield spoke in Scottsdale." },
-            { url: "https://example.com/red-rock/", title: "Red Rock again", text: "Dana Whitfield at Red Rock Realty in Scottsdale." },
+            { url: "https://news.example.com/dana", title: "Dana Whitfield interview", text: "Dana Whitfield, a broker, spoke in Scottsdale." },
+            { url: "https://example.com/red-rock/", title: "Red Rock again", text: "Dana Whitfield, a broker, at Red Rock Realty in Scottsdale." },
           ],
         };
       } else if (query.includes("podcast")) {
         payload = { results: [] };
       } else {
-        payload = { results: [{ url: "https://news.example.com/dana/", title: "Dana Whitfield interview", text: "Dana Whitfield spoke in Scottsdale." }] };
+        payload = { results: [{ url: "https://news.example.com/dana/", title: "Dana Whitfield interview", text: "Dana Whitfield, a broker, spoke in Scottsdale." }] };
       }
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(payload));
@@ -2021,7 +2044,10 @@ test("search runs every Exa query, fetches pages, dedupes, and cites each source
   const port = await listen(server);
   try {
     const ctx = world();
-    const intake = run(["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"], ctx);
+    const intake = run(
+      ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer", "--role", "broker"],
+      ctx,
+    );
     const id = intake.payload.client_id;
     const searched = await runAsync(["search", id, "--actor", "owner"], ctx, {
       EXA_API_KEY: "exa-test-key",
@@ -2090,7 +2116,7 @@ test("a missing Exa key says search is unavailable and refuses a one-source brie
   assert.equal(existsSync(join(ctx.data, made.id, "brief.json")), false);
 });
 
-test("search keeps news with each profile and does not reuse a manual candidate", async () => {
+test("search splits two profiles, keeps news off both, and rates a conflict Low", async () => {
   const server = createServer((req, res) => {
     const chunks = [];
     req.on("data", (chunk) => chunks.push(chunk));
@@ -2103,8 +2129,8 @@ test("search keeps news with each profile and does not reuse a manual candidate"
       } else if (domains.includes("linkedin.com")) {
         payload = {
           results: [
-            { url: "https://www.linkedin.com/in/dana-one", title: "Dana Whitfield", text: "Dana Whitfield, Scottsdale." },
-            { url: "https://www.linkedin.com/in/dana-two", title: "Dana Whitfield", text: "Dana Whitfield, Scottsdale." },
+            { url: "https://www.linkedin.com/in/dana-one", title: "Dana Whitfield", text: "Dana Whitfield is a broker in Scottsdale." },
+            { url: "https://www.linkedin.com/in/dana-two", title: "Dana Whitfield", text: "Dana Whitfield is a broker in Scottsdale." },
           ],
         };
       } else if (body.category === "news") {
@@ -2112,7 +2138,7 @@ test("search keeps news with each profile and does not reuse a manual candidate"
           results: [{
             url: "https://news.example.com/dana-whitfield",
             title: "Dana Whitfield interview",
-            text: "Dana Whitfield spoke in Scottsdale.",
+            text: "Dana Whitfield, a broker, spoke in Scottsdale.",
           }],
         };
       }
@@ -2123,7 +2149,10 @@ test("search keeps news with each profile and does not reuse a manual candidate"
   const port = await listen(server);
   try {
     const ctx = world();
-    const id = run(["intake", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"], ctx).payload.client_id;
+    const id = run(
+      ["intake", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer", "--role", "broker"],
+      ctx,
+    ).payload.client_id;
     addEvidence(ctx, id, {
       url: "https://example.com/owner-notes",
       title: "Owner notes",
@@ -2137,27 +2166,29 @@ test("search keeps news with each profile and does not reuse a manual candidate"
       EXA_API_BASE: `http://127.0.0.1:${port}`,
     });
     assert.equal(searched.payload.ok, true, searched.stdout + searched.stderr);
-    const exaCandidates = [...new Set(searched.payload.sources.map((item) => item.candidate))];
-    assert.deepEqual(exaCandidates, [2, 3]);
+    assert.equal(searched.payload.conflict, true);
+    const profiles = searched.payload.sources.filter((item) => item.url.includes("linkedin.com"));
+    assert.equal(new Set(profiles.map((item) => item.candidate)).size, 2);
     const news = searched.payload.sources.filter((item) => item.url.includes("news.example.com"));
-    assert.deepEqual(news.map((item) => item.candidate).sort(), [2, 3]);
+    assert.equal(news.length, 1);
+    assert.equal(profiles.some((item) => item.candidate === news[0].candidate), false);
+    const stored = JSON.parse(readFileSync(join(ctx.data, id, "search.json"), "utf8"));
+    assert.equal(stored.conflict, true);
     const listed = run(["identity", "candidates", id], ctx);
-    assert.deepEqual(listed.payload.candidates.map((item) => item.n), [1, 2, 3]);
-    const picked = listed.payload.candidates.find((item) => item.n === 2);
-    assert.ok(picked.evidence_ids.length >= 2, JSON.stringify(picked));
-    confirm(ctx, id, 2);
-    const newsId = news.find((item) => item.candidate === 2).evidence_id;
-    const profileId = searched.payload.sources.find((item) => item.candidate === 2 && item.url.includes("dana-one")).evidence_id;
+    assert.ok(listed.payload.candidates.length >= 3, JSON.stringify(listed.payload));
+    const profileId = profiles[0].evidence_id;
+    confirm(ctx, id, profiles[0].candidate);
     const brief = loadGood([profileId], (next) => {
-      next.identity_match.level = "medium";
-      next.identity_match.basis = "One public profile uses this full name.";
+      next.identity_match.level = "high";
+      next.identity_match.basis = "Two public profiles use this full name in this city.";
       next.appendix.sources = [
-        { evidence_id: profileId, url: "https://www.linkedin.com/in/dana-one", title: "Dana Whitfield" },
-        { evidence_id: newsId, url: "https://news.example.com/dana-whitfield", title: "Dana Whitfield interview" },
+        { evidence_id: profileId, url: profiles[0].url, title: "Dana Whitfield" },
       ];
     });
     const checked = validate(ctx, id, brief);
     assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
+    const saved = JSON.parse(readFileSync(join(ctx.data, id, "brief.json"), "utf8"));
+    assert.equal(saved.identity_match.level, "low");
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -2200,7 +2231,7 @@ test("Exa base prefers EXA_API_BASE, then EXA_BASE_URL, and joins /search once",
     hits.length = 0;
     const ctx = world();
     const id = run(
-      ["intake", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"],
+      ["intake", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer", "--role", "broker"],
       ctx,
     ).payload.client_id;
     const searched = await runAsync(["search", id, "--actor", "owner"], ctx, {
@@ -2371,13 +2402,13 @@ function sameNameServer(includeMatch) {
         results = [{
           url: "https://news.example.com/david-marshall",
           title: "David Marshall interview",
-          text: "David Marshall spoke in Phoenix.",
+          text: "David Marshall spoke in Phoenix about his work at Compass.",
         }];
       } else if (includeMatch && query.includes("podcast")) {
         results = [{
           url: "https://podcast.example.com/david-marshall",
           title: "David Marshall on the show",
-          text: "David Marshall is a broker.",
+          text: "David Marshall is a broker at Compass.",
         }];
       }
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -2812,6 +2843,33 @@ test("rendering an older client after a different name is refused unless that cl
     query: '"Riley Example" "Austin" company site',
     candidate: 1,
   });
+  const skippedConfirm = run(["identity", "confirm", rileyId, "--actor", "owner", "--candidate", "1"], ctx);
+  assert.equal(skippedConfirm.payload.ok, false, skippedConfirm.stdout);
+  assert.equal(skippedConfirm.payload.error, "search_required");
+  assert.equal(skippedConfirm.payload.message, "Run search first.");
+  const skippedValidate = validate(ctx, rileyId, loadGood([noteId]));
+  assert.equal(skippedValidate.payload.error, "search_required");
+  const skippedRender = run(["brief", "render", rileyId, "--actor", "owner"], ctx);
+  assert.equal(skippedRender.payload.error, "search_required");
+  assert.equal(existsSync(join(ctx.data, rileyId, "search.json")), false);
+  assert.equal(existsSync(join(ctx.data, rileyId, "brief.json")), false);
+  writeFileSync(
+    join(ctx.data, rileyId, "search.json"),
+    JSON.stringify({
+      status: "done",
+      intake_name: "Someone Else",
+      query_count: 1,
+      source_count: 1,
+      sources: [{
+        evidence_id: noteId,
+        url: "https://example.com/riley-example",
+        title: "Riley Example, advisor",
+        candidate: 1,
+      }],
+      conflict: false,
+      counts: { raw: 1, deduped: 1, name_matched: 1, anchor_kept: 1 },
+    }) + "\n",
+  );
   confirm(ctx, rileyId, 1);
   const stolen = validate(ctx, rileyId, loadGood([noteId]));
   assert.equal(stolen.payload.ok, false, JSON.stringify(stolen.payload));
@@ -2835,19 +2893,18 @@ test("identity with no search results is couldnt_find, not an empty success", ()
     ctx,
   ).payload.client_id;
   const early = run(["identity", "candidates", id], ctx).payload;
-  assert.equal(early.ok, true);
-  assert.equal(early.status, "couldnt_find");
-  assert.equal(early.message, "couldn't find");
-  assert.deepEqual(early.candidates, []);
-  assert.notDeepEqual(early, { ok: true, candidates: [] });
+  assert.equal(early.ok, false);
+  assert.equal(early.error, "search_required");
+  assert.equal(early.message, "Run search first.");
+  assert.equal(existsSync(join(ctx.data, id, "search.json")), false);
   const searched = run(["search", id, "--actor", "owner"], ctx).payload;
   assert.equal(searched.ok, false);
   assert.equal(searched.error, "search_unavailable");
   const after = run(["identity", "candidates", id], ctx).payload;
-  assert.equal(after.status, "couldnt_find");
-  assert.equal(after.message, "couldn't find");
-  assert.deepEqual(after.candidates, []);
-  assert.notDeepEqual(after, { ok: true, candidates: [] });
+  assert.equal(after.ok, false);
+  assert.equal(after.error, "search_unavailable");
+  assert.notEqual(after.error, "couldnt_find");
+  assert.doesNotMatch(after.message || "", /couldn't find/);
 });
 
 test("a refused search does not render a brief from owner notes", () => {
@@ -3033,6 +3090,121 @@ test("intake company and urls feed the search queries and the disambiguation anc
     const evidence = readFileSync(join(ctx.data, id, "evidence.jsonl"), "utf8");
     assert.equal(evidence.includes(decoy), false);
     assert.equal(evidence.includes("AdvisorReach"), true);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("a skipped search is search_required, not couldn't find", () => {
+  assert.match(skill, /error: "search_required"/);
+  assert.match(skill, /Run search first/);
+  assert.match(script, /SEARCH_REQUIRED = "Run search first."/);
+  const ctx = world();
+  const id = run(
+    ["intake", "--actor", "owner", "--name", "Riley Example", "--city", "Austin", "--type", "buyer"],
+    ctx,
+  ).payload.client_id;
+  const expectRequired = (res) => {
+    assert.equal(res.payload.ok, false, res.stdout + res.stderr);
+    assert.equal(res.payload.error, "search_required");
+    assert.equal(res.payload.message, "Run search first.");
+    assert.notEqual(res.payload.status, "couldnt_find");
+    assert.doesNotMatch(res.payload.message, /couldn't find/);
+  };
+  expectRequired(run(["identity", "candidates", id], ctx));
+  expectRequired(run(["identity", "confirm", id, "--actor", "owner", "--candidate", "1"], ctx));
+  expectRequired(validate(ctx, id, loadGood(["ev_00000000"])));
+  expectRequired(run(["brief", "render", id, "--actor", "owner"], ctx));
+  assert.equal(existsSync(join(ctx.data, id, "search.json")), false);
+  assert.equal(existsSync(join(ctx.data, id, "brief.json")), false);
+  assert.equal(existsSync(join(ctx.data, id, "brief.html")), false);
+  assert.equal(existsSync(join(ctx.data, id, "brief.pdf")), false);
+});
+
+test("a company anchor drops Phoenix city-only namesakes and keeps the company source", async () => {
+  assert.match(script, /counts\.raw|\"raw\"/);
+  const recorder = "https://www.axios.com/local/phoenix/david-marshall-recorder";
+  const legislator = "https://www.azleg.gov/members/david-marshall";
+  const companyPage = "https://example.com/advisorreach/david-marshall";
+  const pages = [
+    {
+      url: recorder,
+      title: "David Marshall, Navajo County recorder",
+      text: "David Marshall is the Navajo County recorder in Phoenix.",
+    },
+    {
+      url: legislator,
+      title: "David Marshall, Arizona legislator",
+      text: "David Marshall is an Arizona legislator from Phoenix.",
+    },
+    {
+      url: companyPage,
+      title: "David Marshall at AdvisorReach",
+      text: "David Marshall leads AdvisorReach in Phoenix.",
+    },
+  ];
+  const server = createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      const results = req.url === "/contents" ? [] : pages;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results }));
+    });
+  });
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const id = run(
+      [
+        "intake",
+        "--actor",
+        "owner",
+        "--name",
+        "David Marshall",
+        "--city",
+        "Phoenix",
+        "--type",
+        "buyer",
+        "--company",
+        "AdvisorReach",
+      ],
+      ctx,
+    ).payload.client_id;
+    const searched = await runAsync(["search", id, "--actor", "owner"], ctx, {
+      EXA_API_KEY: "exa-test-key",
+      EXA_API_BASE: `http://127.0.0.1:${port}`,
+    });
+    assert.equal(searched.payload.ok, true, searched.stdout + searched.stderr);
+    const urls = searched.payload.sources.map((item) => item.url);
+    assert.deepEqual(urls, [companyPage]);
+    assert.equal(searched.stdout.includes(recorder), false);
+    assert.equal(searched.stdout.includes(legislator), false);
+    assert.equal(searched.payload.conflict, false);
+    assert.equal(searched.payload.excluded_people, 2);
+    assert.deepEqual(searched.payload.counts, {
+      raw: 18,
+      deduped: 3,
+      name_matched: 3,
+      anchor_kept: 1,
+    });
+    const stored = JSON.parse(readFileSync(join(ctx.data, id, "search.json"), "utf8"));
+    assert.deepEqual(stored.counts, searched.payload.counts);
+    assert.equal(stored.conflict, false);
+    const evidence = readFileSync(join(ctx.data, id, "evidence.jsonl"), "utf8");
+    assert.equal(evidence.includes(recorder), false);
+    assert.equal(evidence.includes(legislator), false);
+    assert.equal(evidence.includes(companyPage), true);
+    assert.equal(evidence.includes("AdvisorReach"), true);
+    const listed = run(["identity", "candidates", id], ctx);
+    assert.equal(listed.payload.ok, true, listed.stdout);
+    assert.equal(listed.payload.candidates.length, 1);
+    const only = listed.payload.candidates[0];
+    assert.match(only.label, /AdvisorReach/);
+    assert.doesNotMatch(only.label, /recorder|legislator/i);
+    assert.equal(new Set(searched.payload.sources.map((item) => item.candidate)).size, 1);
+    assert.doesNotMatch(searched.stdout, /\bconfirmed\b/i);
+    assert.doesNotMatch(skill, /Reply YES/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
