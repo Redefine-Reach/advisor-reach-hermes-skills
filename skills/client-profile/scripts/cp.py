@@ -217,7 +217,7 @@ REUSE_NAME = (
 )
 SEARCH_REQUIRED = "Run search first."
 NEED_ANCHOR = (
-    "Identity confidence is Low. No source matches this company, link, or city plus role or state. "
+    "Identity confidence is Low. No source matches this company, name handle, or email domain. "
     "Send a profile link or company."
 )
 EXA_TOP = 3
@@ -1484,13 +1484,17 @@ def build_queries(
             "q": f'"{quoted_name}" "{quoted_work}"',
             "target": "name_work",
         })
-    if clean_name and (work or clean_city):
-        if work:
-            profile_q = f'"{quoted_name}" "{quoted_work}" site:linkedin.com/in'
-        else:
-            profile_q = f'"{quoted_name}" "{quoted_city}" site:linkedin.com/in'
+    # Name+company and name+city are separate /in/ queries. One query that
+    # also asks for the company was returning posts and missing /in/<handle>.
+    if clean_name and work:
         queries.append({
-            "q": profile_q,
+            "q": f'"{quoted_name}" "{quoted_work}" site:linkedin.com/in',
+            "target": "linkedin_profile",
+            "include_domains": ["linkedin.com"],
+        })
+    if clean_name and clean_city:
+        queries.append({
+            "q": f'"{quoted_name}" "{quoted_city}" site:linkedin.com/in',
             "target": "linkedin_profile",
             "include_domains": ["linkedin.com"],
         })
@@ -2214,11 +2218,201 @@ def linkedin_handle(url: str) -> str:
     return handle
 
 
-def source_matches_anchors(title: str, excerpt: str, url: str, intake: dict, snippet: str = "") -> bool:
-    """Company name, highlight, domain, or a given url. City alone is not a person."""
-    blob = f"{title or ''} {excerpt or ''} {snippet or ''}"
+def url_name_handle(url: str, first: str, last: str) -> bool:
+    """Exact personal-domain stem, or a short LinkedIn handle such as dkmarshall.
+
+    david-marshall-284923126, david-a-marshall, and davidmarshall14 are not handles.
+    """
+    if name_domain_hit(url, first, last):
+        return True
+    handle = linkedin_handle(url)
+    if not handle or re.search(r"\d", handle):
+        return False
+    first_s = re.sub(r"[^a-z0-9]", "", (first or "").casefold())
+    last_s = re.sub(r"[^a-z0-9]", "", (last or "").casefold())
+    if not first_s or len(last_s) < 3:
+        return False
+    compact = re.sub(r"[^a-z0-9]", "", handle.casefold())
+    if compact == first_s + last_s:
+        return True
+    return re.fullmatch(rf"{re.escape(first_s[0])}[a-z]{{0,2}}{re.escape(last_s)}", compact) is not None
+
+
+def email_domains(text: str) -> list[str]:
+    found: list[str] = []
+    for match in re.finditer(
+        r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})",
+        text or "",
+    ):
+        host = match.group(1).casefold().strip(".")
+        if host.startswith("www."):
+            host = host[4:]
+        if host and host not in found:
+            found.append(host)
+    return found
+
+
+def email_domain_hit(text: str, first: str, last: str) -> bool:
+    """An email on the personal-name domain, such as a mailbox at firstlast.tld."""
+    slug = person_name_slug(first, last)
+    if len(slug) < 6:
+        return False
+    for host in email_domains(text):
+        labels = [label for label in host.split(".") if label not in {"www", "com", "ai", "net", "org", "io", "co"}]
+        if any(label == slug for label in labels):
+            return True
+    return False
+
+
+def personal_hosts(text: str, url: str, first: str, last: str) -> set[str]:
+    hosts: set[str] = set()
+    if name_domain_hit(url, first, last):
+        host = host_of(url)
+        if host:
+            hosts.add(host)
+    for host in email_domains(text):
+        if email_domain_hit("user@" + host, first, last):
+            hosts.add(host)
+    return hosts
+
+
+_CREDENTIAL = re.compile(r"\b(?:CFP|CPA|CFA|CLU|ChFC|Esq|DDS)\b\.?", re.IGNORECASE)
+
+
+def credential_hit(text: str) -> bool:
+    return _CREDENTIAL.search(text or "") is not None
+
+
+def handle_middle_initial(handle: str, first: str, last: str) -> str:
+    """dkmarshall implies middle initial k. davidmarshall and dmarshall do not."""
+    compact = re.sub(r"[^a-z0-9]", "", (handle or "").casefold())
+    first_s = re.sub(r"[^a-z0-9]", "", (first or "").casefold())
+    last_s = re.sub(r"[^a-z0-9]", "", (last or "").casefold())
+    if not compact or not first_s or len(last_s) < 3:
+        return ""
+    if compact in {first_s + last_s, first_s[0] + last_s}:
+        return ""
+    match = re.fullmatch(rf"{re.escape(first_s[0])}([a-z]{{1,3}}){re.escape(last_s)}", compact)
+    if not match:
+        return ""
+    return match.group(1)[0]
+
+
+def middle_initials(text: str, first: str, last: str) -> set[str]:
+    if not first or not last:
+        return set()
+    found: set[str] = set()
+    first_re = re.escape(first)
+    last_re = re.escape(last)
+    for match in re.finditer(rf"\b{first_re}\s+([A-Z])\.\s+{last_re}\b", text or ""):
+        found.add(match.group(1).casefold())
+    for match in re.finditer(rf"\b{first_re}\s+([A-Z][a-z]{{2,}})\s+{last_re}\b", text or ""):
+        word = match.group(1)
+        if word.casefold() in {"the", "and", "for", "from"}:
+            continue
+        found.add(word[0].casefold())
+    return found
+
+
+def middle_contradiction(text: str, first: str, last: str, known: set[str]) -> bool:
+    if not known:
+        return False
+    found = middle_initials(text, first, last)
+    if not found:
+        return False
+    return found.isdisjoint(known)
+
+
+_OTHER_PLACE_SKIP = set(STATE_NAMES.values()) | {
+    "united", "states", "united states", "county", "america", "the", "public",
+}
+
+
+def other_city(text: str, city: str) -> bool:
+    """The page names a place and does not name the intake city."""
+    if any(phrase_present(text, phrase) for phrase in place_phrases(city)):
+        return False
+    found = False
+    for match in re.finditer(
+        r"\b(?:in|from|based in|located in)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)",
+        text or "",
+    ):
+        place = match.group(1).strip().casefold()
+        if place in _OTHER_PLACE_SKIP:
+            continue
+        if any(place == phrase.casefold() for phrase in place_phrases(city)):
+            continue
+        found = True
+    return found
+
+
+def employer_aligned(blob: str, url: str, company: str) -> bool:
+    if not company:
+        return False
+    return bool(
+        phrase_present(blob, company)
+        or company_slug_hit(blob, company)
+        or company_spaced_hit(blob, company)
+        or company_host_hit(url, company)
+        or company_slug_hit(url, company)
+    )
+
+
+def other_employer(blob: str, url: str, company: str) -> bool:
+    """The page names an organization and it is not the intake company."""
+    if not company or employer_aligned(blob, url, company):
+        return False
+    for match in re.finditer(
+        r"\b(?:at|for)\s+([A-Za-z][A-Za-z0-9&.'’-]*(?:\s+[A-Z][A-Za-z0-9&.'’-]*){0,3})",
+        blob or "",
+    ):
+        org = match.group(1).strip(" .")
+        if len(org) < 2 or org.casefold() in {"the", "a", "an", "his", "her", "their"}:
+            continue
+        if phrase_present(org, company) or company_slug(org) == company_slug(company):
+            continue
+        return True
+    return False
+
+
+def identity_contradiction(
+    blob: str,
+    url: str,
+    intake: dict,
+    known_middle: set[str] | None = None,
+) -> bool:
+    """Different city plus a different employer or credential, or a conflicting middle name."""
+    parts = split_name(intake.get("name") or "")
+    if parts and middle_contradiction(blob, parts[0], parts[1], known_middle or set()):
+        return True
+    city = intake.get("city") or ""
+    if not city or not other_city(blob, city):
+        return False
     company = (intake.get("company") or "").strip()
-    role = (intake.get("role") or "").strip()
+    if company and other_employer(blob, url, company):
+        return True
+    return credential_hit(blob)
+
+
+def page_link_canons(text: str) -> set[str]:
+    found: set[str] = set()
+    for link in re.findall(r"https?://[^\s\"'<>)\]]+", text or ""):
+        canon = canon_url(link.rstrip(".,;"))
+        if canon:
+            found.add(canon)
+    return found
+
+
+def source_matches_anchors(title: str, excerpt: str, url: str, intake: dict, snippet: str = "") -> bool:
+    """Full name plus a strong signal. The city supports a signal. It does not keep a page alone."""
+    blob = f"{title or ''} {excerpt or ''} {snippet or ''}"
+    parts = split_name(intake.get("name") or "")
+    if not parts or not full_name_match(blob, parts[0], parts[1]):
+        return False
+    if identity_contradiction(blob, url, intake):
+        return False
+    first, last = parts
+    company = (intake.get("company") or "").strip()
     urls = given_urls(intake)
     company_hit = bool(company) and (
         phrase_present(blob, company)
@@ -2227,24 +2421,13 @@ def source_matches_anchors(title: str, excerpt: str, url: str, intake: dict, sni
         or company_host_hit(url, company)
         or company_slug_hit(url, company)
     )
-    parts = split_name(intake.get("name") or "")
     link_hit = link_matches(url, urls) or domain_matches(url, urls)
+    handle_hit = url_name_handle(url, first, last)
+    mail_hit = email_domain_hit(blob, first, last)
+    role = (intake.get("role") or "").strip()
     city_hit = any(phrase_present(blob, phrase) for phrase in place_phrases(intake.get("city") or ""))
-    role_hit = bool(role) and phrase_present(blob, role)
-    name_site_domain = bool(parts) and name_domain_hit(url, parts[0], parts[1])
-    if name_site_domain and full_name_match(blob, parts[0], parts[1]):
-        secondary = (
-            company_hit
-            or link_hit
-            or (city_hit and (role_hit or state_in_text(blob, intake.get("city") or "")))
-        )
-        if secondary:
-            return True
-    if company or urls:
-        return company_hit or link_hit
-    if not city_hit:
-        return False
-    return role_hit or state_in_text(blob, intake.get("city") or "")
+    role_hit = bool(role) and phrase_present(blob, role) and city_hit
+    return bool(company_hit or link_hit or handle_hit or mail_hit or role_hit)
 
 
 def search_count(raw: int, deduped: int, name_matched: int, anchor_kept: int) -> dict:
@@ -2507,43 +2690,80 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
     if not kept:
         save_evidence(path, rows)
         write_couldnt_find(path, client_id, actor, queries, inaccessible, codes, tally, dropped)
-    # A city alone does not make a page this person. Pages that fail the
-    # company, url, or city-plus-role/state check are left out.
+    # Full name plus a strong signal: company or company domain, a name
+    # handle, an email on the personal domain, or a link to or from a page
+    # already kept. The city supports that signal. It does not keep a page
+    # alone. Drop a clear contradiction, or a page with no strong signal.
     matched: list[dict] = []
     excluded_markers: list[str] = []
     excluded_pages = 0
-    pending: list[dict] = []
-    anchored_handles: set[str] = set()
-    for item in kept:
-        marker = profile_marker(item["url"])
-        item["profile"] = marker
-        corpus = item.get("corpus") or ""
-        if source_matches_anchors(
-            item["title"],
-            corpus or item.get("text") or item["excerpt"],
-            item["url"],
-            intake,
-            item.get("snippet") or "",
-        ):
-            matched.append(item)
-            handle = linkedin_handle(item["url"])
-            if handle:
-                anchored_handles.add(handle)
-            # The company site often links the person's LinkedIn instead of
-            # repeating the employer on every post.
-            company_name = intake.get("company") or ""
-            on_name_site = name_domain_hit(item["url"], first, last)
-            if company_host_hit(item["url"], company_name) or company_slug_hit(corpus, company_name) or on_name_site:
-                anchored_handles.update(mentioned_linkedin_handles(corpus))
-            continue
-        pending.append(item)
-    # A company-anchored /in/dkmarshall page keeps that handle's other posts, and the reverse.
+    accepted_canons = {canon_url(url) for url in given_urls(intake) if canon_url(url)}
+    accepted_handles = {linkedin_handle(url) for url in given_urls(intake) if linkedin_handle(url)}
+    accepted_links: set[str] = set(accepted_canons)
+    accepted_hosts: set[str] = set()
+    for url in given_urls(intake):
+        accepted_hosts.update(personal_hosts("", url, first, last))
+    pending = list(kept)
     for item in pending:
-        handle = linkedin_handle(item["url"])
-        if handle and handle in anchored_handles:
+        item["profile"] = profile_marker(item["url"])
+
+    def page_blob(item: dict) -> str:
+        corpus = item.get("corpus") or ""
+        return f"{item['title']} {corpus} {item.get('text') or ''} {item.get('snippet') or ''}"
+
+    while pending:
+        still: list[dict] = []
+        added = False
+        for item in pending:
+            blob = page_blob(item)
+            url = item["url"]
+            if identity_contradiction(blob, url, intake):
+                still.append(item)
+                continue
+            handle = linkedin_handle(url)
+            linked = page_link_canons(blob)
+            host = host_of(url)
+            anchored = (
+                source_matches_anchors(item["title"], blob, url, intake, item.get("snippet") or "")
+                or canon_url(url) in accepted_links
+                or bool(linked & accepted_canons)
+                or bool(handle and handle in accepted_handles)
+                or bool(host and host in accepted_hosts)
+            )
+            if not anchored:
+                still.append(item)
+                continue
             matched.append(item)
-            continue
-        dropped.append({"url": item["url"], "reason": "namesake"})
+            added = True
+            canon = canon_url(url)
+            if canon:
+                accepted_canons.add(canon)
+            accepted_links.update(linked)
+            accepted_links.add(canon)
+            if handle:
+                accepted_handles.add(handle)
+            accepted_handles.update(mentioned_linkedin_handles(blob))
+            accepted_hosts.update(personal_hosts(blob, url, first, last))
+        if not added:
+            break
+        pending = still
+    known_middle: set[str] = set()
+    for item in matched:
+        mid = handle_middle_initial(linkedin_handle(item["url"]), first, last)
+        if mid:
+            known_middle.add(mid)
+    if known_middle:
+        staying: list[dict] = []
+        for item in matched:
+            if middle_contradiction(page_blob(item), first, last, known_middle):
+                pending.append(item)
+            else:
+                staying.append(item)
+        matched = staying
+    for item in pending:
+        blob = page_blob(item)
+        reason = "contradiction" if identity_contradiction(blob, item["url"], intake, known_middle) else "namesake"
+        dropped.append({"url": item["url"], "reason": reason})
         marker = item.get("profile") or ""
         if marker:
             if marker not in excluded_markers:
