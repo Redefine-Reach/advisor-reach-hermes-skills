@@ -48,7 +48,8 @@ from intake (use `new` for intake). Each call returns the same JSON the cp.py co
 | Step | render_file call |
 |---|---|
 | Intake | `op: intake`, `slug: new`, `cp: {name, city, type, appt_at?, urls?}` |
-| Queries | `op: queries` |
+| Queries | `op: queries` lists the searches. It does not run them. |
+| Search | `op: search` runs every query through Exa, fetches the top pages, dedupes them, and stores evidence |
 | Evidence | `op: evidence_add`, `cp: {url, title, excerpt, origin: web|manual, query?, candidate}` |
 | Candidates | `op: identity_candidates` |
 | Confirm | `op: identity_confirm`, `cp: {candidate: N}` or `cp: {none: true}` |
@@ -68,11 +69,12 @@ Run, in order, with `python3 /opt/data/skills/client-profile/scripts/cp.py`. Eve
 
 1. **Intake.** `cp.py intake --name "..." --city "..." --type buyer|listing|other`  
    Optional repeatable `--url`, optional `--appt-at` (ISO), optional `--tz` (IANA). There is no `--address` flag. Do not pass a street, ZIP, phone, email, or birth date.
-2. **Queries.** `cp.py queries <client_id>`  
-   Run **only** the returned `queries[].q` strings (at most 6) with the box's existing `web_search` / `web_extract`. Do not invent extra address, phone, email, or DOB queries. Do not log into Instagram. If `inaccessible` is present, mark that URL not fetched.
-3. **Evidence.** For each useful result:  
-   `cp.py evidence add <client_id> --url ... --title ... --excerpt ... --origin web --query "..." --candidate N`  
-   Manual paste uses `--origin manual`. Group distinct people under different `--candidate` numbers.
+2. **Search.** `cp.py search <client_id>`  
+   This runs every returned query through Exa (`EXA_API_KEY`, or `exa_api_key` in config.json). It fetches the top pages, drops duplicate URLs, and stores one evidence row per kept page. Do not call `web_search` or `web_extract` for this skill. Do not stop after the first hit. `cp.py queries` only lists the strings; it does not search.
+   If search returns `search_unavailable`, say that message to the owner and do not write a research brief. A brief with web evidence is refused until search can run.
+3. **Evidence.** Pages from `search` are already stored. Add a manual paste only when the owner supplies one:  
+   `cp.py evidence add <client_id> --url ... --title ... --excerpt ... --origin manual --query "owner paste" --candidate N`  
+   Do not put owner-pasted text on a web result's candidate. Cite every URL in `search.json` `sources` from `appendix.sources`.
 4. **Candidates.** `cp.py identity candidates <client_id>`  
    Add the search results first. An empty list before any evidence means you have not searched yet.
    If `status` is `couldnt_find`, stop. Tell the owner exactly `couldn't find`. Do not brief and do not guess another person who shares only a first name.
@@ -96,14 +98,17 @@ Delete this client: `cp.py delete <client_id>` removes that client directory and
 Approved shapes (the script builds these):
 
 ```
-"<name>" "<city>" LinkedIn
+"<name>" "<city>" LinkedIn          (linkedin.com)
+"<name>" "<city>" X                 (x.com and twitter.com)
 "<name>" "<city>" company site
 "<name>" "<city>" news
 "<name>" "<city>" podcast
+"<name>" "<city>"                   (keyword search, Google-style)
 "<name>" <knownUrl>
 ```
 
-- At most 8 searches. Run every returned query. LinkedIn, the company site, news, and podcasts are the public sources that give the brief enough depth. Do not stop after one thin hit.
+- `cp.py search` runs all of these. The cap is 8, which keeps every target above and up to two profile URLs the advisor already supplied. Results are merged and deduped by URL. Cite every kept URL in `appendix.sources`.
+- There is no web_search fallback. If `EXA_API_KEY` is missing, search stops and the brief must say search is unavailable instead of using one thin source.
 - Escape quotes in the name. The script does this.
 - Never include a street, ZIP, phone, email, or date of birth. If the owner pasted one into the name or city, the script strips it and returns a warning code. Do not add it back.
 - Login-walled or private Instagram: do not attempt login. If the script marks the URL inaccessible, do not fetch it. A manual paste is the only way that content enters evidence.

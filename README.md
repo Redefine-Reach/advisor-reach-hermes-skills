@@ -69,8 +69,11 @@ Profile field-by-field, and a 90-day game plan. Locked template (`assets/templat
 
 ### client-profile
 One-page appointment brief for one named person the owner is about to meet (buyer, listing, or other).
-Intake is name, city, and appointment type. `scripts/cp.py` builds name-and-city queries for
-LinkedIn, the company site, news, and podcasts, holds evidence, and stops with "couldn't find"
+Intake is name, city, and appointment type. `scripts/cp.py search` runs those queries
+through Exa when `EXA_API_KEY` (or config `exa_api_key`) is set: LinkedIn, X, the company
+site, news, podcasts, and a keyword search. It fetches the top pages, dedupes them, and
+requires every kept URL to be cited. With no key it says search is unavailable instead of
+writing a one-source brief. It stops with "couldn't find"
 when no result contains the full first and last name. A common name asks for a profile link
 instead of a guess. Identity confidence on the brief is high, medium, or low. The brief also
 covers decision speed, what they need to hear to say yes, and likely objections. Research uses

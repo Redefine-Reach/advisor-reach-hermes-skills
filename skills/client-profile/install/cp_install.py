@@ -125,6 +125,8 @@ def public_config(cfg: dict | None) -> dict | None:
         return cfg
     shown = dict(cfg)
     shown.pop("consent_required", None)
+    if shown.get("exa_api_key"):
+        shown["exa_api_key"] = "set"
     if "owner_number" in shown:
         shown["owner_number"] = mask_owner_number(shown.get("owner_number"))
     return shown
@@ -239,6 +241,9 @@ def cmd_install(slug: str | None) -> None:
     number = owner_number()
     if number and "owner_number" not in existing:
         existing["owner_number"] = number
+    exa_key = (os.environ.get("EXA_API_KEY") or "").strip()
+    if exa_key and "exa_api_key" not in existing:
+        existing["exa_api_key"] = exa_key
     for env_key, cfg_key in (("ARTIFACT_DIR", "artifact_dir"), ("ARTIFACT_BASE_URL", "artifact_base_url")):
         val = (os.environ.get(env_key) or "").strip()
         if val:

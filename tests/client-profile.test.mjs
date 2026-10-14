@@ -2,7 +2,8 @@
 // Spawns cp.py and cp_install.py against a temp CLIENT_PROFILE_ROOT.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:http";
 import {
   mkdtempSync,
   readFileSync,
@@ -79,6 +80,40 @@ function run(args, ctx, extraEnv = {}) {
     payload = null;
   }
   return { proc, payload, stdout, stderr: proc.stderr || "" };
+}
+
+function runAsync(args, ctx, extraEnv = {}) {
+  const env = {
+    PATH: process.env.PATH,
+    HOME: ctx.dir,
+    LANG: "C.UTF-8",
+    PYTHONDONTWRITEBYTECODE: "1",
+    CLIENT_PROFILE_ROOT: ctx.data,
+    ARTIFACT_DIR: ctx.artifact,
+    ARTIFACT_BASE_URL: "https://files.example.test",
+    ...extraEnv,
+  };
+  return new Promise((resolve, reject) => {
+    const proc = spawn("python3", [scriptPath, ...args], { env });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    proc.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    proc.on("error", reject);
+    proc.on("close", () => {
+      let payload = null;
+      try {
+        payload = JSON.parse(stdout);
+      } catch {
+        payload = null;
+      }
+      resolve({ payload, stdout, stderr });
+    });
+  });
 }
 
 function auditLines(ctx) {
@@ -370,12 +405,14 @@ test("query escaping and phone email dob stripping", () => {
   assert.doesNotMatch(blob, /dana@example.com|555-0199|01\/02\/1980|85251/);
   assert.match(queries.payload.queries[0].q, /Ann \\"AJ\\" Example/);
   assert.match(queries.payload.queries[0].q, /LinkedIn/);
-  assert.match(queries.payload.queries[1].q, /company site/);
-  assert.match(queries.payload.queries[2].q, /news/);
-  assert.match(queries.payload.queries[3].q, /podcast/);
+  assert.match(queries.payload.queries[1].q, /\bX\b/);
+  assert.match(queries.payload.queries[2].q, /company site/);
+  assert.match(queries.payload.queries[3].q, /news/);
+  assert.match(queries.payload.queries[4].q, /podcast/);
+  assert.equal(queries.payload.queries[5].target, "general");
 });
 
-test("queries cover LinkedIn, the company site, news, and podcasts, and cap at 8", () => {
+test("queries cover LinkedIn, X, the company site, news, podcasts, and a general search, and cap at 8", () => {
   const ctx = world();
   const args = ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"];
   for (let i = 0; i < 8; i += 1) args.push("--url", `https://example.com/p/${i}`);
@@ -383,11 +420,11 @@ test("queries cover LinkedIn, the company site, news, and podcasts, and cap at 8
   assert.equal(intake.payload.ok, true, intake.stdout);
   const queries = run(["queries", intake.payload.client_id], ctx);
   assert.equal(queries.payload.queries.length, 8);
-  assert.match(queries.payload.queries[0].q, /LinkedIn/);
-  assert.match(queries.payload.queries[1].q, /company site/);
-  assert.match(queries.payload.queries[2].q, /news/);
-  assert.match(queries.payload.queries[3].q, /podcast/);
-  assert.match(queries.payload.queries[4].q, /https:\/\/example\.com\/p\/0/);
+  assert.deepEqual(
+    queries.payload.queries.slice(0, 6).map((item) => item.target),
+    ["linkedin", "x", "company", "news", "podcast", "general"],
+  );
+  assert.match(queries.payload.queries[6].q, /https:\/\/example\.com\/p\/0/);
 });
 
 test("case 21 private instagram is not fetched", () => {
@@ -1805,4 +1842,141 @@ test("two full-name sources can be high, and the fixture brief is one page", () 
   assert.match(html, /Likely objections/);
   assert.doesNotMatch(html, /\bconfirmed\b/i);
   assert.match(html, /size:\s*Letter/);
+});
+
+function listen(server) {
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve(server.address().port));
+  });
+}
+
+test("search runs every Exa query, fetches pages, dedupes, and cites each source", async () => {
+  assert.match(skill, /Do not call `web_search`/);
+  assert.match(skill, /EXA_API_KEY/);
+  assert.match(script, /EXA_API_KEY/);
+  assert.doesNotMatch(script, /web_search\(/);
+  const hits = [];
+  const server = createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      let body = {};
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+      } catch (err) {
+        hits.push({ path: req.url, error: String(err) });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end('{"results":[]}');
+        return;
+      }
+      hits.push({ path: req.url, body, key: req.headers["x-api-key"] });
+      const query = body.query || "";
+      const domains = body.includeDomains || [];
+      let payload;
+      if (req.url === "/contents") {
+        payload = {
+          results: [{
+            url: "https://example.com/red-rock",
+            title: "Dana Whitfield at Red Rock",
+            text: "Dana Whitfield leads the Scottsdale desk at Red Rock Realty.",
+          }],
+        };
+      } else if (domains.includes("linkedin.com")) {
+        payload = {
+          results: [{
+            url: "https://www.linkedin.com/in/dana-whitfield-example",
+            title: "Dana Whitfield",
+            text: "Dana Whitfield is a broker in Scottsdale.",
+          }],
+        };
+      } else if (domains.includes("x.com")) {
+        payload = { results: [{ url: "https://x.com/notdana", title: "Another post", text: "A different person entirely." }] };
+      } else if (query.includes("company site")) {
+        payload = { results: [{ url: "https://example.com/red-rock", title: "Red Rock", text: "" }] };
+      } else if (body.category === "news") {
+        payload = {
+          results: [
+            { url: "https://news.example.com/dana", title: "Dana Whitfield interview", text: "Dana Whitfield spoke in Scottsdale." },
+            { url: "https://example.com/red-rock/", title: "Red Rock again", text: "Dana Whitfield at Red Rock Realty in Scottsdale." },
+          ],
+        };
+      } else if (query.includes("podcast")) {
+        payload = { results: [] };
+      } else {
+        payload = { results: [{ url: "https://news.example.com/dana/", title: "Dana Whitfield interview", text: "Dana Whitfield spoke in Scottsdale." }] };
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(payload));
+    });
+  });
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const intake = run(["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"], ctx);
+    const id = intake.payload.client_id;
+    const searched = await runAsync(["search", id, "--actor", "owner"], ctx, {
+      EXA_API_KEY: "exa-test-key",
+      EXA_API_BASE: `http://127.0.0.1:${port}`,
+    });
+    assert.equal(searched.payload.ok, true, searched.stdout + searched.stderr);
+    assert.equal(searched.payload.source_count, 3, JSON.stringify(searched.payload));
+    assert.doesNotMatch(searched.stdout, /exa-test-key/);
+    const searchHits = hits.filter((hit) => hit.path === "/search");
+    const contentHits = hits.filter((hit) => hit.path === "/contents");
+    assert.equal(searchHits.length, 6);
+    assert.equal(contentHits.length, 1);
+    assert.ok(searchHits.every((hit) => hit.key === "exa-test-key"));
+    assert.deepEqual(searchHits.map((hit) => hit.body.includeDomains?.[0] || hit.body.category || hit.body.type), [
+      "linkedin.com",
+      "x.com",
+      "auto",
+      "news",
+      "auto",
+      "keyword",
+    ]);
+    const urls = searched.payload.sources.map((item) => item.url);
+    assert.deepEqual(urls.sort(), [
+      "https://example.com/red-rock",
+      "https://news.example.com/dana",
+      "https://www.linkedin.com/in/dana-whitfield-example",
+    ]);
+    confirm(ctx, id, 1);
+    const brief = loadGood([searched.payload.sources[0].evidence_id], (next) => {
+      next.identity_match.level = "high";
+      next.identity_match.basis = "Three public pages use this full name.";
+      next.verified_facts[0].evidence_ids = searched.payload.sources.map((item) => item.evidence_id);
+      next.verified_facts[0].confidence = "high";
+      next.appendix.sources = searched.payload.sources.map((item) => ({
+        evidence_id: item.evidence_id,
+        url: item.url,
+        title: item.title,
+      }));
+    });
+    const checked = validate(ctx, id, brief);
+    assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
+    const rendered = run(["brief", "render", id, "--actor", "owner"], ctx);
+    const html = readFileSync(join(ctx.data, id, "brief.html"), "utf8");
+    assert.match(html, /kept 3 sources/);
+    for (const url of urls) assert.equal(html.includes(url), true, url);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("a missing Exa key says search is unavailable and refuses a one-source brief", () => {
+  const ctx = world();
+  const made = seed(ctx);
+  const searched = run(["search", made.id, "--actor", "owner"], ctx);
+  assert.equal(searched.payload.ok, false);
+  assert.equal(searched.payload.error, "search_unavailable");
+  assert.equal(
+    searched.payload.message,
+    "Search is unavailable. No Exa key is set, so this brief was not filled from a multi-source search.",
+  );
+  assert.doesNotMatch(searched.stdout, /EXA_API_KEY/);
+  confirm(ctx, made.id, 1);
+  const checked = validate(ctx, made.id, loadGood(made.evidenceIds));
+  assert.equal(checked.payload.ok, false, JSON.stringify(checked.payload));
+  assert.ok(codes(checked.payload).includes("thin_without_search"));
+  assert.equal(existsSync(join(ctx.data, made.id, "brief.json")), false);
 });
