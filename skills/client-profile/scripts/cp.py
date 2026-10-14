@@ -197,6 +197,7 @@ QUERY_TARGETS = (
 SEARCH_UNAVAILABLE = (
     "Search is unavailable. No Exa key is set, so this brief was not filled from a multi-source search."
 )
+WEB_SEARCH_UNAVAILABLE = "Web search is unavailable."
 NOTES_ONLY = (
     "Owner notes can add to a brief that already has public sources. They cannot replace a search."
 )
@@ -1587,10 +1588,11 @@ def exa_key() -> str:
 
 
 def exa_base() -> str:
-    """API root. EXA_API_BASE wins, then the box proxy EXA_BASE_URL, then api.exa.ai.
+    """API root. EXA_API_BASE, then EXA_BASE_URL, then config exa_base_url, then api.exa.ai.
 
     A proxy value may already end in /search. That segment is removed here so
     /search and /contents are joined once, with no doubled slash.
+    config.json may carry exa_base_url. The key is EXA_API_KEY, then exa_api_key.
     """
     chosen = ""
     for name in ("EXA_API_BASE", "EXA_BASE_URL"):
@@ -1598,6 +1600,8 @@ def exa_base() -> str:
         if raw:
             chosen = raw
             break
+    if not chosen:
+        chosen = _cfg_value("exa_base_url")
     if not chosen:
         chosen = "https://api.exa.ai"
     root = chosen.rstrip("/")
@@ -1681,25 +1685,28 @@ def result_text(row: dict) -> str:
     return result_snippet(row)
 
 
+def text_bits(value: object) -> list[str]:
+    """Strings from Exa text, highlight, or entity fields, including wrapped objects."""
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, dict):
+        bits: list[str] = []
+        for key in ("text", "snippet", "highlight", "summary", "name", "company"):
+            bits.extend(text_bits(value.get(key)))
+        return bits
+    if isinstance(value, list):
+        bits = []
+        for item in value:
+            bits.extend(text_bits(item))
+        return bits
+    return []
+
+
 def result_snippet(row: dict) -> str:
     """Employer and query matches that may sit outside the opening text."""
     parts: list[str] = []
-    for key in ("snippet", "summary", "author", "company", "employer"):
-        value = row.get(key)
-        if isinstance(value, str) and value.strip():
-            parts.append(value)
-    highlights = row.get("highlights")
-    if isinstance(highlights, list):
-        parts.extend(part for part in highlights if isinstance(part, str) and part.strip())
-    entities = row.get("entities")
-    if isinstance(entities, list):
-        for entity in entities:
-            if isinstance(entity, str) and entity.strip():
-                parts.append(entity)
-            elif isinstance(entity, dict):
-                label = entity.get("text") or entity.get("name") or entity.get("company") or ""
-                if isinstance(label, str) and label.strip():
-                    parts.append(label)
+    for key in ("snippet", "summary", "author", "company", "employer", "highlights", "entities"):
+        parts.extend(text_bits(row.get(key)))
     return " ".join(parts)
 
 
@@ -1740,7 +1747,12 @@ def require_search_file(path: Path) -> None:
 def ensure_search(client_id: str, path: Path, opts: dict[str, list[str]]) -> None:
     """Run search when a later step was called before it. Never call that a miss."""
     global _emit_sink
-    if not search_file_missing(path):
+    existing = load_search(path)
+    if existing:
+        # A 401 or network failure already stamped the file. That is not a miss.
+        # Ask for op:search, which sees the box Exa env. A missing key keeps its own message.
+        if existing.get("message") == WEB_SEARCH_UNAVAILABLE:
+            fail("search_required", SEARCH_REQUIRED)
         return
     # No Exa key means the search itself cannot run. Do not write couldnt_find.
     if not exa_key():
@@ -1757,12 +1769,14 @@ def ensure_search(client_id: str, path: Path, opts: dict[str, list[str]]) -> Non
     if not sink:
         fail("search_required", SEARCH_REQUIRED)
     payload, code = sink[-1]
-    if code and not (path / "search.json").is_file():
+    if code:
         error = payload.get("error") if isinstance(payload, dict) else ""
         message = payload.get("message") if isinstance(payload, dict) else ""
+        # A 401 or network failure is not a miss. Ask for op:search, which sees the box Exa env.
         if error == "search_unavailable":
             fail("search_required", SEARCH_REQUIRED)
-        fail(str(error or "search_required"), str(message or SEARCH_REQUIRED))
+        if not (path / "search.json").is_file():
+            fail(str(error or "search_required"), str(message or SEARCH_REQUIRED))
 
 
 def search_conflicts(path: Path) -> bool:
@@ -1981,13 +1995,46 @@ def given_urls(intake: dict) -> list[str]:
     return [item for item in (intake.get("urls") or []) if isinstance(item, str)]
 
 
+def company_slug(company: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (company or "").casefold())
+
+
 def company_host_hit(url: str, company: str) -> bool:
     """True when the page itself is on the company's domain."""
-    slug = re.sub(r"[^a-z0-9]", "", (company or "").casefold())
+    slug = company_slug(company)
     if len(slug) < 3:
         return False
     host = host_of(url)
     return bool(host) and any(label == slug for label in host.split("."))
+
+
+def company_slug_hit(value: str, company: str) -> bool:
+    """Company token in a URL path or domain. Underscores do not hide it."""
+    slug = company_slug(company)
+    if len(slug) < 3:
+        return False
+    return re.search(rf"(?<![a-z0-9]){re.escape(slug)}(?![a-z0-9])", value or "", re.IGNORECASE) is not None
+
+
+def linkedin_handle(url: str) -> str:
+    """Profile or post handle. /in/dkmarshall and /posts/dkmarshall_... are one person."""
+    if host_of(url) != "linkedin.com":
+        return ""
+    parts = [part for part in (urlparse(url or "").path or "").split("/") if part]
+    if len(parts) < 2:
+        return ""
+    kind = parts[0].casefold()
+    rest = parts[1]
+    if kind == "in":
+        handle = rest
+    elif kind == "posts":
+        handle = rest.split("_", 1)[0]
+    else:
+        return ""
+    handle = handle.strip().casefold()
+    if len(handle) < 3:
+        return ""
+    return handle
 
 
 def source_matches_anchors(title: str, excerpt: str, url: str, intake: dict, snippet: str = "") -> bool:
@@ -1996,7 +2043,12 @@ def source_matches_anchors(title: str, excerpt: str, url: str, intake: dict, sni
     company = (intake.get("company") or "").strip()
     role = (intake.get("role") or "").strip()
     urls = given_urls(intake)
-    company_hit = bool(company) and (phrase_present(blob, company) or company_host_hit(url, company))
+    company_hit = bool(company) and (
+        phrase_present(blob, company)
+        or company_slug_hit(blob, company)
+        or company_host_hit(url, company)
+        or company_slug_hit(url, company)
+    )
     link_hit = link_matches(url, urls) or domain_matches(url, urls)
     if company or urls:
         return company_hit or link_hit
@@ -2022,6 +2074,41 @@ def excluded_people_note(count: int) -> str:
     if count == 1:
         return "1 other person with this name was excluded."
     return f"{count} other people with this name were excluded."
+
+
+def exa_payload_failed(payload: dict) -> bool:
+    """HTTP 200 that is still an auth or transport error, with no results."""
+    results = payload.get("results")
+    if isinstance(results, list) and results:
+        return False
+    if payload.get("error"):
+        return True
+    errors = payload.get("errors")
+    return bool(errors)
+
+
+def write_search_unavailable(
+    path: Path,
+    client_id: str,
+    actor: str | None,
+    queries: list[dict],
+    raw_count: int,
+) -> None:
+    stamp_search(path, {
+        "status": "unavailable",
+        "message": WEB_SEARCH_UNAVAILABLE,
+        "query_count": len(queries),
+        "queries": [query["q"] for query in queries],
+        "targets": [query.get("target") for query in queries],
+        "source_count": 0,
+        "sources": [],
+        "profile_count": 0,
+        "conflict": False,
+        "counts": search_count(raw_count, 0, 0, 0),
+        "dropped": [],
+    })
+    audit("search", client_id, {"queries": len(queries), "sources": 0}, actor)
+    fail("search_unavailable", WEB_SEARCH_UNAVAILABLE)
 
 
 def write_couldnt_find(
@@ -2109,57 +2196,64 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
     seen: set[str] = set()
     need_text: list[str] = []
     raw_count = 0
-    try:
-        for query in queries:
+    succeeded = 0
+    for query in queries:
+        try:
             payload = exa_post("/search", exa_search_body(query), key)
-            for raw in payload.get("results") or []:
-                if not isinstance(raw, dict):
-                    continue
-                raw_count += 1
-                url = raw.get("url") if isinstance(raw.get("url"), str) else ""
-                if not is_http_url(url) or dangerous_url(url) or is_instagram(url):
-                    continue
-                key_url = canon_url(url)
-                if not key_url or key_url in seen:
-                    continue
-                seen.add(key_url)
-                title = raw.get("title") if isinstance(raw.get("title"), str) else ""
-                text = result_text(raw)
-                snippet = result_snippet(raw)
-                item = {
-                    "url": url,
-                    "title": title,
-                    "text": text,
-                    "snippet": snippet,
-                    "query": query["q"],
-                    "target": query.get("target") or "",
-                }
-                found.append(item)
-                if not text.strip() and not snippet.strip():
-                    need_text.append(url)
-        if need_text:
+        except ExaError:
+            continue
+        if exa_payload_failed(payload):
+            continue
+        succeeded += 1
+        for raw in payload.get("results") or []:
+            if not isinstance(raw, dict):
+                continue
+            raw_count += 1
+            url = raw.get("url") if isinstance(raw.get("url"), str) else ""
+            if not is_http_url(url) or dangerous_url(url) or is_instagram(url):
+                continue
+            key_url = canon_url(url)
+            if not key_url or key_url in seen:
+                continue
+            seen.add(key_url)
+            title = raw.get("title") if isinstance(raw.get("title"), str) else ""
+            text = result_text(raw)
+            snippet = result_snippet(raw)
+            item = {
+                "url": url,
+                "title": title,
+                "text": text,
+                "snippet": snippet,
+                "query": query["q"],
+                "target": query.get("target") or "",
+            }
+            found.append(item)
+            if not text.strip() and not snippet.strip():
+                need_text.append(url)
+    if succeeded == 0:
+        save_evidence(path, rows)
+        write_search_unavailable(path, client_id, actor, queries, raw_count)
+    if need_text:
+        try:
             filled = exa_post("/contents", {"urls": need_text, "text": {"maxCharacters": EXA_TEXT_CHARS}}, key)
-            by_url = {}
+        except ExaError:
+            filled = {}
+        by_url = {}
+        if isinstance(filled, dict) and not exa_payload_failed(filled):
             for raw in filled.get("results") or []:
                 if isinstance(raw, dict) and isinstance(raw.get("url"), str):
                     by_url[canon_url(raw["url"])] = raw
-            for item in found:
-                if item["text"].strip():
-                    continue
-                raw = by_url.get(canon_url(item["url"]))
-                if not raw:
-                    continue
-                item["text"] = result_text(raw)
-                if not item.get("snippet"):
-                    item["snippet"] = result_snippet(raw)
-                if not item["title"] and isinstance(raw.get("title"), str):
-                    item["title"] = raw["title"]
-    except ExaError:
-        save_evidence(path, rows)
-        write_couldnt_find(
-            path, client_id, actor, queries, inaccessible, codes,
-            search_count(raw_count, len(found), 0, 0),
-        )
+        for item in found:
+            if item["text"].strip():
+                continue
+            raw = by_url.get(canon_url(item["url"]))
+            if not raw:
+                continue
+            item["text"] = result_text(raw)
+            if not item.get("snippet"):
+                item["snippet"] = result_snippet(raw)
+            if not item["title"] and isinstance(raw.get("title"), str):
+                item["title"] = raw["title"]
     dropped: list[dict] = []
     kept: list[dict] = []
     for item in found:
@@ -2193,6 +2287,8 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
     matched: list[dict] = []
     excluded_markers: list[str] = []
     excluded_pages = 0
+    pending: list[dict] = []
+    anchored_handles: set[str] = set()
     for item in kept:
         marker = profile_marker(item["url"])
         item["profile"] = marker
@@ -2204,8 +2300,19 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
             item.get("snippet") or "",
         ):
             matched.append(item)
+            handle = linkedin_handle(item["url"])
+            if handle:
+                anchored_handles.add(handle)
+            continue
+        pending.append(item)
+    # A company-anchored /in/dkmarshall page keeps that handle's other posts, and the reverse.
+    for item in pending:
+        handle = linkedin_handle(item["url"])
+        if handle and handle in anchored_handles:
+            matched.append(item)
             continue
         dropped.append({"url": item["url"], "reason": "namesake"})
+        marker = item.get("profile") or ""
         if marker:
             if marker not in excluded_markers:
                 excluded_markers.append(marker)
