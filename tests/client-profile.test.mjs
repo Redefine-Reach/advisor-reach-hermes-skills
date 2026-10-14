@@ -4171,13 +4171,86 @@ test("NONE on the next text resolves against the saved list and does not write a
   }
 });
 
+test("a name without a profession or a city asks one question and does not search", async () => {
+  assert.match(skill, /search right away/);
+  assert.match(skill, /one short question/);
+  assert.match(skill, /Never ask more than one question up front/);
+  assert.match(skill, /never ask for consent/);
+  assert.match(skill, /What does John do, and where does he live\?/);
+  assert.match(skill, /What does John do\?/);
+  assert.match(skill, /Where does John live\?/);
+  assert.match(script, /def intake_question/);
+  assert.doesNotMatch(skill, /\bconfirmed\b/i);
+  const hits = [];
+  const server = createServer((req, res) => {
+    hits.push(req.url);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end('{"results":[]}');
+  });
+  const port = await listen(server);
+  const exa = { EXA_API_KEY: "exa-test-key", EXA_API_BASE: `http://127.0.0.1:${port}` };
+  try {
+    const nameOnly = world();
+    const asked = await runAsync(
+      ["profile", "--actor", "owner", "--name", "John Smith"],
+      nameOnly,
+      exa,
+    );
+    assert.equal(asked.payload.ok, true, asked.stdout + asked.stderr);
+    assert.equal(asked.payload.status, "needs_anchor");
+    assert.equal(asked.payload.next, "stop");
+    assert.equal(asked.payload.say, "What does John do, and where does he live?");
+    assert.equal((asked.payload.say.match(/\?/g) || []).length, 1);
+    assert.equal(asked.payload.query_count, 0);
+    assert.equal(hits.length, 0);
+    assert.equal(existsSync(join(nameOnly.data, "profiles")), false);
+    assert.doesNotMatch(asked.stdout, /consent|\bconfirmed\b/i);
+
+    const cityOnly = await runAsync(
+      ["profile", "--actor", "owner", "--name", "John Smith", "--city", "Phoenix"],
+      world(),
+      exa,
+    );
+    assert.equal(cityOnly.payload.status, "needs_anchor", cityOnly.stdout);
+    assert.equal(cityOnly.payload.say, "What does John do?");
+    assert.equal(cityOnly.payload.next, "stop");
+
+    const workOnly = await runAsync(
+      ["profile", "--actor", "owner", "--name", "John Smith", "--role", "broker"],
+      world(),
+      exa,
+    );
+    assert.equal(workOnly.payload.say, "Where does John live?", workOnly.stdout);
+    assert.equal(workOnly.payload.status, "needs_anchor");
+
+    const linkOnly = await runAsync(
+      ["profile", "--actor", "owner", "--name", "John Smith", "--url", "https://example.com/john"],
+      world(),
+      exa,
+    );
+    assert.equal(linkOnly.payload.say, "What does John do, and where does he live?");
+    assert.equal(hits.length, 0);
+
+    const ready = await runAsync(
+      ["profile", "--actor", "owner", "--name", "John Smith", "--role", "broker", "--city", "Phoenix"],
+      world(),
+      exa,
+    );
+    assert.notEqual(ready.payload.status, "needs_anchor", ready.stdout + ready.stderr);
+    assert.ok(hits.length > 0);
+    assert.ok(ready.payload.query_count > 0);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("a made-up Avery Quindle profile is no_match only when every query succeeds", async () => {
   const { server } = replayServer(loadReplay("avery-quindle-empty.json").results);
   const port = await listen(server);
   try {
     const ctx = world();
     const profiled = await runAsync(
-      ["profile", "--actor", "owner", "--name", "Avery Quindle", "--city", "Flagstaff", "--type", "buyer"],
+      ["profile", "--actor", "owner", "--name", "Avery Quindle", "--city", "Flagstaff", "--type", "buyer", "--role", "broker"],
       ctx,
       { EXA_API_KEY: "exa-test-key", EXA_API_BASE: `http://127.0.0.1:${port}` },
     );
@@ -4263,7 +4336,7 @@ test("profile auth and partial failures are search_unavailable, not no_match", a
     }
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end('{"results":[]}');
-  }, ["profile", "--actor", "owner", "--name", "Avery Quindle", "--city", "Flagstaff"]);
+  }, ["profile", "--actor", "owner", "--name", "Avery Quindle", "--city", "Flagstaff", "--role", "broker"]);
   assert.equal(emptyFail.profiled.payload.status, "search_unavailable", emptyFail.profiled.stdout);
   assert.notEqual(emptyFail.profiled.payload.status, "no_match");
   assert.equal(existsSync(join(emptyFail.ctx.data, "profiles")), false);
@@ -4493,7 +4566,7 @@ test("profile uses the plugin env only for profile, and a config key 401 is unav
       await new Promise((resolve) => denied.close(resolve));
     }
     const quiet = await runAsync(
-      ["profile", "--actor", "owner", "--name", "Riley Example", "--city", "Austin"],
+      ["profile", "--actor", "owner", "--name", "Riley Example", "--city", "Austin", "--company", "Example Co"],
       world(),
       pluginChildEnv("write", world()),
     );

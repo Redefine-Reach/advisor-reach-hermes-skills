@@ -3332,6 +3332,25 @@ def number_sources(pages: list[dict]) -> list[dict]:
     return sources
 
 
+def given_name(name: str) -> str:
+    tokens = name_tokens(name)
+    return tokens[0] if tokens else (name or "").strip()
+
+
+def intake_question(name: str, work: str, city: str) -> str:
+    """One question for the missing piece. Empty when name, work, and city are enough to search."""
+    who = given_name(name)
+    need_work = not (work or "").strip()
+    need_city = not (city or "").strip()
+    if need_work and need_city:
+        return f"What does {who} do, and where does he live?"
+    if need_work:
+        return f"What does {who} do?"
+    if need_city:
+        return f"Where does {who} live?"
+    return ""
+
+
 def anchor_say(name: str, company: str, city: str) -> str:
     if company and city:
         tie = f"{company} or {city}"
@@ -3849,8 +3868,6 @@ def cmd_profile(positional: list[str], opts: dict[str, list[str]]) -> None:
         return
     if not name or not name.strip():
         fail("missing_name", "Name is required.")
-    if not city or not city.strip():
-        fail("missing_city", "City is required.")
     appt_type = (flag(opts, "type") or "buyer").lower()
     if appt_type not in {"buyer", "listing", "other"}:
         fail("bad_type", "Type must be buyer, listing, or other.")
@@ -3859,15 +3876,33 @@ def cmd_profile(positional: list[str], opts: dict[str, list[str]]) -> None:
         if dangerous_url(url) or not is_http_url(url):
             fail("rejected_url", "Only http(s) URLs are accepted.")
     company = flag(opts, "company") or ""
+    role = flag(opts, "role") or ""
     clean_name, _ = redact(name)
-    clean_city, _ = redact(city)
+    clean_city, _ = redact(city) if city and city.strip() else ("", [])
     clean_company, _ = redact(company) if company else ("", [])
+    clean_role, _ = redact(role) if role else ("", [])
     if not clean_name:
         fail("name_empty_after_redaction", "Name was empty after removing blocked tokens.")
-    if not clean_city:
+    if city and city.strip() and not clean_city:
         fail("city_empty_after_redaction", "City was empty after removing blocked tokens.")
-    if MINOR_RE.search(clean_name) or MINOR_RE.search(clean_city):
+    if MINOR_RE.search(clean_name) or (clean_city and MINOR_RE.search(clean_city)):
         fail("minor", "Subject appears to be a minor. Stop.")
+    # Name, a profession or company, and a city are enough. Anything missing
+    # is one question, before Exa. A link the owner already sent does not
+    # replace those three, and it is kept when they are all present.
+    work = clean_company.strip() or clean_role.strip()
+    question = intake_question(clean_name, work, clean_city)
+    if question:
+        emit({
+            "ok": True,
+            "status": "needs_anchor",
+            "say": question,
+            "next": "stop",
+            "query_count": 0,
+            "queries_succeeded": 0,
+            "name_hits": 0,
+        })
+    clean_company = work
     stored_urls = [url for url in urls if not is_instagram(url)]
     fingerprint = profile_fingerprint(clean_name, clean_city, clean_company, stored_urls, appt_type)
     record = profile_record_key(clean_name, clean_city, clean_company)

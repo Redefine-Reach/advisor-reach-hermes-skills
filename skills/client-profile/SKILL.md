@@ -5,7 +5,7 @@ description: "Use when the owner asks to profile, brief, or prep for a buyer/lis
 
 # Client profile (appointment brief)
 
-Build a one-page cited communication brief for one named person the owner is about to meet. Every new person starts with a fresh intake: name, city, appointment type, company, and any URLs. The brief is a working hypothesis. Verify it before use.
+Build a one-page cited communication brief for one named person the owner is about to meet. Every new person starts with a fresh intake. The inputs are the name, a profession or company, the city, and a link if the owner has one. Use whatever the owner texts. If the name, a profession or company, and the city are all there, search right away. If something is missing, ask one short question for just that missing piece, then stop. Never ask more than one question up front, and never ask for consent. The brief is a working hypothesis. Verify it before use.
 
 The flow is profile, then any question to the owner, then write. The record key comes from the name. Code runs the search and the identity decision. You write four sections, then call write.
 
@@ -47,7 +47,7 @@ The terminal and execute_code are refused on texts. Run the two calls below with
 
 | Step | render_file call |
 |---|---|
-| Profile | `op: profile`, `cp: {name, city, type, company?, urls?, reply?}` |
+| Profile | `op: profile`, `cp: {name, city?, type?, company?, role?, urls?, reply?}`. Pass every piece the owner already sent. |
 | Reply | `op: profile`, `cp: {reply: "1"}` or `{reply: "NONE"}`. No client id. The saved list is on the record. |
 | Write | `op: write`, `cp: {record, sections}` |
 
@@ -64,12 +64,15 @@ Run `python3 /opt/data/skills/client-profile/scripts/cp.py`. Every command print
 Never reuse a prior client record unless the owner explicitly names that same client. A new person is a new `cp.py profile --name`. The same name, city, and company reuse a stored search for 24 hours so a reply does not search again. A matching `--name` is that person. A later message that names a different person is a new profile.
 
 1. **Profile.** `cp.py profile --name "..." --city "..." --type buyer|listing|other`  
-   Pass `--company` when the owner gave one, and repeat `--url` for every link the owner gave. There is no `--address` flag. Do not pass a street, ZIP, phone, email, or birth date.  
+   Pass `--company` or `--role` for the profession or company the owner gave, and repeat `--url` for every link the owner gave. Use whatever they texted. Do not drop a piece, and do not ask for a piece they already gave. There is no `--address` flag. Do not pass a street, ZIP, phone, email, or birth date.  
+   Name, plus a profession or company, plus a city, is enough. Call profile in that same turn and search right away. Do not ask a question first.  
    The key is `EXA_API_KEY`, then `exa_api_key` in config.json. The API root is `EXA_API_BASE`, then `EXA_BASE_URL`, then `exa_base_url` in config.json, then `https://api.exa.ai`.  
    Profile returns exactly one status:
    - `ready`. No `say`. The identity line is High or Medium. Call write. One LinkedIn profile is already selected. The pending prompt is saved on the record (`Found 1 <name> in <city>: 1) …. Reply 1 or NONE.`). You may write now. If the owner later replies, call profile with that reply and no client id.
    - `needs_disambiguation`. Send `say` verbatim and stop. Example shape: `I found 2 <name>s: 1) … 2) … Reply 1, 2 or NONE.` The next text calls `cp.py profile --reply 1` (or the number, or `NONE`). Do not ask which profile the number means.
-   - `needs_anchor`. Identity confidence is Low. Send `say` and stop. Ask for a profile link. Send a LinkedIn or company site. Do not write.
+   - `needs_anchor`. Send `say` and stop. That sentence is the only question. Do not add a second question, and never ask for consent. Do not write.  
+     Before a search, `say` asks for the missing piece only. `John Smith` with nothing else returns `What does John do, and where does he live?` A name and a city returns `What does John do?` A name and a profession or company returns `Where does John live?` A link does not replace the missing piece. The owner's next text fills it. Call profile again with the name plus what they just sent.  
+     After a search, identity confidence is Low. `say` means the pages do not tie to that profession, company, or city. It asks for a profile link, a LinkedIn or company site. Send that sentence.
    - `no_match`. Tell the owner exactly `couldn't find` and stop. That sentence is only when every query succeeded and no page has the full name as a phrase. A failed search is never `couldn't find`.
    - `search_unavailable`. Say `Search isn't working on my side right now, so I didn't build the profile.` The `reason` is `no_key`, `auth`, `unreachable`, `timeout`, or `rate_limited`. Do not write. A failed search is not stored.
    A page is kept only when the full name appears as a phrase, and one anchor matches: a link the owner gave, the company name ignoring case and spacing, or the city when no company was given. One LinkedIn profile is one person, including posts from that same handle. Two LinkedIn profiles ask the owner. Pages that match the name and fail the anchor are only counted: `N other pages with this name were left out.` Do not name those other pages.
