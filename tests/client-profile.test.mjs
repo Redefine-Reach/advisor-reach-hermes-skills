@@ -3575,6 +3575,7 @@ test("replayed David Marshall search keeps other source kinds and still drops na
   assert.ok(issued.some((hit) => hit.body.category === "news" && hit.body.query.includes('"AdvisorReach"')));
   assert.ok(issued.some((hit) => hit.body.query.includes("podcast") && hit.body.query.includes('"AdvisorReach"')));
   assert.ok(issued.every((hit) => hit.body.contents && hit.body.contents.highlights));
+  assert.ok(issued.every((hit) => hit.body.contents.extras && hit.body.contents.extras.links === 10));
   assert.doesNotMatch(phoenix.searched.stdout, /\bconfirmed\b/i);
 
   const site = await searchCase("site", withSite, ["--city", "Phoenix", "--url", "https://advisorreach.ai"]);
@@ -4011,8 +4012,8 @@ test("tonight's David Marshall pages keep several sites, including dkmarshall po
       assert.ok(hosts.has(host), host);
     }
     assert.ok(urls.includes("https://www.linkedin.com/in/dkmarshall"));
-    assert.ok(urls.includes("https://www.linkedin.com/posts/dkmarshall_advisorreach-activity-1"));
-    assert.ok(urls.includes("https://www.linkedin.com/posts/dkmarshall_showing-activity-2"));
+    assert.ok(urls.includes("https://www.linkedin.com/posts/dkmarshall_intentbuilding-buildinpublic-aibuilders-activity-7428524872433065984-fAui"));
+    assert.ok(urls.includes("https://www.linkedin.com/posts/dkmarshall_vibecoding-buildinpublic-aibuilders-activity-7416116688519139329-ldbT"));
     assert.equal(urls.includes("https://www.axios.com/local/phoenix/david-marshall-recorder"), false);
     assert.equal(urls.includes("https://www.azleg.gov/members/david-marshall"), false);
     assert.ok(searched.payload.source_count >= 5, JSON.stringify(urls));
@@ -4021,9 +4022,12 @@ test("tonight's David Marshall pages keep several sites, including dkmarshall po
   }
 });
 
-test("the owner's next text resolves 1 against the saved list and writes the one-page pdf", () => {
-  assert.match(skill, /op: pick/);
+test("one pending candidate resolves in identity candidates and the next turn writes the pdf", () => {
+  assert.match(skill, /op: identity_confirm/);
+  assert.match(skill, /\{candidate: N\}/);
+  assert.match(skill, /\{none: true\}/);
   assert.match(skill, /Do not ask which profile/);
+  assert.doesNotMatch(skill, /op: pick/);
   assert.doesNotMatch(skill, /\bconfirmed\b/i);
   const ctx = world();
   const seeded = seed(ctx, {
@@ -4039,21 +4043,16 @@ test("the owner's next text resolves 1 against the saved list and writes the one
       candidate: 1,
     },
   });
+  // Plugin op identity_candidates → identity candidates <client_id>
   const listed = run(["identity", "candidates", seeded.id], ctx);
   assert.equal(listed.payload.ok, true, listed.stdout);
-  assert.match(listed.payload.prompt, /Found 1 David Marshall in Phoenix/);
-  assert.match(listed.payload.prompt, /Reply 1 or NONE/);
-  const pending = JSON.parse(readFileSync(join(ctx.data, seeded.id, "pending.json"), "utf8"));
-  assert.equal(pending.awaiting, true);
-  assert.equal(pending.choices[0].reply, 1);
-  assert.equal(pending.choices[0].candidate, 1);
-  const picked = run(["pick", "1", "--actor", "owner"], ctx);
-  assert.equal(picked.payload.ok, true, picked.stdout + picked.stderr);
-  assert.equal(picked.payload.client_id, seeded.id);
-  assert.equal(picked.payload.reply, 1);
-  assert.equal(picked.payload.next, "write");
-  assert.doesNotMatch(picked.stdout, /\bconfirmed\b/i);
-  assert.doesNotMatch(picked.stdout, /which profile/i);
+  assert.equal(listed.payload.next, "write");
+  assert.match(listed.payload.say, /Matched David Marshall in Phoenix/);
+  assert.doesNotMatch(listed.payload.say, /Reply 1/);
+  assert.doesNotMatch(listed.stdout, /\bconfirmed\b|which profile/i);
+  const shown = run(["evidence", "render", seeded.id], ctx);
+  assert.equal(shown.payload.ok, true, shown.stdout);
+  assert.match(shown.payload.text, /advisorreach\.ai/);
   const brief = loadGood(seeded.evidenceIds);
   const checked = validate(ctx, seeded.id, brief);
   assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
@@ -4071,29 +4070,82 @@ test("the owner's next text resolves 1 against the saved list and writes the one
   }
 });
 
-test("NONE on the next text resolves against the saved list and does not write a pdf", () => {
+test("two candidates use identity confirm, and NONE does not write a pdf", () => {
   const ctx = world();
   const seeded = seed(ctx, {
     name: "David Marshall",
     city: "Phoenix",
     type: "buyer",
-    evidence: {
-      url: "https://advisorreach.ai/journal/listing-meetings",
-      title: "David Marshall on listing meetings",
-      excerpt: "David Marshall writes for AdvisorReach in Phoenix.",
-      origin: "web",
-      query: '"David Marshall" "Phoenix" "AdvisorReach"',
-      candidate: 1,
-    },
+    evidence: [
+      {
+        url: "https://advisorreach.ai/journal/listing-meetings",
+        title: "David Marshall on listing meetings",
+        excerpt: "David Marshall writes for AdvisorReach in Phoenix.",
+        origin: "web",
+        query: '"David Marshall" "Phoenix" "AdvisorReach"',
+        candidate: 1,
+      },
+      {
+        url: "https://www.linkedin.com/in/david-marshall-other",
+        title: "David Marshall, other firm",
+        excerpt: "David Marshall advises a different firm in Phoenix.",
+        origin: "web",
+        query: '"David Marshall" "Phoenix"',
+        candidate: 2,
+      },
+    ],
   });
-  run(["identity", "candidates", seeded.id], ctx);
-  const picked = run(["pick", "NONE", "--actor", "owner"], ctx);
-  assert.equal(picked.payload.ok, true, picked.stdout + picked.stderr);
-  assert.equal(picked.payload.client_id, seeded.id);
-  assert.equal(picked.payload.reply, "NONE");
-  assert.equal(picked.payload.next, "stop");
-  assert.doesNotMatch(picked.stdout, /\bconfirmed\b/i);
-  const rendered = run(["brief", "render", seeded.id, "--actor", "owner"], ctx);
-  assert.equal(rendered.payload.ok, false, rendered.stdout);
+  const listed = run(["identity", "candidates", seeded.id], ctx);
+  assert.equal(listed.payload.ok, true, listed.stdout);
+  assert.equal(listed.payload.next, "reply");
+  assert.match(listed.payload.prompt, /Reply 1, 2 or NONE/);
+  assert.doesNotMatch(listed.stdout, /which profile/i);
+  const stopped = run(["identity", "confirm", seeded.id, "--none", "--actor", "owner"], ctx);
+  assert.equal(stopped.payload.ok, true, stopped.stdout);
+  assert.equal(stopped.payload.status, "none");
+  const blocked = run(["brief", "render", seeded.id, "--actor", "owner"], ctx);
+  assert.equal(blocked.payload.ok, false, blocked.stdout);
   assert.equal(existsSync(join(ctx.data, seeded.id, "brief.pdf")), false);
+
+  const again = world();
+  const pickedSeed = seed(again, {
+    name: "David Marshall",
+    city: "Phoenix",
+    type: "buyer",
+    evidence: [
+      {
+        url: "https://advisorreach.ai/journal/listing-meetings",
+        title: "David Marshall on listing meetings",
+        excerpt: "David Marshall writes for AdvisorReach in Phoenix.",
+        origin: "web",
+        query: '"David Marshall" "Phoenix" "AdvisorReach"',
+        candidate: 1,
+      },
+      {
+        url: "https://www.linkedin.com/in/david-marshall-other",
+        title: "David Marshall, other firm",
+        excerpt: "David Marshall advises a different firm in Phoenix.",
+        origin: "web",
+        query: '"David Marshall" "Phoenix"',
+        candidate: 2,
+      },
+    ],
+  });
+  run(["identity", "candidates", pickedSeed.id], again);
+  // Plugin op identity_confirm → identity confirm <client_id> --candidate N
+  const picked = run(["identity", "confirm", pickedSeed.id, "--candidate", "1", "--actor", "owner"], again);
+  assert.equal(picked.payload.ok, true, picked.stdout + picked.stderr);
+  assert.equal(picked.payload.candidate, 1);
+  assert.doesNotMatch(picked.stdout, /which profile/i);
+  const brief = loadGood([pickedSeed.evidenceIds[0]]);
+  const checked = validate(again, pickedSeed.id, brief);
+  assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
+  const bin = existsSync("/tmp/weasyprint") ? "/tmp/weasyprint" : weasyBin();
+  const rendered = run(
+    ["brief", "render", pickedSeed.id, "--actor", "owner"],
+    again,
+    bin ? weasyEnv(bin) : {},
+  );
+  assert.equal(rendered.payload.ok, true, rendered.stdout + rendered.stderr);
+  if (bin) assert.equal(rendered.payload.pages, 1);
 });
