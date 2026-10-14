@@ -1721,14 +1721,20 @@ test("Avery with no last name in Flagstaff returns couldn't find", () => {
 test("a common name asks for a profile link instead of guessing", () => {
   const ctx = world();
   const id = run(["intake", "--name", "John Smith", "--city", "Phoenix", "--type", "buyer"], ctx).payload.client_id;
-  addEvidence(ctx, id, {
-    url: "https://example.com/john-smith",
-    title: "John Smith, broker",
-    excerpt: "John Smith is a broker in Phoenix.",
-    origin: "web",
-    query: '"John Smith" "Phoenix" LinkedIn',
-    candidate: 1,
-  });
+  writeFileSync(
+    join(ctx.data, id, "evidence.jsonl"),
+    `${JSON.stringify({
+      evidence_id: "ev_aaaaaaaaaaaaaaaa",
+      url: "https://example.com/john-smith",
+      title: "John Smith, broker",
+      excerpt: "John Smith is a broker in Phoenix.",
+      origin: "web",
+      query: '"John Smith" "Phoenix" LinkedIn',
+      candidate: 1,
+      identity_status: "unconfirmed",
+      via: "exa",
+    })}\n`,
+  );
   const listed = run(["identity", "candidates", id], ctx);
   assert.equal(listed.payload.ok, true, listed.stdout);
   assert.equal(listed.payload.status, "need_profile_link");
@@ -1737,6 +1743,50 @@ test("a common name asks for a profile link instead of guessing", () => {
   const picked = run(["identity", "confirm", id, "--candidate", "1", "--actor", "owner"], ctx);
   assert.equal(picked.payload.ok, false);
   assert.equal(picked.payload.error, "need_profile_link");
+});
+
+test("an advisor profile link unblocks a common name", () => {
+  const ctx = world();
+  const id = run(["intake", "--name", "John Smith", "--city", "Phoenix", "--type", "buyer"], ctx).payload.client_id;
+  addEvidence(ctx, id, {
+    url: "https://www.linkedin.com/in/john-smith-example",
+    title: "John Smith",
+    excerpt: "John Smith is a broker in Phoenix.",
+    origin: "web",
+    query: "profile link",
+    candidate: 1,
+  });
+  const intake = JSON.parse(readFileSync(join(ctx.data, id, "intake.json"), "utf8"));
+  assert.ok(intake.urls.includes("https://www.linkedin.com/in/john-smith-example"));
+  const listed = run(["identity", "candidates", id], ctx);
+  assert.equal(listed.payload.status, "matches", JSON.stringify(listed.payload));
+  assert.equal(listed.payload.candidates.length, 1);
+  const picked = run(["identity", "confirm", id, "--candidate", "1", "--actor", "owner"], ctx);
+  assert.equal(picked.payload.ok, true, picked.stdout);
+});
+
+test("a leading title is not the given name", () => {
+  const ctx = world();
+  const id = run(["intake", "--name", "Dr. Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"], ctx).payload.client_id;
+  addEvidence(ctx, id, {
+    url: "https://example.com/dana-whitfield",
+    title: "Dana Whitfield, broker",
+    excerpt: "Dana Whitfield is a broker in Scottsdale.",
+    origin: "web",
+    query: "q",
+    candidate: 1,
+  });
+  addEvidence(ctx, id, {
+    url: "https://example.com/dr-whitfield",
+    title: "Dr Whitfield",
+    excerpt: "Dr Whitfield keeps office hours.",
+    origin: "web",
+    query: "q",
+    candidate: 2,
+  });
+  const listed = run(["identity", "candidates", id], ctx);
+  assert.equal(listed.payload.candidates.length, 1, JSON.stringify(listed.payload));
+  assert.equal(listed.payload.candidates[0].n, 1);
 });
 
 test("one full-name source cannot be rated confirmed or high", () => {
@@ -1979,4 +2029,77 @@ test("a missing Exa key says search is unavailable and refuses a one-source brie
   assert.equal(checked.payload.ok, false, JSON.stringify(checked.payload));
   assert.ok(codes(checked.payload).includes("thin_without_search"));
   assert.equal(existsSync(join(ctx.data, made.id, "brief.json")), false);
+});
+
+test("search keeps news with each profile and does not reuse a manual candidate", async () => {
+  const server = createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+      const domains = body.includeDomains || [];
+      let payload = { results: [] };
+      if (req.url === "/contents") {
+        payload = { results: [] };
+      } else if (domains.includes("linkedin.com")) {
+        payload = {
+          results: [
+            { url: "https://www.linkedin.com/in/dana-one", title: "Dana Whitfield", text: "Dana Whitfield, Scottsdale." },
+            { url: "https://www.linkedin.com/in/dana-two", title: "Dana Whitfield", text: "Dana Whitfield, Scottsdale." },
+          ],
+        };
+      } else if (body.category === "news") {
+        payload = {
+          results: [{
+            url: "https://news.example.com/dana-whitfield",
+            title: "Dana Whitfield interview",
+            text: "Dana Whitfield spoke in Scottsdale.",
+          }],
+        };
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(payload));
+    });
+  });
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const id = run(["intake", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"], ctx).payload.client_id;
+    addEvidence(ctx, id, {
+      url: "https://example.com/owner-notes",
+      title: "Owner notes",
+      excerpt: "Dana Whitfield sent these notes.",
+      origin: "manual",
+      query: "owner paste",
+      candidate: 1,
+    });
+    const searched = await runAsync(["search", id, "--actor", "owner"], ctx, {
+      EXA_API_KEY: "exa-test-key",
+      EXA_API_BASE: `http://127.0.0.1:${port}`,
+    });
+    assert.equal(searched.payload.ok, true, searched.stdout + searched.stderr);
+    const exaCandidates = [...new Set(searched.payload.sources.map((item) => item.candidate))];
+    assert.deepEqual(exaCandidates, [2, 3]);
+    const news = searched.payload.sources.filter((item) => item.url.includes("news.example.com"));
+    assert.deepEqual(news.map((item) => item.candidate).sort(), [2, 3]);
+    const listed = run(["identity", "candidates", id], ctx);
+    assert.deepEqual(listed.payload.candidates.map((item) => item.n), [1, 2, 3]);
+    const picked = listed.payload.candidates.find((item) => item.n === 2);
+    assert.ok(picked.evidence_ids.length >= 2, JSON.stringify(picked));
+    confirm(ctx, id, 2);
+    const newsId = news.find((item) => item.candidate === 2).evidence_id;
+    const profileId = searched.payload.sources.find((item) => item.candidate === 2 && item.url.includes("dana-one")).evidence_id;
+    const brief = loadGood([profileId], (next) => {
+      next.identity_match.level = "medium";
+      next.identity_match.basis = "One public profile uses this full name.";
+      next.appendix.sources = [
+        { evidence_id: profileId, url: "https://www.linkedin.com/in/dana-one", title: "Dana Whitfield" },
+        { evidence_id: newsId, url: "https://news.example.com/dana-whitfield", title: "Dana Whitfield interview" },
+      ];
+    });
+    const checked = validate(ctx, id, brief);
+    assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
