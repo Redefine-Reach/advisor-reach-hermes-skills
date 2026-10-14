@@ -72,6 +72,7 @@ Run, in order, with `python3 /opt/data/skills/client-profile/scripts/cp.py`. Eve
 2. **Search.** `cp.py search <client_id>`  
    This runs every returned query through Exa (`EXA_API_KEY`, or `exa_api_key` in config.json). It fetches the top pages, drops duplicate URLs, and stores one evidence row per kept page. Do not call `web_search` or `web_extract` for this skill. Do not stop after the first hit. `cp.py queries` only lists the strings; it does not search.
    If search returns `search_unavailable`, say that message to the owner and do not write a research brief. A brief with web evidence is refused until search can run.
+   If search returns `couldnt_find`, tell the owner exactly `couldn't find` and do not write a brief. Zero sources is that outcome, not an empty list.
 3. **Evidence.** Pages from `search` are already stored. Add a manual paste only when the owner supplies one:  
    `cp.py evidence add <client_id> --url ... --title ... --excerpt ... --origin manual --query "owner paste" --candidate N`  
    Do not put owner-pasted text on a web result's candidate. Cite every URL in `search.json` `sources` from `appendix.sources`.
