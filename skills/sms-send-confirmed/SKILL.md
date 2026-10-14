@@ -84,7 +84,7 @@ pass the destination as the approver.
 2. One plain-text body, 640 characters or fewer (the box sends one segment
    at that cap; a longer body would become more than one Telnyx send).
    No Markdown. If you need it shorter, ask before staging.
-3. Run `stage` with `--approver`, `--dest`, and `--body`. This does not send.
+3. Run `stage` with `--approver`, `--dest`, and `--body`. `--why`, `--source-kind`, `--source-date`, and `--source-name` are optional. Pass them when you have them. Leaving them off still stages. The script stores each one on the draft. This does not send.
 4. Your entire reply to the owner is the JSON `attestation` field, verbatim.
    It shows From (the box DID), the destination, the body, and the
    authorization line. Do not paraphrase it, do not add a second draft, and
