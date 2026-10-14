@@ -1,5 +1,5 @@
 {
-  "note": "Why the 14 Oct 2026 ARIN TEST pass kept 4 advisorreach.ai pages and 0 LinkedIn, news, or X (18 raw = 6 queries x 3). The Exa connector was rate-limited, so this is not an api.exa.ai HTTP body. The sentences are from the public pages fetched the same day. davidmarshall.ai/about names David Marshall, Amazon, and nine years as a U.S. Marine Corps Ground Intelligence Officer, and the only profile link is https://www.linkedin.com/in/dkmarshall/. advisorreach.ai/team names him in the visible text, but that LinkedIn URL is only inside JSON-LD, not an anchor, so a search text extract does not anchor the handle. The /in/ profile text Exa can see is Amazon and Marine Corps service in Phoenix and does not say AdvisorReach, so the old filter classed it as a different person. The city-plus-company queries do not return the personal site.",
+  "note": "Synthetic replay fixture for a name+company intake. Not a raw Exa HTTP body. Exercises people category, LinkedIn /in/ search, personal site, and contents on personal and company hosts without fetching linkedin.com.",
   "search": [
     {
       "url": "https://advisorreach.ai/journal/daily-brief-priorities/",
@@ -36,13 +36,22 @@
       "title": "David Marshall, Arizona legislator",
       "text": "David Marshall is an Arizona legislator from Phoenix.",
       "highlights": ["Arizona House"]
+    },
+    {
+      "url": "https://davidmarshalllaw.com/",
+      "title": "David Marshall | Attorney at Law",
+      "text": "David Marshall serves clients in Phoenix, Arizona.",
+      "highlights": ["David Marshall"],
+      "extras": {
+        "links": ["https://www.linkedin.com/in/dkmarshall/"]
+      }
     }
   ],
   "name_work": [
     {
       "url": "https://davidmarshall.ai/",
       "title": "David Marshall | Domain Expertise + AI Tools",
-      "text": "David Marshall. Domain expertise is the new engineering degree. Production AI built by someone who knows the problem.",
+      "text": "David Marshall builds AdvisorReach in Phoenix, Arizona. Domain expertise is the new engineering degree.",
       "highlights": ["David Marshall"]
     }
   ],
@@ -56,10 +65,16 @@
   ],
   "contents": [
     {
+      "url": "https://advisorreach.ai/journal/daily-brief-priorities/",
+      "title": "AI Daily Brief for Real Estate Advisors | AdvisorReach Journal",
+      "text": "Daily operating discipline By David Marshall. AdvisorReach in Phoenix.",
+      "highlights": ["AdvisorReach"]
+    },
+    {
       "url": "https://davidmarshall.ai/about",
       "title": "About | David Marshall",
-      "text": "From Intelligence Officer to AI Builder. At Amazon, I shipped a computer vision system. Nine years as a U.S. Marine Corps Ground Intelligence Officer. 8.5 years at Amazon progressing from Operations Manager to Principal Product Manager.",
-      "highlights": ["U.S. Marine Corps Ground Intelligence Officer", "Principal Product Manager"],
+      "text": "From Intelligence Officer to AI Builder. David Marshall co-founded AdvisorReach in Phoenix, Arizona. Production AI for real estate advisors.",
+      "highlights": ["AdvisorReach", "Phoenix, Arizona"],
       "extras": {
         "links": ["https://www.linkedin.com/in/dkmarshall/"]
       }

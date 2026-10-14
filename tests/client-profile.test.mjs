@@ -477,28 +477,30 @@ test("query escaping and phone email dob stripping", () => {
   assert.doesNotMatch(blob, /dana@example.com|555-0199|01\/02\/1980|85251/);
   assert.match(queries.payload.queries[0].q, /Ann \\"AJ\\" Example/);
   assert.match(queries.payload.queries[0].q, /LinkedIn/);
-  assert.match(queries.payload.queries[1].q, /\bX\b/);
-  assert.match(queries.payload.queries[2].q, /company site/);
-  assert.match(queries.payload.queries[3].q, /news/);
-  assert.match(queries.payload.queries[4].q, /podcast/);
-  assert.equal(queries.payload.queries[5].target, "general");
+  assert.match(queries.payload.queries[1].q, /Ann \\"AJ\\" Example/);
+  assert.match(queries.payload.queries[2].q, /personal site/);
+  assert.match(queries.payload.queries[3].q, /company site/);
+  assert.match(queries.payload.queries[4].q, /news/);
+  assert.match(queries.payload.queries[5].q, /podcast/);
+  assert.match(queries.payload.queries[6].q, /\bX\b/);
+  assert.equal(queries.payload.queries[7].target, "general");
 });
 
-test("queries cover LinkedIn, X, the company site, news, podcasts, and a general search, and cap at 10", () => {
+test("queries cover LinkedIn, people, personal site, company, news, podcasts, X, and keyword search, and cap at 12", () => {
   const ctx = world();
   const args = ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"];
   for (let i = 0; i < 8; i += 1) args.push("--url", `https://example.com/p/${i}`);
   const intake = run(args, ctx);
   assert.equal(intake.payload.ok, true, intake.stdout);
   const queries = run(["queries", intake.payload.client_id], ctx);
-  assert.equal(queries.payload.queries.length, 10);
+  assert.equal(queries.payload.queries.length, 12);
   assert.deepEqual(
-    queries.payload.queries.slice(0, 6).map((item) => item.target),
-    ["linkedin", "x", "company", "news", "podcast", "general"],
+    queries.payload.queries.slice(0, 8).map((item) => item.target),
+    ["linkedin", "people", "personal_site", "company", "news", "podcast", "x", "general"],
   );
-  assert.equal(queries.payload.queries[6].target, "linkedin_profile");
-  assert.match(queries.payload.queries[6].q, /site:linkedin\.com\/in/);
-  assert.match(queries.payload.queries[7].q, /https:\/\/example\.com\/p\/0/);
+  assert.equal(queries.payload.queries[8].target, "linkedin_profile");
+  assert.match(queries.payload.queries[8].q, /site:linkedin\.com\/in/);
+  assert.match(queries.payload.queries[9].q, /https:\/\/example\.com\/p\/0/);
 });
 
 test("case 21 private instagram is not fetched", () => {
@@ -2035,7 +2037,7 @@ test("search runs every Exa query, fetches pages, dedupes, and cites each source
           results: [{
             url: "https://example.com/red-rock",
             title: "Dana Whitfield at Red Rock",
-            text: "Dana Whitfield, a broker, leads the Scottsdale desk at Red Rock Realty.",
+            text: "Dana Whitfield, a broker, leads the Scottsdale desk at Red Rock Realty in Scottsdale, Arizona.",
           }],
         };
       } else if (domains.includes("linkedin.com")) {
@@ -2083,15 +2085,17 @@ test("search runs every Exa query, fetches pages, dedupes, and cites each source
     assert.doesNotMatch(searched.stdout, /exa-test-key/);
     const searchHits = hits.filter((hit) => hit.path === "/search");
     const contentHits = hits.filter((hit) => hit.path === "/contents");
-    assert.equal(searchHits.length, 8);
+    assert.equal(searchHits.length, 10);
     assert.equal(contentHits.length, 1);
     assert.ok(searchHits.every((hit) => hit.key === "exa-test-key"));
     assert.deepEqual(searchHits.map((hit) => hit.body.includeDomains?.[0] || hit.body.category || hit.body.type), [
       "linkedin.com",
-      "x.com",
+      "people",
+      "auto",
       "auto",
       "news",
       "auto",
+      "x.com",
       "keyword",
       "auto",
       "linkedin.com",
@@ -2100,7 +2104,7 @@ test("search runs every Exa query, fetches pages, dedupes, and cites each source
     const urls = searched.payload.sources.map((item) => item.url);
     assert.deepEqual(urls.sort(), [
       "https://example.com/red-rock",
-      "https://news.example.com/dana",
+      "https://news.example.com/dana/",
       "https://www.linkedin.com/in/dana-whitfield-example",
     ]);
     confirm(ctx, id, 1);
@@ -2239,17 +2243,24 @@ test("Exa base prefers EXA_API_BASE, then EXA_BASE_URL, and joins /search once",
       const payload = path.endsWith("/contents")
         ? {
             results: [{
-              url: "https://www.linkedin.com/in/dana-whitfield-example",
-              title: "Dana Whitfield",
-              text: "Dana Whitfield is a broker in Scottsdale.",
+              url: "https://example.com/red-rock",
+              title: "Dana Whitfield at Red Rock",
+              text: "Dana Whitfield, a broker, in Scottsdale, Arizona.",
             }],
           }
         : {
-            results: [{
-              url: "https://www.linkedin.com/in/dana-whitfield-example",
-              title: "Dana Whitfield",
-              text: "",
-            }],
+            results: [
+              {
+                url: "https://www.linkedin.com/in/dana-whitfield-example",
+                title: "Dana Whitfield",
+                text: "Dana Whitfield is a broker in Scottsdale, Arizona.",
+              },
+              {
+                url: "https://example.com/red-rock",
+                title: "Red Rock Realty",
+                text: "",
+              },
+            ],
           };
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(payload));
@@ -3177,15 +3188,15 @@ test("intake company and urls feed the search queries and the disambiguation anc
     ).payload.client_id;
     const queries = run(["queries", id], ctx).payload;
     assert.equal(queries.ok, true, JSON.stringify(queries));
-    assert.equal(queries.queries.length, 9);
-    for (const item of queries.queries.slice(0, 6)) {
+    assert.equal(queries.queries.length, 11);
+    for (const item of queries.queries.slice(0, 8)) {
       assert.match(item.q, /"Riley Example"/);
       assert.match(item.q, /"Austin"/);
       assert.match(item.q, /"AdvisorReach"/);
     }
     assert.deepEqual(
-      queries.queries.slice(0, 6).map((item) => item.target),
-      ["linkedin", "x", "company", "news", "podcast", "general"],
+      queries.queries.slice(0, 8).map((item) => item.target),
+      ["linkedin", "people", "personal_site", "company", "news", "podcast", "x", "general"],
     );
     const urlQuery = queries.queries.find((item) => item.target === "url");
     assert.ok(urlQuery);
@@ -3408,7 +3419,7 @@ test("a company anchor drops Phoenix city-only namesakes and keeps the company s
     assert.equal(searched.payload.conflict, false);
     assert.equal(searched.payload.excluded_people, 2);
     assert.deepEqual(searched.payload.counts, {
-      raw: 24,
+      raw: 30,
       deduped: 3,
       name_matched: 3,
       anchor_kept: 1,
@@ -3578,7 +3589,7 @@ test("replayed David Marshall search keeps other source kinds and still drops na
   assert.ok(hosts.has("advisorreach.ai") && hosts.has("linkedin.com") && hosts.has("x.com"));
   assert.ok(hosts.has("news.example.com") && hosts.has("podcast.example.com"));
   const issued = phoenix.hits.filter((hit) => hit.path === "/search");
-  assert.equal(issued.length, 8);
+  assert.equal(issued.length, 10);
   assert.ok(issued.some((hit) => String(hit.body.query || "").includes("site:linkedin.com/in")));
   assert.ok(issued.some((hit) => (hit.body.includeDomains || []).includes("linkedin.com") && hit.body.query.includes('"AdvisorReach"') && hit.body.query.includes("LinkedIn")));
   assert.ok(issued.some((hit) => (hit.body.includeDomains || []).includes("x.com")));
@@ -4088,6 +4099,7 @@ test("David Marshall's personal site and LinkedIn profile are kept, and namesake
     assert.ok(urls.some((url) => url.includes("/posts/dkmarshall_vibecoding")));
     assert.equal(urls.includes("https://www.axios.com/local/phoenix/david-marshall-recorder"), false);
     assert.equal(urls.includes("https://www.azleg.gov/members/david-marshall"), false);
+    assert.equal(urls.some((url) => url.includes("davidmarshalllaw.com")), false);
     const hosts = new Set(urls.map((url) => new URL(url).hostname.replace(/^www\./, "")));
     assert.ok(hosts.has("davidmarshall.ai"));
     assert.ok(hosts.has("linkedin.com"));
@@ -4097,6 +4109,7 @@ test("David Marshall's personal site and LinkedIn profile are kept, and namesake
     const dropped = new Map(stored.dropped.map((item) => [item.url, item.reason]));
     assert.equal(dropped.get("https://www.axios.com/local/phoenix/david-marshall-recorder"), "namesake");
     assert.equal(dropped.get("https://www.azleg.gov/members/david-marshall"), "namesake");
+    assert.equal(dropped.get("https://davidmarshalllaw.com/"), "namesake");
     assert.equal(dropped.has("https://www.linkedin.com/in/dkmarshall"), false);
     const issued = hits.filter((hit) => hit.path === "/search");
     assert.ok(issued.some((hit) => String(hit.body.query || "").includes("site:linkedin.com/in")));
@@ -4105,6 +4118,8 @@ test("David Marshall's personal site and LinkedIn profile are kept, and namesake
     assert.equal(contents.length, 1);
     const fetched = contents[0].body.urls || [];
     assert.ok(fetched.some((url) => url.includes("davidmarshall.ai")));
+    assert.ok(fetched.some((url) => url.includes("advisorreach.ai/journal")));
+    assert.ok(!fetched.some((url) => url.includes("linkedin.com")));
     assert.ok(fetched.length <= 12);
   } finally {
     await new Promise((resolve) => server.close(resolve));
@@ -4118,7 +4133,6 @@ test("one pending candidate resolves in identity candidates and the next turn wr
   assert.match(skill, /Do not ask which profile/);
   assert.match(skill, /Go straight to the PDF/);
   assert.match(skill, /Never text "Reply 1"/);
-  assert.match(skill, /Reply 1 to continue or NONE/);
   assert.doesNotMatch(skill, /op: pick/);
   assert.doesNotMatch(skill, /\bconfirmed\b/i);
   const ctx = world();

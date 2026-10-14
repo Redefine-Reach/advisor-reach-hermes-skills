@@ -184,16 +184,21 @@ WARNING_TEXT = {
     "instructions_removed": "Instruction-like lines were removed from untrusted text.",
 }
 
-QUERY_CAP = 10
-# Six public targets, then a name-plus-work search and a LinkedIn profile search.
-# Known profile URLs fill any room left under the cap.
-CONTENTS_CAP = 5
+QUERY_CAP = 12
+# Parallel Exa searches: people category, LinkedIn-only, personal site, company,
+# news, keyword, then name-plus-work and LinkedIn /in/ when intake allows.
+# Known profile URLs fill any room left under the cap. LinkedIn pages stay on
+# search snippets; /contents never fetches linkedin.com.
+CONTENTS_PER_SITE = 2
+CONTENTS_MAX_URLS = 12
 QUERY_TARGETS = (
     {"target": "linkedin", "stem": "LinkedIn", "include_domains": ["linkedin.com"]},
-    {"target": "x", "stem": "X", "include_domains": ["x.com", "twitter.com"]},
+    {"target": "people", "stem": "", "category": "people"},
+    {"target": "personal_site", "stem": "personal site"},
     {"target": "company", "stem": "company site"},
     {"target": "news", "stem": "news", "category": "news"},
     {"target": "podcast", "stem": "podcast"},
+    {"target": "x", "stem": "X", "include_domains": ["x.com", "twitter.com"]},
     {"target": "general", "stem": "", "type": "keyword"},
 )
 SEARCH_UNAVAILABLE = (
@@ -1357,7 +1362,7 @@ def person_name_slug(first: str, last: str) -> str:
 
 
 def name_domain_hit(url: str, first: str, last: str) -> bool:
-    """davidmarshall.ai is this person's site. A shared news host is not."""
+    """A registrable label exactly matching first+last (e.g. janedoe.com). Not a substring."""
     slug = person_name_slug(first, last)
     if len(slug) < 6:
         return False
@@ -1365,23 +1370,30 @@ def name_domain_hit(url: str, first: str, last: str) -> bool:
     if not host or host in SOCIAL_HOSTS:
         return False
     labels = [label for label in host.split(".") if label not in {"www", "com", "ai", "net", "org", "io", "co"}]
-    return any(label == slug or slug in label for label in labels)
+    return any(label == slug for label in labels)
+
+
+def key_page_paths() -> tuple[str, ...]:
+    # Home first, then journal or podcast before about when only two pages fit per host.
+    return ("/", "/journal", "/podcast", "/about", "/team")
 
 
 def key_page_urls(hosts: list[str]) -> list[str]:
-    """Home, about, team, journal, and podcast. Five pages, one contents call."""
+    """Up to two pages per host. One contents call."""
     urls: list[str] = []
+    paths = key_page_paths()
 
-    def push(url: str) -> None:
-        if url not in urls and len(urls) < CONTENTS_CAP:
-            urls.append(url)
+    def count_host(host: str) -> int:
+        return sum(1 for item in urls if host_of(item) == host)
 
     for host in hosts:
-        push(f"https://{host}/")
-        push(f"https://{host}/about")
-    for host in hosts:
-        for path in ("team", "journal", "podcast"):
-            push(f"https://{host}/{path}")
+        for path in paths:
+            if count_host(host) >= CONTENTS_PER_SITE or len(urls) >= CONTENTS_MAX_URLS:
+                break
+            suffix = "" if path == "/" else path
+            url = f"https://{host}{suffix or '/'}"
+            if url not in urls:
+                urls.append(url)
     return urls
 
 
@@ -2216,18 +2228,22 @@ def source_matches_anchors(title: str, excerpt: str, url: str, intake: dict, sni
         or company_slug_hit(url, company)
     )
     parts = split_name(intake.get("name") or "")
-    # A site whose domain is the person's name is their site even when the
-    # page never repeats the company. davidmarshall.ai is the case.
-    name_site = bool(parts) and name_domain_hit(url, parts[0], parts[1]) and full_name_match(blob, parts[0], parts[1])
     link_hit = link_matches(url, urls) or domain_matches(url, urls)
-    if name_site:
-        return True
+    city_hit = any(phrase_present(blob, phrase) for phrase in place_phrases(intake.get("city") or ""))
+    role_hit = bool(role) and phrase_present(blob, role)
+    name_site_domain = bool(parts) and name_domain_hit(url, parts[0], parts[1])
+    if name_site_domain and full_name_match(blob, parts[0], parts[1]):
+        secondary = (
+            company_hit
+            or link_hit
+            or (city_hit and (role_hit or state_in_text(blob, intake.get("city") or "")))
+        )
+        if secondary:
+            return True
     if company or urls:
         return company_hit or link_hit
-    city_hit = any(phrase_present(blob, phrase) for phrase in place_phrases(intake.get("city") or ""))
     if not city_hit:
         return False
-    role_hit = bool(role) and phrase_present(blob, role)
     return role_hit or state_in_text(blob, intake.get("city") or "")
 
 
@@ -2408,8 +2424,10 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
     if succeeded == 0:
         save_evidence(path, rows)
         write_search_unavailable(path, client_id, actor, queries, raw_count)
-    fetch_urls = list(need_text)
+    fetch_urls = [url for url in need_text if host_of(url) != "linkedin.com"]
     for page in key_page_urls(sites_to_fetch(found, intake, first, last)):
+        if host_of(page) == "linkedin.com":
+            continue
         if canon_url(page) not in {canon_url(item) for item in fetch_urls}:
             fetch_urls.append(page)
     if fetch_urls:
@@ -3049,9 +3067,6 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
             "evidence_ids": [row["evidence_id"] for row in group],
         })
     write_json(path / "candidates.json", {"candidates": candidates, "status": "matches"})
-    pending = remember_pick_pending(client_id, path, intake, candidates)
-    # One person is a match. Select them here so the text path can render
-    # without a pick op the current render_file plugin does not have.
     if len(candidates) == 1:
         number = int(candidates[0]["n"])
         actor = actor_of(opts) or "unspecified"
@@ -3061,11 +3076,16 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
         city = intake.get("city") or ""
         where = f" in {city}" if city else ""
         say = f"Matched {intake.get('name') or ''}{where}: {candidates[0]['label']}."
-        pending["awaiting"] = False
-        pending["closed"] = "auto"
-        pending["selected"] = 1
-        pending["prompt"] = say
-        write_json(path / "pending.json", pending)
+        write_json(path / "pending.json", {
+            "client_id": client_id,
+            "name": intake.get("name") or "",
+            "city": city,
+            "awaiting": False,
+            "closed": "auto",
+            "selected": 1,
+            "prompt": say,
+            "saved_at": now_iso(),
+        })
         emit({
             "ok": True,
             "status": "matches",
@@ -3078,6 +3098,7 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
             "evidence": selected_evidence_text(path),
             "pending_saved": True,
         })
+    pending = remember_pick_pending(client_id, path, intake, candidates)
     emit({
         "ok": True,
         "status": "matches",
