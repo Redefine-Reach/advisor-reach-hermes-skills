@@ -2,7 +2,8 @@
 """Client-profile rules tool. One JSON object on stdout. Stdlib only.
 
 Data root: $CLIENT_PROFILE_ROOT or /opt/data/client-profile.
-Config:    $CLIENT_PROFILE_ROOT/config.json  {"enabled": true|false, "consent_required": true, ...}
+Config:    $CLIENT_PROFILE_ROOT/config.json  {"enabled": true|false, ...}
+           A stored consent_required key is ignored. Research is public information only.
 Audit:     <root>/../audit/client-profile.jsonl
 
 No network, no CRM write, no Human Design, no street-address field.
@@ -182,8 +183,6 @@ QUERY_CAP = 6
 EXCERPT_CAP = 1200
 PURGE_DAYS = 90
 ARTIFACT_DAYS = 7
-CONSENT_LIMIT = 300
-CONSENT_METHODS = {"text", "verbal", "email"}
 
 
 def emit(obj: dict, code: int = 0) -> None:
@@ -200,18 +199,6 @@ def fail(error: str, message: str, extra: dict | None = None) -> None:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def parse_instant(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed
 
 
 def data_root() -> Path:
@@ -278,10 +265,8 @@ def is_enabled() -> bool:
 
 
 def is_consent_required() -> bool:
-    cfg = load_config()
-    if not isinstance(cfg, dict) or "consent_required" not in cfg:
-        return True
-    return cfg.get("consent_required") is True
+    # Existing boxes store consent_required: true. That key must not gate research.
+    return False
 
 
 def write_json(path: Path, obj: object) -> None:
@@ -327,65 +312,6 @@ def gate(actor: str | None, *, mutate: bool) -> str:
             "Client profile is off. config.json is missing or enabled is false.",
         )
     return actor or "unspecified"
-
-
-def load_consent(path: Path) -> dict | None:
-    file = path / "consent.json"
-    if not file.is_file():
-        return None
-    try:
-        data = json.loads(file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def consent_recorded(path: Path) -> bool:
-    data = load_consent(path)
-    if not data:
-        return False
-    recorded_at = data.get("recorded_at")
-    return (
-        data.get("status") == "recorded"
-        and data.get("method") in CONSENT_METHODS
-        and isinstance(recorded_at, str)
-        and bool(recorded_at)
-    )
-
-
-def require_consent(path: Path) -> None:
-    if not is_consent_required():
-        return
-    if consent_recorded(path):
-        return
-    fail("consent_required", "Record the client's consent before research or a brief.")
-
-
-def agent_label(opts: dict[str, list[str]]) -> str:
-    raw = flag(opts, "agent")
-    if not raw:
-        cfg = load_config() or {}
-        configured = cfg.get("agent_name")
-        raw = configured if isinstance(configured, str) else ""
-    cleaned, _ = redact(raw)
-    return cleaned or "your advisor"
-
-
-def consent_text(agent: str) -> str:
-    core = "I'd like to use public information to prepare for our appointment."
-    tail = " Reply YES to agree."
-    text = f"Hi, this is {agent}. {core}{tail}"
-    if len(text) <= CONSENT_LIMIT:
-        return text
-    room = CONSENT_LIMIT - len(f"Hi, this is . {core}{tail}")
-    if room >= 1:
-        text = f"Hi, this is {shrink(agent, room)}. {core}{tail}"
-        if len(text) <= CONSENT_LIMIT and "YES" in text:
-            return text
-    fallback = f"Hi, this is your advisor. {core}{tail}"
-    if len(fallback) <= CONSENT_LIMIT:
-        return fallback
-    return f"{core}{tail}"[:CONSENT_LIMIT]
 
 
 def warning(code: str) -> dict:
@@ -668,23 +594,6 @@ def claim_targets(brief: dict) -> list[tuple[str, dict, bool]]:
     return found
 
 
-def evidence_consent_errors(path: Path, rows: list[dict]) -> list[dict]:
-    """Each evidence item must have been added after consent was recorded."""
-    if not is_consent_required():
-        return []
-    recorded = parse_instant((load_consent(path) or {}).get("recorded_at"))
-    errors: list[dict] = []
-    for row in rows:
-        added = parse_instant(row.get("added_at"))
-        if recorded is None or added is None or not added > recorded:
-            err: dict = {"code": "evidence_before_consent"}
-            evidence_id = row.get("evidence_id")
-            if isinstance(evidence_id, str):
-                err["evidence_id"] = evidence_id
-            errors.append(err)
-    return errors
-
-
 def evaluate_brief(path: Path, brief: dict) -> dict:
     schema = load_schema()
     errors: list[dict] = []
@@ -702,7 +611,6 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
         }
     errors.extend(screen_brief(brief))
     rows = load_evidence(path)
-    errors.extend(evidence_consent_errors(path, rows))
     known = {row["evidence_id"]: row for row in rows}
     confirmed = confirmed_ids(rows)
     style = brief["communication_style"]
@@ -996,6 +904,7 @@ def cmd_selftest() -> None:
         schema_ok = False
     checks.append({"name": "schema", "ok": schema_ok})
     checks.append({"name": "template", "ok": TEMPLATE_PATH.is_file()})
+    checks.append({"name": "public_research", "ok": is_consent_required() is False})
     present = os.path.isfile("/usr/bin/weasyprint") and os.access("/usr/bin/weasyprint", os.X_OK)
     checks.append({"name": "weasyprint", "ok": True, "present": present})
     required = [c for c in checks if c["name"] != "weasyprint"]
@@ -1091,7 +1000,6 @@ def cmd_queries(client_id: str, opts: dict[str, list[str]]) -> None:
     if not is_enabled():
         fail("disabled", "Client profile is off. config.json is missing or enabled is false.")
     path = require_client(client_id)
-    require_consent(path)
     intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
     urls = list(intake.get("urls") or [])
     for item in intake.get("inaccessible_urls") or []:
@@ -1111,7 +1019,6 @@ def cmd_queries(client_id: str, opts: dict[str, list[str]]) -> None:
 def cmd_evidence_add(client_id: str, opts: dict[str, list[str]]) -> None:
     actor = gate(actor_of(opts), mutate=True)
     path = require_client(client_id)
-    require_consent(path)
     url = flag(opts, "url") or ""
     title = flag(opts, "title") or ""
     excerpt = flag(opts, "excerpt") or ""
@@ -1212,11 +1119,7 @@ def fence_field(value: object) -> str:
 def cmd_evidence_render(client_id: str, opts: dict[str, list[str]]) -> None:
     gate(actor_of(opts), mutate=False)
     path = require_client(client_id)
-    require_consent(path)
     rows = load_evidence(path)
-    timing = evidence_consent_errors(path, rows)
-    if timing:
-        emit({"ok": False, "errors": timing}, 1)
     blocks: list[str] = []
     for row in rows:
         if row.get("identity_status") != "confirmed":
@@ -1237,7 +1140,6 @@ def cmd_evidence_render(client_id: str, opts: dict[str, list[str]]) -> None:
 def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
     gate(actor_of(opts), mutate=False)
     path = require_client(client_id)
-    require_consent(path)
     grouped: dict[int, list[dict]] = {}
     for row in load_evidence(path):
         if row.get("identity_status") == "inaccessible":
@@ -1266,7 +1168,6 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
 def cmd_confirm(client_id: str, opts: dict[str, list[str]]) -> None:
     actor = gate(actor_of(opts), mutate=True)
     path = require_client(client_id)
-    require_consent(path)
     none = "none" in opts
     candidate_raw = flag(opts, "candidate")
     if none and candidate_raw:
@@ -1315,7 +1216,6 @@ def cmd_confirm(client_id: str, opts: dict[str, list[str]]) -> None:
 def cmd_validate(client_id: str, brief_file: str, opts: dict[str, list[str]]) -> None:
     actor = gate(actor_of(opts), mutate=True)
     path = require_client(client_id)
-    require_consent(path)
     source = Path(brief_file)
     if not source.is_file():
         fail("brief_missing", "Brief JSON path does not exist.")
@@ -1341,7 +1241,6 @@ def cmd_validate(client_id: str, brief_file: str, opts: dict[str, list[str]]) ->
 def cmd_render(client_id: str, opts: dict[str, list[str]]) -> None:
     actor = gate(actor_of(opts), mutate=True)
     path = require_client(client_id)
-    require_consent(path)
     brief_path = path / "brief.json"
     if not brief_path.is_file():
         fail("not_validated", "No validated brief.json.")
@@ -1372,7 +1271,6 @@ def public_base() -> str:
 def cmd_deliver(client_id: str, opts: dict[str, list[str]]) -> None:
     actor = gate(actor_of(opts), mutate=True)
     path = require_client(client_id)
-    require_consent(path)
     html_path = path / "brief.html"
     pdf_path = path / "brief.pdf"
     if pdf_path.is_file():
@@ -1505,72 +1403,13 @@ def cmd_wrong_identity(client_id: str, opts: dict[str, list[str]]) -> None:
     emit({"ok": True, "deleted": True})
 
 
-def cmd_consent_request(client_id: str, opts: dict[str, list[str]]) -> None:
-    gate(actor_of(opts), mutate=True)
-    require_client(client_id)
-    text = consent_text(agent_label(opts))
-    if len(text) > CONSENT_LIMIT or "YES" not in text:
-        fail("consent_text", "Could not fit a consent message in 300 characters.")
-    emit({"ok": True, "text": text})
-
-
-def cmd_consent_record(client_id: str, opts: dict[str, list[str]]) -> None:
-    actor = gate(actor_of(opts), mutate=True)
-    path = require_client(client_id)
-    method = (flag(opts, "method") or "").lower()
-    by = flag(opts, "by") or ""
-    if method not in CONSENT_METHODS:
-        fail("bad_method", "Method must be text, verbal, or email.")
-    if by != "owner":
-        fail("owner_only", "Consent is recorded only by the owner.")
-    recorded_at = now_iso()
-    record = {
-        "status": "recorded",
-        "method": method,
-        "by": "owner",
-        "actor": actor,
-        "recorded_at": recorded_at,
-    }
-    note = flag(opts, "note")
-    if note:
-        cleaned, _ = redact(note)
-        if cleaned:
-            record["note"] = cleaned[:500]
-    write_json(path / "consent.json", record)
-    audit("consent_record", client_id, {"consents": 1}, actor)
-    emit({
-        "ok": True,
-        "status": "recorded",
-        "method": method,
-        "recorded_at": recorded_at,
-    })
-
-
-def cmd_consent_revoke(client_id: str, opts: dict[str, list[str]]) -> None:
-    # Same privacy delete as wrong-identity, including when the skill is off.
+def cmd_delete_client(client_id: str, opts: dict[str, list[str]], action: str) -> None:
+    # Per-client delete stays available when the skill is off (uninstall keeps the data).
     actor = gate(actor_of(opts), mutate=False)
     path = require_client(client_id)
     removed_artifact = delete_profile(path)
-    audit("consent_revoke", client_id, {"profiles": 1, "artifacts": removed_artifact}, actor)
+    audit(action, client_id, {"profiles": 1, "artifacts": removed_artifact}, actor)
     emit({"ok": True, "deleted": True})
-
-
-def cmd_consent_status(client_id: str, opts: dict[str, list[str]]) -> None:
-    gate(actor_of(opts), mutate=False)
-    path = require_client(client_id)
-    required = is_consent_required()
-    if not consent_recorded(path):
-        emit({"ok": True, "status": "missing", "required": required})
-    data = load_consent(path) or {}
-    emit({
-        "ok": True,
-        "status": "recorded",
-        "required": required,
-        "method": data.get("method"),
-        "by": data.get("by"),
-        "actor": data.get("actor"),
-        "recorded_at": data.get("recorded_at"),
-    })
 
 
 def profile_dirs() -> list[Path]:
@@ -1788,20 +1627,18 @@ def main(argv: list[str]) -> None:
         if len(positional) != 1:
             fail("usage", "export <client_id>")
         cmd_export(positional[0], opts)
+    if command in {"delete", "forget"}:
+        positional, opts = parse_flags(rest)
+        if len(positional) != 1:
+            fail("usage", "delete <client_id>")
+        cmd_delete_client(positional[0], opts, "delete")
     if command == "consent":
-        if not rest or rest[0] not in {"request", "record", "revoke", "status"}:
-            fail("usage", "consent request|record|revoke|status <client_id>")
+        if not rest or rest[0] != "revoke":
+            fail("usage", "delete <client_id> removes this client. consent revoke is the same delete.")
         positional, opts = parse_flags(rest[1:])
         if len(positional) != 1:
-            fail("usage", "consent requires a client id")
-        action = rest[0]
-        if action == "request":
-            cmd_consent_request(positional[0], opts)
-        if action == "record":
-            cmd_consent_record(positional[0], opts)
-        if action == "revoke":
-            cmd_consent_revoke(positional[0], opts)
-        cmd_consent_status(positional[0], opts)
+            fail("usage", "consent revoke <client_id>")
+        cmd_delete_client(positional[0], opts, "consent_revoke")
     fail("usage", "Unknown command.")
 
 

@@ -19,9 +19,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-BEGIN = "<!-- BEGIN client-profile v1 -->"
-END = "<!-- END client-profile v1 -->"
-BLOCK_RE = re.compile(re.escape(BEGIN) + r".*?" + re.escape(END) + r"\n?", re.S)
+BEGIN = "<!-- BEGIN client-profile v2 -->"
+END = "<!-- END client-profile v2 -->"
+BLOCK_RE = re.compile(
+    r"<!-- BEGIN client-profile v\d+ -->.*?<!-- END client-profile v\d+ -->\n?",
+    re.S,
+)
 SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 HERE = Path(__file__).resolve().parent
 SKILL_SRC = HERE.parent
@@ -71,7 +74,7 @@ def backup_soul(path: Path) -> None:
 
 
 def block_present(text: str) -> bool:
-    return BEGIN in text and END in text
+    return BLOCK_RE.search(text) is not None
 
 
 def load_config(path: Path) -> dict | None:
@@ -164,11 +167,11 @@ def copy_skill(dest: Path) -> None:
 def write_soul_block(soul_path: Path, before: str) -> None:
     backup_soul(soul_path)
     block = SOUL_BLOCK.read_text(encoding="utf-8").strip() + "\n"
-    if block_present(before):
-        after = before if before.endswith("\n") else before + "\n"
-    else:
-        sep = "" if before.endswith("\n") or before == "" else "\n"
-        after = before + sep + "\n" + block
+    # Any older client-profile block, including v1, is replaced so a reinstall
+    # drops the consent sentence.
+    stripped = BLOCK_RE.sub("", before)
+    stripped = re.sub(r"\n{3,}", "\n\n", stripped).rstrip()
+    after = (stripped + "\n\n" + block) if stripped else block
     soul_path.write_text(after, encoding="utf-8")
 
 
@@ -220,8 +223,6 @@ def cmd_install(slug: str | None) -> None:
     existing = load_config(p["cfg"]) or {}
     existing["enabled"] = True
     existing["schema_version"] = 1
-    if "consent_required" not in existing:
-        existing["consent_required"] = True
     existing["installed_at"] = datetime.now(timezone.utc).isoformat()
     existing["tz"] = existing.get("tz") or "America/Phoenix"
     if slug:
@@ -277,7 +278,7 @@ def cmd_uninstall() -> None:
         "config": public_config(load_config(p["cfg"])),
         "enabled": False,
         "data_kept": True,
-        "message": "Client data was kept. Run purge or revoke if you want it gone.",
+        "message": "Client data was kept. Run purge or delete if you want it gone.",
     })
 
 
