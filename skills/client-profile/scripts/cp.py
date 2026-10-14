@@ -688,10 +688,131 @@ def claim_targets(brief: dict) -> list[tuple[str, dict, bool]]:
     return found
 
 
+def prepare_brief(brief: dict) -> tuple[dict, list[dict]]:
+    """Fill gaps the model can drop without changing the brief's claims.
+
+    A missing hypotheses list, verify_before_use, and the guardrail sentence
+    are tool defaults. A tool-call wrapper or a tool/tool_name key is unwrapped
+    and dropped so schema validation does not retry forever.
+    """
+    warnings: list[dict] = []
+    if not isinstance(brief, dict):
+        return brief, warnings
+    for key in ("arguments", "parameters", "input", "brief"):
+        inner = brief.get(key)
+        if isinstance(inner, dict) and "snapshot" in inner and "snapshot" not in brief:
+            tool = brief.get("tool") or brief.get("tool_name") or brief.get("name") or "client-profile"
+            warnings.append({
+                "code": "tool_name_defaulted",
+                "path": f"/{key}",
+                "tool": tool if isinstance(tool, str) else "client-profile",
+            })
+            brief = inner
+            break
+    for key in ("tool", "tool_name"):
+        if key in brief:
+            raw = brief.pop(key)
+            warnings.append({
+                "code": "tool_name_defaulted",
+                "path": f"/{key}",
+                "tool": raw if isinstance(raw, str) and raw else "client-profile",
+            })
+    if not isinstance(brief.get("hypotheses"), list):
+        brief["hypotheses"] = []
+        warnings.append({"code": "hypotheses_defaulted", "path": "/hypotheses"})
+    if brief.get("verify_before_use") is not True:
+        brief["verify_before_use"] = True
+        warnings.append({"code": "verify_before_use_defaulted", "path": "/verify_before_use"})
+    notice = guardrail_const()
+    if brief.get("guardrail_notice") != notice:
+        brief["guardrail_notice"] = notice
+        warnings.append({"code": "guardrail_defaulted", "path": "/guardrail_notice"})
+    appendix = brief.get("appendix")
+    if not isinstance(appendix, dict):
+        brief["appendix"] = {"low_confidence": [], "sources": []}
+        warnings.append({"code": "appendix_defaulted", "path": "/appendix"})
+    else:
+        if not isinstance(appendix.get("low_confidence"), list):
+            appendix["low_confidence"] = []
+        if not isinstance(appendix.get("sources"), list):
+            appendix["sources"] = []
+    return brief, warnings
+
+
+def complete_kept_sources(brief: dict, rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Put every confirmed source in appendix.sources. Reject ids that were not kept."""
+    errors: list[dict] = []
+    warnings: list[dict] = []
+    appendix = brief.get("appendix")
+    if not isinstance(appendix, dict):
+        appendix = {"low_confidence": [], "sources": []}
+        brief["appendix"] = appendix
+    existing = appendix.get("sources") if isinstance(appendix.get("sources"), list) else []
+    kept: list[dict] = []
+    seen: set[str] = set()
+    for row in rows:
+        if row.get("identity_status") != "confirmed":
+            continue
+        evidence_id = row.get("evidence_id")
+        url = row.get("url") or ""
+        if not isinstance(evidence_id, str) or not evidence_id or evidence_id in seen:
+            continue
+        if not is_http_url(url):
+            continue
+        seen.add(evidence_id)
+        title = row.get("title") if isinstance(row.get("title"), str) and row.get("title") else url
+        kept.append({"evidence_id": evidence_id, "url": url, "title": title})
+    kept_ids = {item["evidence_id"] for item in kept}
+    for index, source in enumerate(existing):
+        if not isinstance(source, dict):
+            errors.append({"code": "unconfirmed_evidence", "path": f"/appendix/sources/{index}"})
+            continue
+        evidence_id = source.get("evidence_id")
+        if not isinstance(evidence_id, str) or evidence_id not in kept_ids:
+            errors.append({
+                "code": "unconfirmed_evidence",
+                "path": f"/appendix/sources/{index}",
+                "evidence_id": evidence_id,
+            })
+            continue
+        if not is_http_url(source.get("url") or ""):
+            errors.append({"code": "rejected_url", "path": f"/appendix/sources/{index}"})
+    cited = {
+        source.get("evidence_id"): source
+        for source in existing
+        if isinstance(source, dict) and source.get("evidence_id") in kept_ids
+    }
+    merged: list[dict] = []
+    added: list[str] = []
+    for item in kept:
+        evidence_id = item["evidence_id"]
+        chosen = cited.get(evidence_id)
+        url = item["url"]
+        title = item["title"]
+        if isinstance(chosen, dict):
+            if is_http_url(chosen.get("url") or ""):
+                url = chosen["url"]
+            if isinstance(chosen.get("title"), str) and chosen["title"]:
+                title = chosen["title"]
+        else:
+            added.append(evidence_id)
+        merged.append({"evidence_id": evidence_id, "url": url, "title": title})
+    if added:
+        warnings.append({
+            "code": "sources_completed",
+            "path": "/appendix/sources",
+            "evidence_ids": added,
+        })
+    appendix["sources"] = merged
+    return errors, warnings
+
+
 def evaluate_brief(path: Path, brief: dict) -> dict:
     schema = load_schema()
     errors: list[dict] = []
     warnings: list[dict] = []
+    brief, prep_warnings = prepare_brief(brief)
+    warnings.extend(prep_warnings)
     schema_validate(brief, schema, "", schema, errors)
     if errors:
         return {"ok": False, "errors": errors, "warnings": warnings, "brief": None}
@@ -757,23 +878,11 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
             errors.append({"code": "thin_without_search", "message": SEARCH_UNAVAILABLE})
     elif not public_confirmed:
         errors.append({"code": "notes_only", "message": NOTES_ONLY})
-    elif search_doc and search_doc.get("status") == "done":
-        cited_urls = set()
-        for source in (brief.get("appendix") or {}).get("sources") or []:
-            if isinstance(source, dict) and source.get("url"):
-                cited_urls.add(canon_url(source["url"]))
-        confirmed_urls = {
-            canon_url(row.get("url") or "")
-            for row in rows
-            if row.get("identity_status") == "confirmed" and row.get("url")
-        }
-        for source in search_doc.get("sources") or []:
-            url = source.get("url") or ""
-            # Other people's profiles stay in search.json. Cite only the person who was picked.
-            if not url or canon_url(url) not in confirmed_urls:
-                continue
-            if canon_url(url) not in cited_urls:
-                errors.append({"code": "uncited_source", "path": "/appendix/sources", "url": url})
+    else:
+        # Confirmed sources are filled in. A citation that is not kept still fails below.
+        source_errors, source_warnings = complete_kept_sources(brief, rows)
+        errors.extend(source_errors)
+        warnings.extend(source_warnings)
     if insufficient:
         if style.get("confidence") != "low":
             previous = style.get("confidence")
