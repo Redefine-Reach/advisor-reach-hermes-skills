@@ -2221,6 +2221,8 @@ test("Exa base prefers EXA_API_BASE, then EXA_BASE_URL, and joins /search once",
   const baseFn = script.slice(script.indexOf("def exa_base"), script.indexOf("def canon_url"));
   assert.ok(baseFn.includes("EXA_API_BASE"));
   assert.ok(baseFn.indexOf("EXA_API_BASE") < baseFn.indexOf("EXA_BASE_URL"));
+  assert.ok(baseFn.indexOf("EXA_BASE_URL") < baseFn.indexOf("exa_base_url"));
+  assert.ok(baseFn.indexOf("exa_base_url") < baseFn.indexOf("https://api.exa.ai"));
   assert.match(baseFn, /https:\/\/api\.exa\.ai/);
   const hits = [];
   const server = createServer((req, res) => {
@@ -3029,36 +3031,68 @@ test("a search error or zero results does not render a brief from owner notes", 
   const errorPort = await listen(refused);
   const emptyPort = await listen(empty);
   try {
-    for (const port of [errorPort, emptyPort]) {
-      const ctx = world();
-      const id = run(
-        ["intake", "--actor", "owner", "--name", "Riley Example", "--city", "Austin", "--type", "buyer"],
-        ctx,
-      ).payload.client_id;
-      const searched = await runAsync(["search", id, "--actor", "owner"], ctx, {
-        EXA_API_KEY: "exa-test-key",
-        EXA_API_BASE: `http://127.0.0.1:${port}`,
-      });
-      assert.equal(searched.payload.ok, false, searched.stdout + searched.stderr);
-      assert.equal(searched.payload.error, "couldnt_find");
-      assert.equal(searched.payload.status, "couldnt_find");
-      assert.equal(searched.payload.message, "couldn't find");
-      assert.equal(searched.payload.source_count, 0);
-      const noteId = addEvidence(ctx, id, {
-        url: "https://example.com/riley-notes",
-        title: "Owner notes",
-        excerpt: "Riley Example prefers a short agenda.",
-        origin: "manual",
-        query: "owner paste",
-        candidate: 1,
-      });
-      confirm(ctx, id, 1);
-      const checked = validate(ctx, id, loadGood([noteId]));
-      assert.equal(checked.payload.ok, false, JSON.stringify(checked.payload));
-      assert.ok(codes(checked.payload).includes("couldnt_find"));
-      assert.match(JSON.stringify(checked.payload), /couldn't find/);
-      assert.equal(existsSync(join(ctx.data, id, "brief.json")), false);
-    }
+    const errorCtx = world();
+    const errorId = run(
+      ["intake", "--actor", "owner", "--name", "Riley Example", "--city", "Austin", "--type", "buyer"],
+      errorCtx,
+    ).payload.client_id;
+    const errored = await runAsync(["search", errorId, "--actor", "owner"], errorCtx, {
+      EXA_API_KEY: "exa-test-key",
+      EXA_API_BASE: `http://127.0.0.1:${errorPort}`,
+    });
+    assert.equal(errored.payload.ok, false, errored.stdout + errored.stderr);
+    assert.equal(errored.payload.error, "search_unavailable");
+    assert.equal(errored.payload.message, "Web search is unavailable.");
+    assert.notEqual(errored.payload.error, "couldnt_find");
+    assert.doesNotMatch(errored.stdout, /couldn't find/);
+    const errorStored = JSON.parse(readFileSync(join(errorCtx.data, errorId, "search.json"), "utf8"));
+    assert.equal(errorStored.status, "unavailable");
+    const errorListed = run(["identity", "candidates", errorId], errorCtx);
+    assert.equal(errorListed.payload.error, "search_required");
+    assert.equal(errorListed.payload.message, "Run search first.");
+    assert.doesNotMatch(errorListed.stdout, /couldn't find/);
+    addEvidence(errorCtx, errorId, {
+      url: "https://example.com/riley-notes",
+      title: "Owner notes",
+      excerpt: "Riley Example prefers a short agenda.",
+      origin: "manual",
+      query: "owner paste",
+      candidate: 1,
+    });
+    const errorChecked = validate(errorCtx, errorId, loadGood(["ev_00000000"]));
+    assert.equal(errorChecked.payload.ok, false, JSON.stringify(errorChecked.payload));
+    assert.equal(errorChecked.payload.error, "search_required");
+    assert.doesNotMatch(errorChecked.stdout, /couldn't find/);
+    assert.equal(existsSync(join(errorCtx.data, errorId, "brief.json")), false);
+
+    const ctx = world();
+    const id = run(
+      ["intake", "--actor", "owner", "--name", "Riley Example", "--city", "Austin", "--type", "buyer"],
+      ctx,
+    ).payload.client_id;
+    const searched = await runAsync(["search", id, "--actor", "owner"], ctx, {
+      EXA_API_KEY: "exa-test-key",
+      EXA_API_BASE: `http://127.0.0.1:${emptyPort}`,
+    });
+    assert.equal(searched.payload.ok, false, searched.stdout + searched.stderr);
+    assert.equal(searched.payload.error, "couldnt_find");
+    assert.equal(searched.payload.status, "couldnt_find");
+    assert.equal(searched.payload.message, "couldn't find");
+    assert.equal(searched.payload.source_count, 0);
+    const noteId = addEvidence(ctx, id, {
+      url: "https://example.com/riley-notes",
+      title: "Owner notes",
+      excerpt: "Riley Example prefers a short agenda.",
+      origin: "manual",
+      query: "owner paste",
+      candidate: 1,
+    });
+    confirm(ctx, id, 1);
+    const checked = validate(ctx, id, loadGood([noteId]));
+    assert.equal(checked.payload.ok, false, JSON.stringify(checked.payload));
+    assert.ok(codes(checked.payload).includes("couldnt_find"));
+    assert.match(JSON.stringify(checked.payload), /couldn't find/);
+    assert.equal(existsSync(join(ctx.data, id, "brief.json")), false);
   } finally {
     await new Promise((resolve) => refused.close(resolve));
     await new Promise((resolve) => empty.close(resolve));
@@ -3577,4 +3611,366 @@ test("replayed David Marshall search keeps other source kinds and still drops na
   ]);
   assert.equal(arizonaUrls.some((url) => url.includes("azleg.gov") || url.includes("recorder")), false);
   assert.doesNotMatch(arizona.searched.stdout, /\bconfirmed\b/i);
+});
+
+test("an Exa error is search_unavailable, and a skipped search asks to run search", async () => {
+  assert.match(skill, /web search is unavailable/);
+  assert.match(skill, /op: search/);
+  assert.match(script, /WEB_SEARCH_UNAVAILABLE = "Web search is unavailable."/);
+  const unauthorized = createServer((req, res) => {
+    res.writeHead(401, { "Content-Type": "application/json" });
+    res.end('{"error":"Unauthorized","results":[]}');
+  });
+  const errorBody = createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end('{"error":"Unauthorized","results":[]}');
+  });
+  let mixedCalls = 0;
+  const mixed = createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      mixedCalls += 1;
+      if (req.url === "/search" && mixedCalls === 1) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end('{"error":"Unauthorized"}');
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end('{"results":[]}');
+    });
+  });
+  let partialCalls = 0;
+  const partial = createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      partialCalls += 1;
+      if (req.url === "/search" && partialCalls === 1) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end('{"error":"Unauthorized"}');
+        return;
+      }
+      const page = {
+        url: "https://www.linkedin.com/in/dana-whitfield-example",
+        title: "Dana Whitfield",
+        text: "Dana Whitfield is a broker in Scottsdale.",
+      };
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results: req.url === "/contents" ? [] : [page] }));
+    });
+  });
+  const unauthorizedPort = await listen(unauthorized);
+  const errorBodyPort = await listen(errorBody);
+  const mixedPort = await listen(mixed);
+  const partialPort = await listen(partial);
+  const exaFor = (port) => ({
+    EXA_API_KEY: "exa-test-key",
+    EXA_API_BASE: `http://127.0.0.1:${port}`,
+  });
+  try {
+    const explicit = world();
+    const explicitId = run(
+      ["intake", "--actor", "owner", "--name", "Riley Example", "--city", "Austin", "--type", "buyer"],
+      explicit,
+    ).payload.client_id;
+    const searched = await runAsync(["search", explicitId, "--actor", "owner"], explicit, exaFor(unauthorizedPort));
+    assert.equal(searched.payload.ok, false, searched.stdout + searched.stderr);
+    assert.equal(searched.payload.error, "search_unavailable");
+    assert.equal(searched.payload.message, "Web search is unavailable.");
+    assert.notEqual(searched.payload.status, "couldnt_find");
+    assert.doesNotMatch(searched.stdout, /couldn't find/);
+    const stored = JSON.parse(readFileSync(join(explicit.data, explicitId, "search.json"), "utf8"));
+    assert.equal(stored.status, "unavailable");
+    assert.notEqual(stored.status, "couldnt_find");
+
+    const fresh = world();
+    const freshId = run(
+      ["intake", "--actor", "owner", "--name", "Riley Example", "--city", "Austin", "--type", "buyer"],
+      fresh,
+    ).payload.client_id;
+    assert.equal(existsSync(join(fresh.data, freshId, "search.json")), false);
+    const listed = await runAsync(["identity", "candidates", freshId, "--actor", "owner"], fresh, exaFor(unauthorizedPort));
+    assert.equal(listed.payload.ok, false, listed.stdout + listed.stderr);
+    assert.equal(listed.payload.error, "search_required");
+    assert.equal(listed.payload.message, "Run search first.");
+    assert.doesNotMatch(listed.stdout, /couldn't find/);
+    const stamped = JSON.parse(readFileSync(join(fresh.data, freshId, "search.json"), "utf8"));
+    assert.equal(stamped.status, "unavailable");
+    const again = run(["identity", "candidates", freshId], fresh);
+    assert.equal(again.payload.error, "search_required");
+    assert.doesNotMatch(again.stdout, /couldn't find/);
+
+    const bodyCtx = world();
+    const bodyId = run(
+      ["intake", "--actor", "owner", "--name", "Riley Example", "--city", "Austin", "--type", "buyer"],
+      bodyCtx,
+    ).payload.client_id;
+    const bodySearch = await runAsync(["search", bodyId, "--actor", "owner"], bodyCtx, exaFor(errorBodyPort));
+    assert.equal(bodySearch.payload.error, "search_unavailable", bodySearch.stdout + bodySearch.stderr);
+    assert.equal(bodySearch.payload.message, "Web search is unavailable.");
+    assert.notEqual(
+      JSON.parse(readFileSync(join(bodyCtx.data, bodyId, "search.json"), "utf8")).status,
+      "couldnt_find",
+    );
+
+    const mixedCtx = world();
+    const mixedId = run(
+      ["intake", "--actor", "owner", "--name", "Avery Quindle", "--city", "Flagstaff", "--type", "buyer"],
+      mixedCtx,
+    ).payload.client_id;
+    const mixedSearch = await runAsync(["search", mixedId, "--actor", "owner"], mixedCtx, exaFor(mixedPort));
+    assert.equal(mixedSearch.payload.error, "couldnt_find", mixedSearch.stdout + mixedSearch.stderr);
+    assert.equal(mixedSearch.payload.message, "couldn't find");
+
+    const partialCtx = world();
+    const partialId = run(
+      ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer", "--role", "broker"],
+      partialCtx,
+    ).payload.client_id;
+    const partialSearch = await runAsync(["search", partialId, "--actor", "owner"], partialCtx, exaFor(partialPort));
+    assert.equal(partialSearch.payload.ok, true, partialSearch.stdout + partialSearch.stderr);
+    assert.equal(partialSearch.payload.error, undefined);
+    assert.ok(partialSearch.payload.sources.some((item) => item.url.includes("dana-whitfield-example")));
+    assert.notEqual(partialSearch.payload.status, "couldnt_find");
+  } finally {
+    await new Promise((resolve) => unauthorized.close(resolve));
+    await new Promise((resolve) => errorBody.close(resolve));
+    await new Promise((resolve) => mixed.close(resolve));
+    await new Promise((resolve) => partial.close(resolve));
+  }
+});
+
+test("config.json exa_base_url and exa_api_key are used when the env is unset", async () => {
+  const hits = [];
+  const server = createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      hits.push({ path: (req.url || "").split("?")[0], key: req.headers["x-api-key"] });
+      const page = {
+        url: "https://www.linkedin.com/in/dana-whitfield-example",
+        title: "Dana Whitfield",
+        text: req.url === "/contents" || (req.url || "").endsWith("/contents")
+          ? "Dana Whitfield is a broker in Scottsdale."
+          : "Dana Whitfield is a broker in Scottsdale.",
+      };
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results: [page] }));
+    });
+  });
+  const port = await listen(server);
+  const root = `http://127.0.0.1:${port}`;
+  try {
+    hits.length = 0;
+    const fromConfig = world();
+    writeFileSync(join(fromConfig.data, "config.json"), JSON.stringify({
+      enabled: true,
+      schema_version: 1,
+      tz: "America/Phoenix",
+      box: "test",
+      exa_base_url: `${root}/from-config`,
+      exa_api_key: "config-key",
+    }));
+    const configId = run(
+      ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer", "--role", "broker"],
+      fromConfig,
+    ).payload.client_id;
+    const configSearch = await runAsync(["search", configId, "--actor", "owner"], fromConfig, {});
+    assert.equal(configSearch.payload.ok, true, configSearch.stdout + configSearch.stderr);
+    assert.ok(hits.some((hit) => hit.path === "/from-config/search" && hit.key === "config-key"), JSON.stringify(hits));
+    assert.equal(hits.some((hit) => hit.path === "/search"), false);
+
+    hits.length = 0;
+    const fromEnv = world();
+    writeFileSync(join(fromEnv.data, "config.json"), JSON.stringify({
+      enabled: true,
+      schema_version: 1,
+      tz: "America/Phoenix",
+      box: "test",
+      exa_base_url: `${root}/from-config`,
+      exa_api_key: "config-key",
+    }));
+    const envId = run(
+      ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer", "--role", "broker"],
+      fromEnv,
+    ).payload.client_id;
+    const envSearch = await runAsync(["search", envId, "--actor", "owner"], fromEnv, {
+      EXA_API_KEY: "env-key",
+      EXA_BASE_URL: root,
+    });
+    assert.equal(envSearch.payload.ok, true, envSearch.stdout + envSearch.stderr);
+    assert.ok(hits.some((hit) => hit.path === "/search" && hit.key === "env-key"), JSON.stringify(hits));
+    assert.equal(hits.some((hit) => String(hit.path).startsWith("/from-config")), false);
+    assert.equal(hits.some((hit) => hit.key === "config-key"), false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("company-anchored dkmarshall LinkedIn pages stay, and city-only namesakes stay out", async () => {
+  const journal = {
+    url: "https://advisorreach.ai/journal/listing-meetings",
+    title: "David Marshall on listing meetings",
+    text: "David Marshall writes for AdvisorReach in Phoenix.",
+  };
+  const profile = {
+    url: "https://www.linkedin.com/in/dkmarshall",
+    title: "David Marshall",
+    text: "David Marshall. Phoenix.",
+    highlights: [{ text: "AdvisorReach · Phoenix" }],
+  };
+  const post = {
+    url: "https://www.linkedin.com/posts/dkmarshall_advisorreach-activity-1",
+    title: "David Marshall",
+    text: "David Marshall in Phoenix.",
+  };
+  const sibling = {
+    url: "https://www.linkedin.com/posts/dkmarshall_showing-activity-2",
+    title: "David Marshall",
+    text: "David Marshall in Phoenix.",
+  };
+  const news = {
+    url: "https://news.example.com/marshall-buyers",
+    title: "David Marshall interview",
+    text: "David Marshall spoke in Phoenix.",
+    highlights: ["AdvisorReach founder David Marshall"],
+  };
+  const podcast = {
+    url: "https://podcast.example.com/marshall",
+    title: "David Marshall on the show",
+    text: "David Marshall joins from Phoenix.",
+    highlights: ["his firm AdvisorReach"],
+  };
+  const xPage = {
+    url: "https://x.com/dkmarshall",
+    title: "David Marshall",
+    text: "David Marshall in Phoenix.",
+    highlights: ["AdvisorReach"],
+  };
+  const recorder = {
+    url: "https://www.axios.com/local/phoenix/david-marshall-recorder",
+    title: "David Marshall, Navajo County recorder",
+    text: "David Marshall is the Navajo County recorder in Phoenix.",
+  };
+  const legislator = {
+    url: "https://www.azleg.gov/members/david-marshall",
+    title: "David Marshall, Arizona legislator",
+    text: "David Marshall is an Arizona legislator from Phoenix.",
+  };
+  const pages = [journal, profile, post, sibling, news, podcast, xPage, recorder, legislator];
+  const { server } = replayServer(pages);
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const id = run(
+      [
+        "intake",
+        "--actor",
+        "owner",
+        "--name",
+        "David Marshall",
+        "--city",
+        "Phoenix",
+        "--type",
+        "buyer",
+        "--company",
+        "AdvisorReach",
+      ],
+      ctx,
+    ).payload.client_id;
+    const searched = await runAsync(["search", id, "--actor", "owner"], ctx, {
+      EXA_API_KEY: "exa-test-key",
+      EXA_API_BASE: `http://127.0.0.1:${port}`,
+    });
+    assert.equal(searched.payload.ok, true, searched.stdout + searched.stderr);
+    const urls = searched.payload.sources.map((item) => item.url);
+    assert.deepEqual(urls, [
+      journal.url,
+      profile.url,
+      post.url,
+      news.url,
+      podcast.url,
+      xPage.url,
+      sibling.url,
+    ]);
+    assert.equal(urls.includes(recorder.url), false);
+    assert.equal(urls.includes(legislator.url), false);
+    const hosts = new Set(urls.map((url) => new URL(url).hostname.replace(/^www\./, "")));
+    assert.ok(hosts.has("advisorreach.ai"));
+    assert.ok(hosts.has("linkedin.com"));
+    assert.ok(hosts.has("news.example.com"));
+    assert.ok(hosts.has("podcast.example.com"));
+    assert.ok(hosts.has("x.com"));
+    assert.equal(searched.payload.conflict, false);
+    assert.equal(new Set(searched.payload.sources.map((item) => item.candidate)).size, 1);
+    assert.equal(searched.payload.excluded_people, 2);
+    const stored = JSON.parse(readFileSync(join(ctx.data, id, "search.json"), "utf8"));
+    assert.deepEqual(stored.dropped.map((item) => item.url), [recorder.url, legislator.url]);
+    assert.ok(stored.dropped.every((item) => item.reason === "namesake"));
+    const listed = run(["identity", "candidates", id], ctx);
+    assert.equal(listed.payload.ok, true, listed.stdout);
+    assert.equal(listed.payload.candidates.length, 1);
+    assert.equal(listed.payload.conflict, undefined);
+    assert.doesNotMatch(listed.stdout, /couldn't find/);
+    assert.doesNotMatch(searched.stdout, /\bconfirmed\b/i);
+    assert.doesNotMatch(listed.payload.candidates[0].label, /recorder|legislator/i);
+
+    const highlightOnly = replayServer([profile, recorder]);
+    const highlightPort = await listen(highlightOnly.server);
+    const highlightCtx = world();
+    const highlightId = run(
+      [
+        "intake",
+        "--actor",
+        "owner",
+        "--name",
+        "David Marshall",
+        "--city",
+        "Phoenix",
+        "--type",
+        "buyer",
+        "--company",
+        "AdvisorReach",
+      ],
+      highlightCtx,
+    ).payload.client_id;
+    const highlighted = await runAsync(["search", highlightId, "--actor", "owner"], highlightCtx, {
+      EXA_API_KEY: "exa-test-key",
+      EXA_API_BASE: `http://127.0.0.1:${highlightPort}`,
+    });
+    assert.equal(highlighted.payload.ok, true, highlighted.stdout + highlighted.stderr);
+    assert.deepEqual(highlighted.payload.sources.map((item) => item.url), [profile.url]);
+    await new Promise((resolve) => highlightOnly.server.close(resolve));
+
+    const slugOnly = replayServer([post, sibling, legislator]);
+    const slugPort = await listen(slugOnly.server);
+    const slugCtx = world();
+    const slugId = run(
+      [
+        "intake",
+        "--actor",
+        "owner",
+        "--name",
+        "David Marshall",
+        "--city",
+        "Phoenix",
+        "--type",
+        "buyer",
+        "--company",
+        "AdvisorReach",
+      ],
+      slugCtx,
+    ).payload.client_id;
+    const slugged = await runAsync(["search", slugId, "--actor", "owner"], slugCtx, {
+      EXA_API_KEY: "exa-test-key",
+      EXA_API_BASE: `http://127.0.0.1:${slugPort}`,
+    });
+    assert.equal(slugged.payload.ok, true, slugged.stdout + slugged.stderr);
+    assert.deepEqual(slugged.payload.sources.map((item) => item.url), [post.url, sibling.url]);
+    assert.equal(slugged.payload.sources.some((item) => item.url === legislator.url), false);
+    await new Promise((resolve) => slugOnly.server.close(resolve));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
