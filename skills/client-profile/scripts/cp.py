@@ -1665,9 +1665,12 @@ def exa_search_body(query: dict) -> dict:
         "type": query.get("type") or "auto",
         "contents": {
             "text": {"maxCharacters": EXA_TEXT_CHARS},
-            # Highlights are the sentences that matched the query. A LinkedIn or
-            # news page often puts the employer there, not in the opening text.
-            "highlights": {"numSentences": 2, "highlightsPerUrl": 3},
+            # highlights is a string array on the response. numSentences is
+            # deprecated and was not returning the employer sentence. The
+            # query steers that array at this search. extras.links is how a
+            # company page returns linkedin.com/in/<handle> when the text does not.
+            "highlights": {"maxCharacters": 2000, "query": query["q"]},
+            "extras": {"links": 10},
         },
     }
     domains = query.get("include_domains")
@@ -1682,6 +1685,9 @@ def result_text(row: dict) -> str:
     text = row.get("text")
     if isinstance(text, str) and text.strip():
         return text
+    bits = text_bits(text)
+    if bits:
+        return " ".join(bits)
     return result_snippet(row)
 
 
@@ -1702,12 +1708,62 @@ def text_bits(value: object) -> list[str]:
     return []
 
 
+# Scores and ids are not page text. Every other string is, including a company
+# name that Exa puts under entities, extras.links, or a nested highlight.
+CORPUS_SKIP = {
+    "score",
+    "highlightScores",
+    "highlight_scores",
+    "id",
+    "publishedDate",
+    "published_date",
+    "image",
+    "favicon",
+    "costDollars",
+}
+
+
+def harvest_strings(value: object, key: str | None = None) -> list[str]:
+    if key in CORPUS_SKIP:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, dict):
+        found: list[str] = []
+        for child_key, child in value.items():
+            found.extend(harvest_strings(child, str(child_key)))
+        return found
+    if isinstance(value, list):
+        found = []
+        for child in value:
+            found.extend(harvest_strings(child, key))
+        return found
+    return []
+
+
+def result_corpus(row: dict) -> str:
+    """Every string Exa returned for the page, not only title and opening text."""
+    return " ".join(harvest_strings(row))
+
+
 def result_snippet(row: dict) -> str:
     """Employer and query matches that may sit outside the opening text."""
     parts: list[str] = []
-    for key in ("snippet", "summary", "author", "company", "employer", "highlights", "entities"):
-        parts.extend(text_bits(row.get(key)))
+    for key in ("snippet", "summary", "author", "company", "employer", "highlights", "entities", "extras", "subpages"):
+        parts.extend(harvest_strings(row.get(key), key))
     return " ".join(parts)
+
+
+def mentioned_linkedin_handles(text: str) -> set[str]:
+    """Profile handles linked from a page, including /in/dkmarshall on a company site."""
+    found: set[str] = set()
+    for match in re.finditer(r"linkedin\.com/(?:in|posts)/([A-Za-z0-9%]{3,})", text or "", re.IGNORECASE):
+        token = unquote(match.group(1)).split("_", 1)[0].strip().casefold()
+        if token in {"company", "feed", "posts", "pub", "school", "showcase"}:
+            continue
+        if len(token) >= 3:
+            found.add(token)
+    return found
 
 
 def load_search(path: Path) -> dict | None:
@@ -2016,6 +2072,15 @@ def company_slug_hit(value: str, company: str) -> bool:
     return re.search(rf"(?<![a-z0-9]){re.escape(slug)}(?![a-z0-9])", value or "", re.IGNORECASE) is not None
 
 
+def company_spaced_hit(value: str, company: str) -> bool:
+    """AdvisorReach also matches 'Advisor Reach' and advisorreach.ai. Not 'advisor will reach'."""
+    parts = re.findall(r"[A-Za-z][a-z]+|[A-Z]+(?![a-z])|\d+", company or "")
+    if len(parts) < 2:
+        return False
+    pattern = r"[\W_]*".join(re.escape(part) for part in parts)
+    return re.search(rf"(?<!\w){pattern}(?!\w)", value or "", re.IGNORECASE) is not None
+
+
 def linkedin_handle(url: str) -> str:
     """Profile or post handle. /in/dkmarshall and /posts/dkmarshall_... are one person."""
     if host_of(url) != "linkedin.com":
@@ -2046,6 +2111,7 @@ def source_matches_anchors(title: str, excerpt: str, url: str, intake: dict, sni
     company_hit = bool(company) and (
         phrase_present(blob, company)
         or company_slug_hit(blob, company)
+        or company_spaced_hit(blob, company)
         or company_host_hit(url, company)
         or company_slug_hit(url, company)
     )
@@ -2219,11 +2285,13 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
             title = raw.get("title") if isinstance(raw.get("title"), str) else ""
             text = result_text(raw)
             snippet = result_snippet(raw)
+            corpus = result_corpus(raw)
             item = {
                 "url": url,
                 "title": title,
                 "text": text,
                 "snippet": snippet,
+                "corpus": corpus,
                 "query": query["q"],
                 "target": query.get("target") or "",
             }
@@ -2235,7 +2303,12 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
         write_search_unavailable(path, client_id, actor, queries, raw_count)
     if need_text:
         try:
-            filled = exa_post("/contents", {"urls": need_text, "text": {"maxCharacters": EXA_TEXT_CHARS}}, key)
+            filled = exa_post("/contents", {
+                "urls": need_text,
+                "text": {"maxCharacters": EXA_TEXT_CHARS},
+                "highlights": {"maxCharacters": 2000},
+                "extras": {"links": 10},
+            }, key)
         except ExaError:
             filled = {}
         by_url = {}
@@ -2250,15 +2323,19 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
             if not raw:
                 continue
             item["text"] = result_text(raw)
-            if not item.get("snippet"):
-                item["snippet"] = result_snippet(raw)
+            fetched_snippet = result_snippet(raw)
+            if fetched_snippet:
+                item["snippet"] = f"{item.get('snippet') or ''} {fetched_snippet}".strip()
+            fetched_corpus = result_corpus(raw)
+            if fetched_corpus:
+                item["corpus"] = f"{item.get('corpus') or ''} {fetched_corpus}".strip()
             if not item["title"] and isinstance(raw.get("title"), str):
                 item["title"] = raw["title"]
     dropped: list[dict] = []
     kept: list[dict] = []
     for item in found:
         snippet = item.get("snippet") or ""
-        blob = f"{item['title']} {item['text']} {snippet}"
+        blob = item.get("corpus") or f"{item['title']} {item['text']} {snippet}"
         if not full_name_match(blob, first, last):
             dropped.append({"url": item["url"], "reason": "name_mismatch"})
             continue
@@ -2277,6 +2354,7 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
             "target": item["target"],
             "text": item["text"] or "",
             "snippet": snippet,
+            "corpus": item.get("corpus") or blob,
         })
     tally = search_count(raw_count, len(found), len(kept), 0)
     if not kept:
@@ -2292,9 +2370,10 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
     for item in kept:
         marker = profile_marker(item["url"])
         item["profile"] = marker
+        corpus = item.get("corpus") or ""
         if source_matches_anchors(
             item["title"],
-            item.get("text") or item["excerpt"],
+            corpus or item.get("text") or item["excerpt"],
             item["url"],
             intake,
             item.get("snippet") or "",
@@ -2303,6 +2382,10 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
             handle = linkedin_handle(item["url"])
             if handle:
                 anchored_handles.add(handle)
+            # The company site often links the person's LinkedIn instead of
+            # repeating the employer on every post.
+            if company_host_hit(item["url"], intake.get("company") or "") or company_slug_hit(corpus, intake.get("company") or ""):
+                anchored_handles.update(mentioned_linkedin_handles(corpus))
             continue
         pending.append(item)
     # A company-anchored /in/dkmarshall page keeps that handle's other posts, and the reverse.
@@ -2836,12 +2919,42 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
         })
     write_json(path / "candidates.json", {"candidates": candidates, "status": "matches"})
     pending = remember_pick_pending(client_id, path, intake, candidates)
+    # One person is a match. Select them here so the text path can render
+    # without a pick op the current render_file plugin does not have.
+    if len(candidates) == 1:
+        number = int(candidates[0]["n"])
+        actor = actor_of(opts) or "unspecified"
+        payload, code = run_confirm(client_id, {"candidate": [str(number)], "actor": [actor]})
+        if code:
+            emit(payload, code)
+        city = intake.get("city") or ""
+        where = f" in {city}" if city else ""
+        say = f"Matched {intake.get('name') or ''}{where}: {candidates[0]['label']}."
+        pending["awaiting"] = False
+        pending["closed"] = "auto"
+        pending["selected"] = 1
+        pending["prompt"] = say
+        write_json(path / "pending.json", pending)
+        emit({
+            "ok": True,
+            "status": "matches",
+            "candidates": candidates,
+            "client_id": client_id,
+            "candidate": number,
+            "next": "write",
+            "say": say,
+            "prompt": say,
+            "evidence": selected_evidence_text(path),
+            "pending_saved": True,
+        })
     emit({
         "ok": True,
         "status": "matches",
         "candidates": candidates,
+        "client_id": client_id,
         "prompt": pending["prompt"],
         "pending_saved": True,
+        "next": "reply",
     })
 
 
