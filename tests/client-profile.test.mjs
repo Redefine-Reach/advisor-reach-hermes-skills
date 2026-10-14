@@ -205,7 +205,62 @@ function seed(ctx, input = { name: "Dana Whitfield", city: "Scottsdale", type: "
         },
       ];
   const evidenceIds = evidence.map((item) => addEvidence(ctx, id, item));
+  recordOwnSearch(ctx, id, evidence, evidenceIds);
   return { id, evidenceIds, intake: intake.payload };
+}
+
+function recordOwnSearch(ctx, id, evidence, evidenceIds) {
+  const intake = JSON.parse(readFileSync(join(ctx.data, id, "intake.json"), "utf8"));
+  const sources = [];
+  evidence.forEach((item, index) => {
+    if (item.origin !== "web" || !item.url) return;
+    sources.push({
+      evidence_id: evidenceIds[index],
+      url: item.url,
+      title: item.title,
+      target: "general",
+      candidate: item.candidate,
+    });
+  });
+  if (sources.length === 0) return;
+  writeFileSync(
+    join(ctx.data, id, "search.json"),
+    JSON.stringify(
+      {
+        status: "done",
+        query_count: 1,
+        queries: [`"${intake.name}" search`],
+        source_count: sources.length,
+        sources,
+        intake_name: intake.name,
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+}
+
+function citeConfirmedSearch(ctx, id, brief) {
+  const sources = brief.appendix && brief.appendix.sources;
+  if (!Array.isArray(sources) || sources.length > 0) return;
+  const searchPath = join(ctx.data, id, "search.json");
+  const evidencePath = join(ctx.data, id, "evidence.jsonl");
+  if (!existsSync(searchPath) || !existsSync(evidencePath)) return;
+  const search = JSON.parse(readFileSync(searchPath, "utf8"));
+  if (search.status !== "done" || !Array.isArray(search.sources)) return;
+  const confirmed = new Set();
+  for (const line of readFileSync(evidencePath, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    const row = JSON.parse(line);
+    if (row.identity_status === "confirmed") confirmed.add(row.evidence_id);
+  }
+  brief.appendix.sources = search.sources
+    .filter((item) => item.url && item.evidence_id && confirmed.has(item.evidence_id))
+    .map((item) => ({
+      evidence_id: item.evidence_id,
+      url: item.url,
+      title: item.title || item.url,
+    }));
 }
 
 function confirm(ctx, id, n) {
@@ -215,6 +270,7 @@ function confirm(ctx, id, n) {
 }
 
 function validate(ctx, id, brief) {
+  citeConfirmedSearch(ctx, id, brief);
   const file = join(ctx.dir, `brief-${id}.json`);
   writeFileSync(file, JSON.stringify(brief));
   return run(["brief", "validate", id, file, "--actor", "owner"], ctx);
@@ -1481,6 +1537,7 @@ test("end-to-end fixture covers intake, identity, cited brief, pdf, summary, pur
   );
   assert.equal(unconfirmed.payload.error, "unknown_candidate");
   const evidenceId = addEvidence(ctx, id, { ...input.evidence, candidate: input.candidate });
+  recordOwnSearch(ctx, id, [{ ...input.evidence, candidate: input.candidate }], [evidenceId]);
   const candidates = run(["identity", "candidates", id], ctx);
   assert.equal(candidates.payload.ok, true, candidates.stdout);
   assert.equal(candidates.payload.candidates[0].n, input.candidate);
@@ -2651,6 +2708,10 @@ test("a dense brief renders as one PDF page with the four sections and sources",
 test("a new profile request starts a fresh intake and does not reuse another client", () => {
   assert.match(skill, /fresh intake/);
   assert.match(skill, /Never reuse a prior client record unless the owner explicitly names that same client/);
+  assert.match(skill, /--name/);
+  assert.match(skill, /finished search and identity in its own intake/);
+  assert.match(script, /own_intake_required/);
+  assert.match(script, /reuse_name/);
   assert.match(skill, /intake, then search, then identity, then render/);
   assert.match(skill, /never replace a search/);
   assert.match(skill, /There is no consent step/);
@@ -2687,6 +2748,84 @@ test("a new profile request starts a fresh intake and does not reuse another cli
   assert.equal(newer.name, "Riley Example");
   assert.equal(newer.company, "AdvisorReach");
   assert.deepEqual(newer.urls, ["https://example.com/riley-example"]);
+});
+
+test("rendering an older client after a different name is refused unless that client is named", () => {
+  const ctx = world();
+  const first = seed(ctx, { name: "Dana Whitfield", city: "Scottsdale", type: "buyer" });
+  confirm(ctx, first.id, 1);
+  const storedIdentity = JSON.parse(readFileSync(join(ctx.data, first.id, "identity.json"), "utf8"));
+  const storedSearch = JSON.parse(readFileSync(join(ctx.data, first.id, "search.json"), "utf8"));
+  assert.equal(storedIdentity.intake_name, "Dana Whitfield");
+  assert.equal(storedSearch.intake_name, "Dana Whitfield");
+  assert.equal(storedSearch.status, "done");
+  const ready = validate(ctx, first.id, loadGood(first.evidenceIds));
+  assert.equal(ready.payload.ok, true, JSON.stringify(ready.payload));
+  const rendered = run(["brief", "render", first.id, "--actor", "owner"], ctx);
+  assert.equal(rendered.payload.ok, true, rendered.stdout + rendered.stderr);
+  const sameName = run(
+    ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Tempe", "--type", "listing"],
+    ctx,
+  );
+  assert.equal(sameName.payload.ok, true, sameName.stdout);
+  const stillFirst = run(["brief", "render", first.id, "--actor", "owner"], ctx);
+  assert.equal(stillFirst.payload.ok, true, stillFirst.stdout + stillFirst.stderr);
+  let html = readFileSync(join(ctx.data, first.id, "brief.html"), "utf8");
+  assert.match(html, /Dana Whitfield/);
+  assert.doesNotMatch(html, /Tempe/);
+
+  const second = run(
+    ["intake", "--actor", "owner", "--name", "Riley Example", "--city", "Austin", "--type", "buyer", "--company", "AdvisorReach"],
+    ctx,
+  );
+  assert.equal(second.payload.ok, true, second.stdout);
+  const refused = run(["brief", "render", first.id, "--actor", "owner"], ctx);
+  assert.equal(refused.payload.ok, false, refused.stdout);
+  assert.equal(refused.payload.error, "reuse_name");
+  assert.match(refused.payload.message, /different person/);
+  assert.doesNotMatch(refused.payload.message, /\bconfirmed\b/i);
+  const refusedValidate = validate(ctx, first.id, loadGood(first.evidenceIds));
+  assert.equal(refusedValidate.payload.ok, false, JSON.stringify(refusedValidate.payload));
+  assert.equal(refusedValidate.payload.error, "reuse_name");
+  const wrongName = run(
+    ["brief", "render", first.id, "--actor", "owner", "--name", "Riley Example"],
+    ctx,
+  );
+  assert.equal(wrongName.payload.ok, false, wrongName.stdout);
+  assert.equal(wrongName.payload.error, "reuse_name");
+  const named = run(
+    ["brief", "render", first.id, "--actor", "owner", "--name", "Dana Whitfield"],
+    ctx,
+  );
+  assert.equal(named.payload.ok, true, named.stdout + named.stderr);
+  html = readFileSync(join(ctx.data, first.id, "brief.html"), "utf8");
+  assert.match(html, /Dana Whitfield/);
+  assert.doesNotMatch(html, /Riley Example/);
+  assert.doesNotMatch(html, /AdvisorReach/);
+
+  const rileyId = second.payload.client_id;
+  const noteId = addEvidence(ctx, rileyId, {
+    url: "https://example.com/riley-example",
+    title: "Riley Example, advisor",
+    excerpt: "Riley Example advises clients in Austin.",
+    origin: "web",
+    query: '"Riley Example" "Austin" company site',
+    candidate: 1,
+  });
+  confirm(ctx, rileyId, 1);
+  const stolen = validate(ctx, rileyId, loadGood([noteId]));
+  assert.equal(stolen.payload.ok, false, JSON.stringify(stolen.payload));
+  assert.ok(codes(stolen.payload).includes("own_intake_required"));
+  assert.match(JSON.stringify(stolen.payload), /own intake/);
+  assert.doesNotMatch(JSON.stringify(stolen.payload.errors), /\bconfirmed\b/i);
+  assert.equal(existsSync(join(ctx.data, rileyId, "brief.json")), false);
+  const rileyRender = run(["brief", "render", rileyId, "--actor", "owner"], ctx);
+  assert.equal(rileyRender.payload.ok, false, rileyRender.stdout);
+  assert.equal(existsSync(join(ctx.data, rileyId, "brief.html")), false);
+  assert.equal(existsSync(join(ctx.data, rileyId, "brief.pdf")), false);
+  html = readFileSync(join(ctx.data, first.id, "brief.html"), "utf8");
+  assert.match(html, /Dana Whitfield/);
+  assert.doesNotMatch(html, /Riley Example/);
 });
 
 test("identity with no search results is couldnt_find, not an empty success", () => {

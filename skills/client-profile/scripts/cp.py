@@ -199,6 +199,13 @@ SEARCH_UNAVAILABLE = (
 NOTES_ONLY = (
     "Owner notes can add to a brief that already has public sources. They cannot replace a search."
 )
+OWN_INTAKE_REQUIRED = (
+    "This record has not finished search and identity for its own intake. "
+    "Start a fresh intake for a new person."
+)
+REUSE_NAME = (
+    "A later intake is a different person. Name this client to reuse that record."
+)
 NEED_ANCHOR = (
     "Identity confidence is Low. No source matches this city, company, role, or link. "
     "Send a profile link or company."
@@ -798,6 +805,10 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
         if not is_http_url(source.get("url") or ""):
             errors.append({"code": "rejected_url", "path": f"/appendix/sources/{index}"})
     errors = dedupe_errors(errors)
+    # A brief can be stored only after this folder finished its own search
+    # and identity. A copied record from another person does not count.
+    if not errors and not own_pipeline_complete(path):
+        errors.append({"code": "own_intake_required", "message": OWN_INTAKE_REQUIRED})
     if errors:
         return {"ok": False, "errors": errors, "warnings": warnings, "brief": None}
     return {"ok": True, "errors": [], "warnings": warnings, "brief": brief}
@@ -1581,6 +1592,93 @@ def search_needs_anchor(path: Path) -> bool:
     return bool(doc and doc.get("status") == "need_anchor")
 
 
+def names_equal(left: str, right: str) -> bool:
+    return (left or "").strip().casefold() == (right or "").strip().casefold()
+
+
+def stored_name(path: Path) -> str:
+    try:
+        intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(intake, dict):
+        return ""
+    name = intake.get("name")
+    return name if isinstance(name, str) else ""
+
+
+def stamp_search(path: Path, doc: dict) -> None:
+    doc["intake_name"] = stored_name(path)
+    write_json(path / "search.json", doc)
+
+
+def own_pipeline_complete(path: Path) -> bool:
+    """Search and identity both finished inside this client's folder."""
+    name = stored_name(path)
+    if not name.strip():
+        return False
+    search = load_search(path)
+    if not search or search.get("status") != "done":
+        return False
+    try:
+        count = int(search.get("source_count") or 0)
+    except (TypeError, ValueError):
+        count = 0
+    if count <= 0:
+        return False
+    if not names_equal(str(search.get("intake_name") or ""), name):
+        return False
+    identity = load_identity(path)
+    if not identity or identity.get("status") != "confirmed":
+        return False
+    return names_equal(str(identity.get("intake_name") or ""), name)
+
+
+def later_different_person(path: Path) -> bool:
+    """True when a newer intake uses a different name than this client."""
+    name = stored_name(path)
+    try:
+        intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    created = intake.get("created_at") if isinstance(intake, dict) else ""
+    if not isinstance(created, str):
+        created = ""
+    root = data_root()
+    if not root.is_dir():
+        return False
+    for folder in root.iterdir():
+        if not folder.is_dir() or folder.name == path.name:
+            continue
+        if not CLIENT_RE.fullmatch(folder.name):
+            continue
+        other_file = folder / "intake.json"
+        if not other_file.is_file():
+            continue
+        try:
+            other = json.loads(other_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(other, dict):
+            continue
+        other_name = other.get("name") if isinstance(other.get("name"), str) else ""
+        other_created = other.get("created_at") if isinstance(other.get("created_at"), str) else ""
+        if not other_name.strip() or names_equal(other_name, name):
+            continue
+        if other_created > created:
+            return True
+    return False
+
+
+def refuse_unnamed_reuse(path: Path, opts: dict[str, list[str]]) -> None:
+    if not later_different_person(path):
+        return
+    named = flag(opts, "name") or ""
+    if names_equal(named, stored_name(path)):
+        return
+    fail("reuse_name", REUSE_NAME)
+
+
 def phrase_present(text: str, phrase: str) -> bool:
     phrase = (phrase or "").strip()
     if len(phrase) < 2:
@@ -1661,7 +1759,7 @@ def write_couldnt_find(
     inaccessible: list[dict],
     codes: list[str],
 ) -> None:
-    write_json(path / "search.json", {
+    stamp_search(path, {
         "status": "couldnt_find",
         "message": "couldn't find",
         "query_count": len(queries),
@@ -1705,7 +1803,7 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
         fail("no_queries", "No safe name-and-city query could be built.")
     key = exa_key()
     if not key:
-        write_json(path / "search.json", {
+        stamp_search(path, {
             "status": "unavailable",
             "message": SEARCH_UNAVAILABLE,
             "query_count": 0,
@@ -1715,7 +1813,7 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
         fail("search_unavailable", SEARCH_UNAVAILABLE)
     parts = split_name(intake.get("name") or "")
     if not parts:
-        write_json(path / "search.json", {
+        stamp_search(path, {
             "status": "unavailable",
             "message": "couldn't find",
             "query_count": 0,
@@ -1801,7 +1899,7 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
     note = excluded_people_note(len(excluded_profiles))
     if not matched:
         save_evidence(path, rows)
-        write_json(path / "search.json", {
+        stamp_search(path, {
             "status": "need_anchor",
             "message": NEED_ANCHOR,
             "query_count": len(queries),
@@ -1887,7 +1985,7 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
         "excluded_people": len(excluded_profiles),
         "excluded_note": note,
     }
-    write_json(path / "search.json", stored)
+    stamp_search(path, stored)
     audit("search", client_id, {"queries": len(queries), "sources": len(sources)}, actor)
     result = {
         "ok": True,
@@ -2107,7 +2205,12 @@ def cmd_confirm(client_id: str, opts: dict[str, list[str]]) -> None:
             if row.get("identity_status") == "confirmed":
                 row["identity_status"] = "unconfirmed"
         save_evidence(path, rows)
-        write_json(path / "identity.json", {"status": "none", "confirmed_at": now_iso(), "evidence_ids": []})
+        write_json(path / "identity.json", {
+            "status": "none",
+            "confirmed_at": now_iso(),
+            "evidence_ids": [],
+            "intake_name": stored_name(path),
+        })
         brief = path / "brief.json"
         if brief.exists():
             brief.unlink()
@@ -2147,6 +2250,7 @@ def cmd_confirm(client_id: str, opts: dict[str, list[str]]) -> None:
         "candidate": number,
         "evidence_ids": confirmed,
         "confirmed_at": now_iso(),
+        "intake_name": stored_name(path),
     })
     audit("identity_confirm", client_id, {"confirmed": len(confirmed)}, actor)
     emit({"ok": True, "status": "confirmed", "candidate": number, "evidence_ids": confirmed})
@@ -2155,6 +2259,7 @@ def cmd_confirm(client_id: str, opts: dict[str, list[str]]) -> None:
 def cmd_validate(client_id: str, brief_file: str, opts: dict[str, list[str]]) -> None:
     actor = gate(actor_of(opts), mutate=True)
     path = require_client(client_id)
+    refuse_unnamed_reuse(path, opts)
     source = Path(brief_file)
     if not source.is_file():
         fail("brief_missing", "Brief JSON path does not exist.")
@@ -2180,6 +2285,7 @@ def cmd_validate(client_id: str, brief_file: str, opts: dict[str, list[str]]) ->
 def cmd_render(client_id: str, opts: dict[str, list[str]]) -> None:
     actor = gate(actor_of(opts), mutate=True)
     path = require_client(client_id)
+    refuse_unnamed_reuse(path, opts)
     brief_path = path / "brief.json"
     if not brief_path.is_file():
         fail("not_validated", "No validated brief.json.")
