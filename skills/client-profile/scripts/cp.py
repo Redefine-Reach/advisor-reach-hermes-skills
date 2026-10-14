@@ -196,6 +196,10 @@ QUERY_TARGETS = (
 SEARCH_UNAVAILABLE = (
     "Search is unavailable. No Exa key is set, so this brief was not filled from a multi-source search."
 )
+NEED_ANCHOR = (
+    "Identity confidence is Low. No source matches this city, company, role, or link. "
+    "Send a profile link or company."
+)
 EXA_TOP = 3
 EXA_TEXT_CHARS = 1000
 EXCERPT_CAP = 1200
@@ -666,6 +670,15 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
             "warnings": warnings,
             "brief": None,
         }
+    if search_needs_anchor(path) and not any(
+        row.get("identity_status") == "confirmed" for row in load_evidence(path)
+    ):
+        return {
+            "ok": False,
+            "errors": [{"code": "need_anchor", "message": NEED_ANCHOR}],
+            "warnings": warnings,
+            "brief": None,
+        }
     identity = load_identity(path)
     if not identity or identity.get("status") != "confirmed":
         return {
@@ -848,13 +861,16 @@ def build_html(path: Path, brief: dict) -> str:
     if search_doc and search_doc.get("status") == "unavailable":
         search_notice = f"<p class=\"banner\">{html_escape(SEARCH_UNAVAILABLE)}</p>"
     elif search_doc and search_doc.get("status") == "done":
-        search_notice = (
-            "<p class=\"banner\">"
-            + html_escape(
-                f"Searched {search_doc.get('query_count')} public queries and kept {search_doc.get('source_count')} sources."
-            )
-            + "</p>"
+        notice = (
+            f"Searched {search_doc.get('query_count')} public queries and kept "
+            f"{search_doc.get('source_count')} sources."
         )
+        note = search_doc.get("excluded_note") or ""
+        if isinstance(note, str) and note.strip():
+            notice = notice + " " + note.strip()
+        search_notice = "<p class=\"banner\">" + html_escape(notice) + "</p>"
+    elif search_doc and search_doc.get("status") == "need_anchor":
+        search_notice = "<p class=\"banner\">" + html_escape(search_doc.get("message") or NEED_ANCHOR) + "</p>"
     else:
         search_notice = ""
     mapping = {
@@ -886,20 +902,38 @@ def build_html(path: Path, brief: dict) -> str:
         "{{RECOMMENDATIONS}}": render_items(brief.get("recommendations") or []),
         "{{UNKNOWNS}}": render_items(brief.get("what_we_dont_know") or []),
         "{{APPENDIX}}": render_items((brief.get("appendix") or {}).get("low_confidence") or []),
-        "{{SOURCES}}": render_sources((brief.get("appendix") or {}).get("sources") or []),
+        "{{SOURCES}}": render_sources(cited_sources(brief)),
     }
     return fill_template(TEMPLATE_PATH.read_text(encoding="utf-8"), mapping)
+
+
+def cited_sources(brief: dict) -> list:
+    """Appendix on the page is the sources the brief actually cites, not every hit."""
+    sources = (brief.get("appendix") or {}).get("sources") or []
+    if not isinstance(sources, list):
+        return []
+    cited: set[str] = set()
+    for _path, claim, _low in claim_targets(brief):
+        for evidence_id in claim.get("evidence_ids") or []:
+            if isinstance(evidence_id, str) and evidence_id:
+                cited.add(evidence_id)
+    if not cited:
+        return [source for source in sources if isinstance(source, dict)]
+    return [
+        source for source in sources
+        if isinstance(source, dict) and source.get("evidence_id") in cited
+    ]
 
 
 def render_sources(sources: list) -> str:
     if not sources:
         return "<p>None recorded.</p>"
-    parts = ["<ul>"]
+    parts = ['<ul class="sources">']
     for source in sources:
         title = html_escape(source.get("title") or "")
         url = html_escape(source.get("url") or "")
         evidence_id = html_escape(source.get("evidence_id") or "")
-        parts.append(f"<li>{title} <span class=\"cite\">{evidence_id}</span> {url}</li>")
+        parts.append(f"<li>{title} <span class=\"cite\">{evidence_id} {url}</span></li>")
     parts.append("</ul>")
     return "".join(parts)
 
@@ -916,17 +950,95 @@ def weasyprint_binary() -> str | None:
     return None
 
 
-def try_weasyprint(html_path: Path, pdf_path: Path) -> bool:
+def pdf_page_count(path: Path) -> int | None:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if not data.startswith(b"%PDF-"):
+        return None
+    # Uncompressed WeasyPrint output has one /Type /Page object per document page.
+    count = len(re.findall(rb"/Type\s*/Page(?!s)", data))
+    return count or None
+
+
+_REAL_WEASY: dict[str, bool] = {}
+
+
+def real_weasyprint(binary: str) -> bool:
+    cached = _REAL_WEASY.get(binary)
+    if cached is not None:
+        return cached
+    try:
+        text = Path(binary).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    ok = "weasyprint" in text.lower()
+    _REAL_WEASY[binary] = ok
+    return ok
+
+
+def weasyprint_document_pages(html_path: Path, pdf_path: Path) -> int | None:
+    """Render a PDF and return WeasyPrint's document page count.
+
+    None means no PDF was written, or the converter was a stub that does not
+    report pages. Callers then fall back to estimate_pages.
+    """
     binary = weasyprint_binary()
     if not binary:
-        return False
-    proc = subprocess.run(
-        [binary, str(html_path), str(pdf_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return proc.returncode == 0 and pdf_path.is_file()
+        return None
+    if pdf_path.exists():
+        pdf_path.unlink()
+    if real_weasyprint(binary):
+        code = (
+            "import sys\n"
+            "from weasyprint import HTML\n"
+            "document = HTML(filename=sys.argv[1]).render()\n"
+            "document.write_pdf(sys.argv[2])\n"
+            "print(len(document.pages))\n"
+        )
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", code, str(html_path), str(pdf_path)],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            proc = None
+        if proc is not None and proc.returncode == 0 and pdf_path.is_file():
+            lines = [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
+            if lines and lines[-1].isdigit():
+                return int(lines[-1])
+        if pdf_path.exists():
+            pdf_path.unlink()
+        try:
+            proc = subprocess.run(
+                [binary, "--uncompressed-pdf", str(html_path), str(pdf_path)],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            return None
+        if proc.returncode == 0 and pdf_path.is_file():
+            return pdf_page_count(pdf_path)
+        return None
+    try:
+        proc = subprocess.run(
+            [binary, str(html_path), str(pdf_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if proc.returncode != 0 or not pdf_path.is_file():
+        return None
+    return pdf_page_count(pdf_path)
 
 
 def parse_flags(args: list[str]) -> tuple[list[str], dict[str, list[str]]]:
@@ -1077,14 +1189,47 @@ def show_level(level: str) -> str:
     return {"high": "High", "medium": "Medium", "low": "Low"}.get((level or "").lower(), "Low")
 
 
-def estimate_pages(html: str) -> int:
-    # Stylesheet text is not copy. Counting it made a one-page brief look like two.
+def visible_text(html: str) -> str:
     visible = re.sub(r"<style\b[^>]*>.*?</style>", " ", html or "", flags=re.IGNORECASE | re.DOTALL)
     visible = re.sub(r"<script\b[^>]*>.*?</script>", " ", visible, flags=re.IGNORECASE | re.DOTALL)
     plain = re.sub(r"<[^>]+>", " ", visible)
-    plain = re.sub(r"\s+", " ", plain).strip()
-    # 9pt Letter copy with these margins holds about this much before a second page.
+    return re.sub(r"\s+", " ", plain).strip()
+
+
+def estimate_pages(html: str) -> int:
+    # Fallback only, used when WeasyPrint did not report a document page count.
+    # Stylesheet text is not copy. Counting it made a one-page brief look like two.
+    plain = visible_text(html)
     return 1 if len(plain) <= 3800 else (1 + (len(plain) - 1) // 3800)
+
+
+def trim_one_bullet(brief: dict) -> bool:
+    """Drop one lowest-value bullet. Keep every section's last required item and 3 sources."""
+    steps = (
+        ("what_we_dont_know", None, 1),
+        ("appointment_playbook", "avoid", 1),
+        ("appointment_playbook", "questions", 1),
+        ("how_to_communicate", None, 1),
+        ("likely_objections", None, 1),
+        ("recommendations", None, 1),
+        ("hypotheses", None, 1),
+        ("observations", None, 1),
+        ("verified_facts", None, 1),
+        ("client_stated", None, 1),
+        ("appendix", "sources", 3),
+    )
+    for parent, child, minimum in steps:
+        box = brief.get(parent)
+        if child is None:
+            items = box
+        elif isinstance(box, dict):
+            items = box.get(child)
+        else:
+            items = None
+        if isinstance(items, list) and len(items) > minimum:
+            items.pop()
+            return True
+    return False
 
 
 def build_queries(name: str, city: str, urls: list[str]) -> tuple[list[dict], list[dict], list[str]]:
@@ -1210,9 +1355,13 @@ def cmd_intake(opts: dict[str, list[str]]) -> None:
     for url in urls:
         if dangerous_url(url) or not is_http_url(url):
             fail("rejected_url", "Only http(s) URLs are accepted.")
+    company = flag(opts, "company") or ""
+    role = flag(opts, "role") or ""
     clean_name, name_codes = redact(name)
     clean_city, city_codes = redact(city)
-    codes = unique(name_codes + city_codes)
+    clean_company, company_codes = redact(company) if company else ("", [])
+    clean_role, role_codes = redact(role) if role else ("", [])
+    codes = unique(name_codes + city_codes + company_codes + role_codes)
     if not clean_name:
         fail("name_empty_after_redaction", "Name was empty after removing blocked tokens.")
     if not clean_city:
@@ -1247,6 +1396,8 @@ def cmd_intake(opts: dict[str, list[str]]) -> None:
         "city": clean_city,
         "type": appt_type,
         "urls": stored_urls,
+        "company": clean_company,
+        "role": clean_role,
         "inaccessible_urls": inaccessible,
         "appt_at": appt_at,
         "tz": tz_name,
@@ -1400,6 +1551,83 @@ def search_missed(path: Path) -> bool:
     return doc.get("status") == "done" and int(doc.get("source_count") or 0) == 0
 
 
+def search_needs_anchor(path: Path) -> bool:
+    doc = load_search(path)
+    return bool(doc and doc.get("status") == "need_anchor")
+
+
+def phrase_present(text: str, phrase: str) -> bool:
+    phrase = (phrase or "").strip()
+    if len(phrase) < 2:
+        return False
+    return re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text or "", re.IGNORECASE) is not None
+
+
+def place_phrases(city: str) -> list[str]:
+    raw = (city or "").strip()
+    if not raw:
+        return []
+    phrases = [raw]
+    head = re.split(r"[,/]", raw, maxsplit=1)[0].strip()
+    tokens = head.split()
+    if len(tokens) >= 2 and re.fullmatch(r"[A-Za-z]{2}", tokens[-1]):
+        head = " ".join(tokens[:-1]).strip()
+    if head and head.casefold() not in {item.casefold() for item in phrases}:
+        phrases.append(head)
+    return [item for item in phrases if len(item) >= 2]
+
+
+def profile_marker(url: str) -> str:
+    parsed = urlparse(url or "")
+    host = (parsed.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    slug = (parsed.path or "").rstrip("/").lower()
+    if host == "linkedin.com" and slug.startswith("/in/") and slug != "/in":
+        return "linkedin:" + slug
+    if host in {"x.com", "twitter.com"} and slug.count("/") == 1 and slug != "/":
+        return "x:" + slug
+    return ""
+
+
+def link_matches(url: str, given: list[str]) -> bool:
+    canon = canon_url(url)
+    marker = profile_marker(url)
+    for item in given:
+        if not isinstance(item, str) or not item.strip():
+            continue
+        other = canon_url(item)
+        if other and canon == other:
+            return True
+        other_marker = profile_marker(item)
+        if marker and other_marker and marker == other_marker:
+            return True
+    return False
+
+
+def source_matches_anchors(title: str, excerpt: str, url: str, intake: dict) -> bool:
+    blob = f"{title or ''} {excerpt or ''}"
+    for phrase in place_phrases(intake.get("city") or ""):
+        if phrase_present(blob, phrase):
+            return True
+    company = (intake.get("company") or "").strip()
+    if company and phrase_present(blob, company):
+        return True
+    role = (intake.get("role") or "").strip()
+    if role and phrase_present(blob, role):
+        return True
+    urls = [item for item in (intake.get("urls") or []) if isinstance(item, str)]
+    return link_matches(url, urls)
+
+
+def excluded_people_note(count: int) -> str:
+    if count <= 0:
+        return ""
+    if count == 1:
+        return "1 other person with this name was excluded."
+    return f"{count} other people with this name were excluded."
+
+
 def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
     actor = gate(actor_of(opts), mutate=True)
     path = require_client(client_id)
@@ -1513,22 +1741,56 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
         if codes:
             missed["warnings"] = [warning(code) for code in codes]
         emit(missed, 1)
-    # One identity until the owner says otherwise. Distinct LinkedIn or X
-    # profiles stay separate so two people are not merged into one brief.
-    profiles: list[str] = []
+    # Same-name pages that do not match city, company, role, or a given link
+    # are a different person. They are not facts and they are not cited.
+    matched: list[dict] = []
+    excluded_profiles: list[str] = []
     for item in kept:
-        host = (urlparse(item["url"]).hostname or "").lower()
-        if host.startswith("www."):
-            host = host[4:]
-        slug = (urlparse(item["url"]).path or "").rstrip("/").lower()
-        marker = ""
-        if host == "linkedin.com" and slug.startswith("/in/"):
-            marker = "linkedin:" + slug
-        elif host in {"x.com", "twitter.com"} and slug.count("/") == 1 and slug != "/":
-            marker = "x:" + slug
-        if marker and marker not in profiles:
-            profiles.append(marker)
+        marker = profile_marker(item["url"])
         item["profile"] = marker
+        if source_matches_anchors(item["title"], item["excerpt"], item["url"], intake):
+            matched.append(item)
+            continue
+        if marker and marker not in excluded_profiles:
+            excluded_profiles.append(marker)
+    note = excluded_people_note(len(excluded_profiles))
+    if not matched:
+        save_evidence(path, rows)
+        write_json(path / "search.json", {
+            "status": "need_anchor",
+            "message": NEED_ANCHOR,
+            "query_count": len(queries),
+            "queries": [query["q"] for query in queries],
+            "targets": [query.get("target") for query in queries],
+            "source_count": 0,
+            "sources": [],
+            "profile_count": 0,
+            "excluded_people": len(excluded_profiles),
+            "excluded_note": note,
+        })
+        audit("search", client_id, {"queries": len(queries), "sources": 0}, actor)
+        missed = {
+            "ok": False,
+            "error": "need_anchor",
+            "status": "need_anchor",
+            "message": NEED_ANCHOR,
+            "query_count": len(queries),
+            "source_count": 0,
+            "excluded_people": len(excluded_profiles),
+        }
+        if note:
+            missed["excluded_note"] = note
+        if inaccessible:
+            missed["inaccessible"] = inaccessible
+        if codes:
+            missed["warnings"] = [warning(code) for code in codes]
+        emit(missed, 1)
+    # One person per matching LinkedIn or X profile. A news or company page
+    # is copied only onto profiles that themselves match the anchors.
+    profiles: list[str] = []
+    for item in matched:
+        if item["profile"] and item["profile"] not in profiles:
+            profiles.append(item["profile"])
     used = [int(row.get("candidate") or 0) for row in rows]
     start = (max(used) + 1) if used else 1
     profile_n = {marker: start + index for index, marker in enumerate(profiles)}
@@ -1537,14 +1799,13 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
         if item["profile"]:
             return [profile_n[item["profile"]]]
         if len(profiles) > 1:
-            # News, company, and podcast pages belong with each profile, not a leftover person.
             return list(profile_n.values())
         if profiles:
             return [profile_n[profiles[0]]]
         return [start]
 
     sources = []
-    for item in kept:
+    for item in matched:
         for number in candidate_numbers(item):
             evidence_id = "ev_" + secrets.token_hex(8)
             rows.append({
@@ -1570,7 +1831,7 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
                 "candidate": number,
             })
     save_evidence(path, rows)
-    write_json(path / "search.json", {
+    stored = {
         "status": "done",
         "query_count": len(queries),
         "queries": [query["q"] for query in queries],
@@ -1578,7 +1839,10 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
         "source_count": len(sources),
         "sources": sources,
         "profile_count": len(profiles),
-    })
+        "excluded_people": len(excluded_profiles),
+        "excluded_note": note,
+    }
+    write_json(path / "search.json", stored)
     audit("search", client_id, {"queries": len(queries), "sources": len(sources)}, actor)
     result = {
         "ok": True,
@@ -1586,7 +1850,10 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
         "query_count": len(queries),
         "source_count": len(sources),
         "sources": sources,
+        "excluded_people": len(excluded_profiles),
     }
+    if note:
+        result["excluded_note"] = note
     if inaccessible:
         result["inaccessible"] = inaccessible
     if codes:
@@ -1735,6 +2002,13 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
     usable = [row for row in rows if row.get("identity_status") != "inaccessible"]
     parts = split_name(intake.get("name") or "")
     if not usable:
+        if search_needs_anchor(path):
+            doc = load_search(path) or {}
+            message = doc.get("message") or NEED_ANCHOR
+            note = doc.get("excluded_note") or ""
+            if isinstance(note, str) and note and note not in message:
+                message = message + " " + note
+            stop_identity(path, "need_anchor", message)
         if search_missed(path):
             stop_identity(path, "couldnt_find", "couldn't find")
         write_json(path / "candidates.json", {"candidates": []})
@@ -1870,14 +2144,29 @@ def cmd_render(client_id: str, opts: dict[str, list[str]]) -> None:
     if not result["ok"]:
         fail("not_validated", "Stored brief failed validation.", {"errors": result["errors"]})
     write_json(brief_path, result["brief"])
-    html = build_html(path, result["brief"])
+    view = json.loads(json.dumps(result["brief"]))
     html_path = path / "brief.html"
-    html_path.write_text(html, encoding="utf-8")
     pdf_path = path / "brief.pdf"
-    if pdf_path.exists():
-        pdf_path.unlink()
-    wrote_pdf = try_weasyprint(html_path, pdf_path)
-    pages = estimate_pages(html)
+
+    def paint(current: dict) -> tuple[str, int | None]:
+        html_out = build_html(path, current)
+        html_path.write_text(html_out, encoding="utf-8")
+        if pdf_path.exists():
+            pdf_path.unlink()
+        return html_out, weasyprint_document_pages(html_path, pdf_path)
+
+    html, document_pages = paint(view)
+    # Tighten the layout in the template first. Cut a bullet only when the
+    # rendered PDF is still longer than one page.
+    guard = 0
+    while document_pages is not None and document_pages > 1 and guard < 40 and trim_one_bullet(view):
+        guard += 1
+        html, document_pages = paint(view)
+    wrote_pdf = pdf_path.is_file() and pdf_path.stat().st_size > 0
+    if document_pages is not None and document_pages > 0:
+        pages = document_pages
+    else:
+        pages = estimate_pages(html)
     audit("brief_render", client_id, {"html": 1, "pdf": 1 if wrote_pdf else 0, "pages": pages}, actor)
     payload: dict = {"ok": True, "html": True, "pdf": wrote_pdf, "pages": pages}
     if not wrote_pdf:

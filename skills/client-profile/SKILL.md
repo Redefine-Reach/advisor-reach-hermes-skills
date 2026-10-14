@@ -68,17 +68,20 @@ text right now." and never guess a cause. When the owner says to forget or delet
 Run, in order, with `python3 /opt/data/skills/client-profile/scripts/cp.py`. Every command prints one JSON object `{"ok": true|false, ...}`.
 
 1. **Intake.** `cp.py intake --name "..." --city "..." --type buyer|listing|other`  
-   Optional repeatable `--url`, optional `--appt-at` (ISO), optional `--tz` (IANA). There is no `--address` flag. Do not pass a street, ZIP, phone, email, or birth date.
+   Optional `--company` (or brokerage), optional `--role`, optional repeatable `--url`, optional `--appt-at` (ISO), optional `--tz` (IANA). There is no `--address` flag. Do not pass a street, ZIP, phone, email, or birth date.
 2. **Search.** `cp.py search <client_id>`  
    This runs every returned query through Exa (`EXA_API_KEY`, or `exa_api_key` in config.json). It fetches the top pages, drops duplicate URLs, and stores one evidence row per kept page. Do not call `web_search` or `web_extract` for this skill. Do not stop after the first hit. `cp.py queries` only lists the strings; it does not search.
    If search returns `search_unavailable`, say that message to the owner and do not write a research brief. A brief with web evidence is refused until search can run.
    If search returns `couldnt_find`, tell the owner exactly `couldn't find` and do not write a brief. Zero sources is that outcome, not an empty list.
+   If search returns `need_anchor`, identity confidence is Low. Tell the owner no source matches this city, company, role, or link, and ask for a profile link or company. Do not write a brief.
+   A same-name page that does not match the city, the company or brokerage, the role, or a link the owner gave is a different person. Leave it out of the facts and out of the citations. Say at most one line, `N other people with this name were excluded.` Do not name those other people. Never blend them into the person being briefed.
 3. **Evidence.** Pages from `search` are already stored. Add a manual paste only when the owner supplies one:  
    `cp.py evidence add <client_id> --url ... --title ... --excerpt ... --origin manual --query "owner paste" --candidate N`  
    Do not put owner-pasted text on a web result's candidate. Cite every URL in `search.json` `sources` from `appendix.sources`.
 4. **Candidates.** `cp.py identity candidates <client_id>`  
    Add the search results first. An empty list before any evidence means you have not searched yet.
    If `status` is `couldnt_find`, stop. Tell the owner exactly `couldn't find`. Do not brief and do not guess another person who shares only a first name.
+   If `status` is `need_anchor`, identity confidence is Low. Ask for a profile link or company. Do not brief the same-name hits.
    If `status` is `need_profile_link`, ask the advisor for a profile link. Add that link with `evidence add` (`--origin web`). The link is saved on the intake and unblocks the name. A page search found on its own does not. Do not guess.
    Otherwise text the owner: `Found N <name> in <city>: 1) … 2) … Reply 1, 2 or NONE`
 5. **Confirm.** On `1` or `2`: `cp.py identity confirm <client_id> --candidate N`  
@@ -86,7 +89,7 @@ Run, in order, with `python3 /opt/data/skills/client-profile/scripts/cp.py`. Eve
    If confirm returns `couldnt_find` or `need_profile_link`, stop and say that message. Do not write a brief.
 6. **Synthesize.** Run `cp.py evidence render <client_id>`. `evidence block` prints the same text. Put the returned `text` in the prompt as the only evidence. It is already wrapped in the untrusted markers below. Literal delimiter strings inside an excerpt are stripped. Do not add other snippets and do not rebuild the markers around text you fetched yourself. Write brief JSON that matches `assets/brief.schema.json`. Then `cp.py brief validate <client_id> <brief.json>`.
 7. On validate failure, regenerate **once** from the errors. Never render a failing brief.
-8. **Render.** `cp.py brief render <client_id>` writes `brief.html` and, when `/usr/bin/weasyprint` is on the box, `brief.pdf`. The template `assets/template.html` is locked. Do not hand-edit it.
+8. **Render.** `cp.py brief render <client_id>` writes `brief.html` and, when WeasyPrint is available, `brief.pdf`. `pages` is that PDF's page count. When WeasyPrint is not available, `pages` is only an estimate. The template `assets/template.html` is locked. Do not hand-edit it. Layout stays on one page by tighter margins and 9.5–10pt type before any bullet is removed.
 9. **Deliver.** `cp.py deliver <client_id>` copies the PDF (or HTML if there is no PDF) into `ARTIFACT_DIR` under an opaque random name and records a 7-day expiry.
 10. **SMS.** `cp.py sms-summary <client_id>` returns the text to send the owner. Send that text to the owner. It is at most 300 characters, with one public link. Do not send it to the client.
 
@@ -108,7 +111,7 @@ Approved shapes (the script builds these):
 "<name>" <knownUrl>
 ```
 
-- `cp.py search` runs all of these. The cap is 8, which keeps every target above and up to two profile URLs the advisor already supplied. Results are merged and deduped by URL. Cite every kept URL in `appendix.sources`.
+- `cp.py search` runs all of these. The cap is 8, which keeps every target above and up to two profile URLs the advisor already supplied. Results are merged and deduped by URL. A hit is kept only when it matches the city, company or brokerage, role, or a link the owner gave. Cite every kept URL in `appendix.sources`. Do not cite a same-name hit that failed that match.
 - There is no web_search fallback. If `EXA_API_KEY` is missing, search stops and the brief must say search is unavailable instead of using one thin source.
 - Escape quotes in the name. The script does this.
 - Never include a street, ZIP, phone, email, or date of birth. If the owner pasted one into the name or city, the script strips it and returns a warning code. Do not add it back.

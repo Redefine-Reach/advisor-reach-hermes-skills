@@ -2224,3 +2224,430 @@ test("a fictional name with no Exa sources is couldn't find, not an empty brief"
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+function weasyBin() {
+  const home = process.env.HOME || "";
+  const candidates = [
+    process.env.WEASYPRINT_BIN || "",
+    "/usr/bin/weasyprint",
+    home ? join(home, ".local/bin/weasyprint") : "",
+  ];
+  return candidates.find((bin) => bin && existsSync(bin)) || "";
+}
+
+function weasyEnv(bin) {
+  if (!bin) return {};
+  const env = { WEASYPRINT_BIN: bin };
+  const probe = spawnSync("python3", ["-c", "import site; print(site.getusersitepackages())"], {
+    encoding: "utf8",
+  });
+  const site = (probe.stdout || "").trim();
+  if (probe.status === 0 && site && existsSync(site)) env.PYTHONPATH = site;
+  return env;
+}
+
+function pdfPageCount(file) {
+  const proc = spawnSync(
+    "python3",
+    [
+      "-c",
+      [
+        "import sys",
+        "path = sys.argv[1]",
+        "try:",
+        "    import fitz",
+        "    print(fitz.open(path).page_count)",
+        "    raise SystemExit",
+        "except Exception:",
+        "    pass",
+        "from pypdf import PdfReader",
+        "print(len(PdfReader(path).pages))",
+      ].join("\n"),
+      file,
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(proc.status, 0, proc.stderr || proc.stdout);
+  return Number(String(proc.stdout || "").trim().split("\n").pop());
+}
+
+function sameNameServer(includeMatch) {
+  const decoys = [
+    {
+      url: "https://www.linkedin.com/in/david-marshall-austin",
+      title: "David Marshall",
+      text: "David Marshall is a designer in Austin.",
+    },
+    {
+      url: "https://www.linkedin.com/in/david-marshall-boston",
+      title: "David Marshall",
+      text: "David Marshall teaches history in Boston.",
+    },
+    {
+      url: "https://www.linkedin.com/in/david-marshall-seattle",
+      title: "David Marshall",
+      text: "David Marshall leads a fund in Seattle.",
+    },
+  ];
+  return createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+      const domains = body.includeDomains || [];
+      const query = body.query || "";
+      let results = [];
+      if (req.url === "/contents") {
+        results = [];
+      } else if (domains.includes("linkedin.com")) {
+        results = decoys.slice();
+        if (includeMatch) {
+          results.unshift({
+            url: "https://www.linkedin.com/in/david-marshall-compass",
+            title: "David Marshall",
+            text: "David Marshall on LinkedIn.",
+          });
+        }
+      } else if (includeMatch && query.includes("company site")) {
+        results = [{
+          url: "https://compass.example.com/team/david-marshall",
+          title: "David Marshall",
+          text: "David Marshall works at Compass.",
+        }];
+      } else if (includeMatch && body.category === "news") {
+        results = [{
+          url: "https://news.example.com/david-marshall",
+          title: "David Marshall interview",
+          text: "David Marshall spoke in Phoenix.",
+        }];
+      } else if (includeMatch && query.includes("podcast")) {
+        results = [{
+          url: "https://podcast.example.com/david-marshall",
+          title: "David Marshall on the show",
+          text: "David Marshall is a broker.",
+        }];
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results }));
+    });
+  });
+}
+
+test("same-name search drops three decoy profiles and does not cite them", async () => {
+  assert.match(skill, /other people with this name were excluded/);
+  assert.match(script, /source_matches_anchors/);
+  const server = sameNameServer(true);
+  const port = await listen(server);
+  const decoyUrls = [
+    "https://www.linkedin.com/in/david-marshall-austin",
+    "https://www.linkedin.com/in/david-marshall-boston",
+    "https://www.linkedin.com/in/david-marshall-seattle",
+  ];
+  const keptUrls = [
+    "https://www.linkedin.com/in/david-marshall-compass",
+    "https://compass.example.com/team/david-marshall",
+    "https://news.example.com/david-marshall",
+    "https://podcast.example.com/david-marshall",
+  ];
+  try {
+    const ctx = world();
+    const intake = run(
+      [
+        "intake",
+        "--actor",
+        "owner",
+        "--name",
+        "David Marshall",
+        "--city",
+        "Phoenix",
+        "--type",
+        "buyer",
+        "--company",
+        "Compass",
+        "--role",
+        "broker",
+        "--url",
+        "https://www.linkedin.com/in/david-marshall-compass",
+      ],
+      ctx,
+    );
+    assert.equal(intake.payload.ok, true, intake.stdout);
+    const id = intake.payload.client_id;
+    const searched = await runAsync(["search", id, "--actor", "owner"], ctx, {
+      EXA_API_KEY: "exa-test-key",
+      EXA_API_BASE: `http://127.0.0.1:${port}`,
+    });
+    assert.equal(searched.payload.ok, true, searched.stdout + searched.stderr);
+    assert.equal(searched.payload.excluded_people, 3);
+    assert.equal(searched.payload.excluded_note, "3 other people with this name were excluded.");
+    const urls = searched.payload.sources.map((item) => item.url);
+    assert.deepEqual(urls.slice().sort(), keptUrls.slice().sort());
+    for (const url of decoyUrls) {
+      assert.equal(urls.includes(url), false, url);
+      assert.equal(searched.stdout.includes(url), false, url);
+    }
+    assert.equal(new Set(searched.payload.sources.map((item) => item.candidate)).size, 1);
+    const evidence = readFileSync(join(ctx.data, id, "evidence.jsonl"), "utf8");
+    for (const url of decoyUrls) assert.equal(evidence.includes(url), false, url);
+    for (const url of keptUrls) assert.equal(evidence.includes(url), true, url);
+    const listed = run(["identity", "candidates", id], ctx);
+    assert.equal(listed.payload.candidates.length, 1, JSON.stringify(listed.payload));
+    confirm(ctx, id, listed.payload.candidates[0].n);
+    const ids = searched.payload.sources.map((item) => item.evidence_id);
+    const brief = loadGood(ids, (next) => {
+      next.identity_match.level = "high";
+      next.identity_match.basis = "Four public pages match this city, company, role, or link.";
+      next.verified_facts[0].evidence_ids = ids;
+      next.verified_facts[0].confidence = "high";
+      next.appendix.sources = searched.payload.sources.map((item) => ({
+        evidence_id: item.evidence_id,
+        url: item.url,
+        title: item.title,
+      }));
+    });
+    const checked = validate(ctx, id, brief);
+    assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
+    const rendered = run(["brief", "render", id, "--actor", "owner"], ctx);
+    const html = readFileSync(join(ctx.data, id, "brief.html"), "utf8");
+    const notes = html.match(/other people with this name were excluded/g) || [];
+    assert.equal(notes.length, 1);
+    for (const url of decoyUrls) assert.equal(html.includes(url), false, url);
+    for (const url of keptUrls) assert.equal(html.includes(url), true, url);
+    assert.doesNotMatch(html, /\bconfirmed\b/i);
+    assert.doesNotMatch(searched.stdout, /\bconfirmed\b/i);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("same-name search with no anchor match asks for a link or company", async () => {
+  assert.match(skill, /need_anchor/);
+  assert.match(skill, /identity confidence is Low/i);
+  const server = sameNameServer(false);
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const id = run(
+      [
+        "intake",
+        "--name",
+        "David Marshall",
+        "--city",
+        "Phoenix",
+        "--type",
+        "buyer",
+        "--company",
+        "Compass",
+        "--role",
+        "broker",
+      ],
+      ctx,
+    ).payload.client_id;
+    const searched = await runAsync(["search", id, "--actor", "owner"], ctx, {
+      EXA_API_KEY: "exa-test-key",
+      EXA_API_BASE: `http://127.0.0.1:${port}`,
+    });
+    assert.equal(searched.payload.ok, false, searched.stdout);
+    assert.equal(searched.payload.error, "need_anchor");
+    assert.equal(searched.payload.status, "need_anchor");
+    assert.match(searched.payload.message, /Identity confidence is Low/);
+    assert.match(searched.payload.message, /profile link or company/);
+    assert.equal(searched.payload.excluded_people, 3);
+    assert.equal(searched.payload.excluded_note, "3 other people with this name were excluded.");
+    assert.equal(searched.payload.source_count, 0);
+    assert.equal(Object.hasOwn(searched.payload, "sources"), false);
+    assert.doesNotMatch(searched.stdout, /david-marshall-austin|david-marshall-boston|david-marshall-seattle/);
+    assert.doesNotMatch(searched.stdout, /\bconfirmed\b/i);
+    const evidencePath = join(ctx.data, id, "evidence.jsonl");
+    if (existsSync(evidencePath)) {
+      const evidence = readFileSync(evidencePath, "utf8");
+      assert.equal(evidence.includes("linkedin.com"), false);
+    }
+    const listed = run(["identity", "candidates", id], ctx);
+    assert.equal(listed.payload.status, "need_anchor");
+    assert.match(listed.payload.message, /Identity confidence is Low/);
+    assert.match(listed.payload.message, /3 other people with this name were excluded/);
+    assert.deepEqual(listed.payload.candidates, []);
+    const checked = validate(ctx, id, loadGood(["ev_00000000"]));
+    assert.equal(checked.payload.ok, false, JSON.stringify(checked.payload));
+    assert.ok(codes(checked.payload).includes("need_anchor"));
+    assert.equal(existsSync(join(ctx.data, id, "brief.json")), false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("a dense brief renders as one PDF page with the four sections and sources", () => {
+  const bin = weasyBin();
+  const ctx = world();
+  const sources = [
+    {
+      url: "https://example.com/dense-linkedin",
+      title: "Dana Whitfield",
+      excerpt: "Dana Whitfield is a broker in Scottsdale and writes in short sentences.",
+      origin: "web",
+      query: '"Dana Whitfield" "Scottsdale" LinkedIn',
+      candidate: 1,
+    },
+    {
+      url: "https://example.com/dense-news",
+      title: "Dana Whitfield interview",
+      excerpt: "Dana Whitfield spoke in Scottsdale about taking time on listing decisions.",
+      origin: "web",
+      query: '"Dana Whitfield" "Scottsdale" news',
+      candidate: 1,
+    },
+    {
+      url: "https://example.com/dense-company",
+      title: "Dana Whitfield at Red Rock",
+      excerpt: "Dana Whitfield leads the Scottsdale desk and prefers a written agenda.",
+      origin: "web",
+      query: '"Dana Whitfield" "Scottsdale" company site',
+      candidate: 1,
+    },
+    {
+      url: "https://example.com/dense-podcast",
+      title: "Dana Whitfield on the show",
+      excerpt: "Dana Whitfield told a Scottsdale podcast that price talks need a clear range.",
+      origin: "web",
+      query: '"Dana Whitfield" "Scottsdale" podcast',
+      candidate: 1,
+    },
+  ];
+  const made = seed(ctx, { name: "Dana Whitfield", city: "Scottsdale", type: "listing", evidence: sources });
+  confirm(ctx, made.id, 1);
+  const ids = made.evidenceIds;
+  const brief = loadGood(ids, (next) => {
+    next.snapshot = "Public-source listing brief. Four pages match this name in Scottsdale. Verify the plan before the appointment.";
+    next.identity_match.level = "high";
+    next.identity_match.basis = "Four public pages use this full name in this city.";
+    next.communication_style.disc_hypothesis = "Working hypothesis only: steady, concrete, and slow to decide. This is a hypothesis, not a diagnosis.";
+    next.communication_style.confidence = "medium";
+    next.communication_style.evidence_ids = [ids[0], ids[1]];
+    next.how_to_communicate = [
+      { text: "Lead with the listing timeline and one written next step.", evidence_ids: [ids[0]] },
+      { text: "Pause after the range so they can react before the next point.", evidence_ids: [ids[1]] },
+      { text: "Keep each answer to the question they actually asked.", evidence_ids: [ids[2]] },
+    ];
+    next.decision_speed = {
+      text: "The pages suggest a deliberate pace, with no sign they decide in the first meeting.",
+      evidence_ids: [ids[1], ids[3]],
+    };
+    next.yes_to_hear = {
+      text: "They need a clear net-proceeds range and a written listing timeline.",
+      evidence_ids: [ids[2], ids[3]],
+    };
+    next.likely_objections = [
+      { text: "A thin price range is a likely reason to pause.", evidence_ids: [ids[3]] },
+      { text: "An agenda that skips repairs is a likely objection.", evidence_ids: [ids[1]] },
+      { text: "A push to decide today is a likely reason to wait.", evidence_ids: [ids[0]] },
+    ];
+    next.appointment_playbook.opening = {
+      text: "Thanks for the time. Here is the listing agenda and the range we can support from public pages.",
+      evidence_ids: [ids[0]],
+    };
+    next.appointment_playbook.lead_points = [
+      { text: "Confirm the listing goal for this appointment.", evidence_ids: [ids[0]] },
+      { text: "Walk the net-proceeds range the public pages support.", evidence_ids: [ids[3]] },
+      { text: "Agree on the next step before ending.", evidence_ids: [ids[2]] },
+    ];
+    next.appointment_playbook.questions = [
+      "What would make this appointment useful?",
+      "Which part of the range needs more detail?",
+      "What should we leave for the next meeting?",
+    ];
+    next.appointment_playbook.avoid = [
+      "Do not guess a price the sources do not support.",
+      "Do not fill silence with a new pitch.",
+      "Do not treat a hypothesis as a trait.",
+    ];
+    next.appointment_playbook.close = "Restate the next step, the open questions, and the range still to check.";
+    next.appointment_playbook.pricing_conversation = {
+      text: "Show the range the public pages support, then ask what they want to net.",
+      evidence_ids: [ids[2], ids[3]],
+    };
+    next.verified_facts = [
+      {
+        text: "A public page ties Dana Whitfield to a Scottsdale brokerage role.",
+        evidence_ids: ids,
+        confidence: "high",
+      },
+      {
+        text: "A news page and a podcast both describe a deliberate listing decision.",
+        evidence_ids: [ids[1], ids[3]],
+        confidence: "high",
+      },
+      {
+        text: "The company page says a written agenda is the preferred way to meet.",
+        evidence_ids: [ids[2]],
+        confidence: "medium",
+      },
+    ];
+    next.client_stated = [
+      { text: "Client stated the appointment is to review the listing plan.", evidence_ids: [ids[0]] },
+      { text: "Client stated a second meeting is acceptable if the range is thin.", evidence_ids: [ids[1]] },
+    ];
+    next.observations = [
+      { text: "Observation: the public pages use short, concrete sentences.", evidence_ids: [ids[0], ids[2]], confidence: "high" },
+      { text: "Observation: the podcast returns to price only after the timeline.", evidence_ids: [ids[3]], confidence: "medium" },
+    ];
+    next.hypotheses = [
+      { text: "Hypothesis: a written agenda will help this conversation.", evidence_ids: [ids[2]], confidence: "medium" },
+      { text: "Hypothesis: they may want the range in writing before a decision.", evidence_ids: [ids[1], ids[3]], confidence: "high" },
+    ];
+    next.recommendations = [
+      { text: "Recommendation: open with the listing timeline, then pause for questions.", evidence_ids: [ids[0]] },
+      { text: "Recommendation: leave the net figure as a range until they react.", evidence_ids: [ids[3]] },
+    ];
+    next.what_we_dont_know = [
+      "Timing for going live is not in the sources.",
+      "Repair history is not in the sources.",
+      "Whether they have a second agent is not in the sources.",
+      "The bottom of the range they will accept is not in the sources.",
+    ];
+    next.appendix.low_confidence = [];
+    next.appendix.sources = sources.map((item, index) => ({
+      evidence_id: ids[index],
+      url: item.url,
+      title: item.title,
+    }));
+  });
+  const checked = validate(ctx, made.id, brief);
+  assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
+  const rendered = run(["brief", "render", made.id, "--actor", "owner"], ctx, weasyEnv(bin));
+  assert.equal(rendered.payload.ok, true, rendered.stdout + rendered.stderr);
+  const html = readFileSync(join(ctx.data, made.id, "brief.html"), "utf8");
+  assert.match(html, /font:\s*9\.5pt/);
+  assert.match(html, /font:\s*700 10pt/);
+  assert.match(html, /margin:\s*0\.3in/);
+  for (const heading of ["Client stated", "Observations", "Hypotheses", "Recommendations", "Sources"]) {
+    assert.match(html, new RegExp(heading));
+  }
+  assert.match(html, /Client stated the appointment is to review the listing plan/);
+  assert.match(html, /Observation: the public pages use short, concrete sentences/);
+  assert.match(html, /Hypothesis: a written agenda will help this conversation/);
+  assert.match(html, /Recommendation: open with the listing timeline, then pause for questions/);
+  const presentSources = sources.filter((item) => html.includes(item.url));
+  assert.ok(presentSources.length >= 3, presentSources.map((item) => item.url).join(","));
+  assert.doesNotMatch(html, /\bconfirmed\b/i);
+  assert.doesNotMatch(html, /Reply YES/i);
+  if (bin) {
+    assert.equal(rendered.payload.pdf, true, JSON.stringify(rendered.payload));
+    assert.equal(rendered.payload.pages, 1, JSON.stringify(rendered.payload));
+    const pdfPath = join(ctx.data, made.id, "brief.pdf");
+    assert.equal(pdfPageCount(pdfPath), 1);
+    const text = spawnSync(
+      "python3",
+      ["-c", "import sys,fitz\ndoc=fitz.open(sys.argv[1])\nprint('\\n'.join(page.get_text() for page in doc))\n", pdfPath],
+      { encoding: "utf8" },
+    );
+    assert.equal(text.status, 0, text.stderr);
+    for (const heading of ["Client stated", "Observations", "Hypotheses", "Recommendations"]) {
+      assert.match(text.stdout, new RegExp(heading));
+    }
+    assert.ok(sources.filter((item) => text.stdout.includes(item.url)).length >= 3);
+  } else {
+    assert.equal(rendered.payload.pdf, false);
+    assert.equal(rendered.payload.pdf_skipped, "weasyprint_unavailable");
+  }
+});
