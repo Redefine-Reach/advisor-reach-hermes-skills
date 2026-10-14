@@ -895,8 +895,8 @@ def build_html(path: Path, brief: dict) -> str:
         search_notice = f"<p class=\"banner\">{html_escape(SEARCH_UNAVAILABLE)}</p>"
     elif search_doc and search_doc.get("status") == "done":
         notice = (
-            f"Searched {search_doc.get('query_count')} public queries and kept "
-            f"{search_doc.get('source_count')} sources."
+            f"Searched {counted(search_doc.get('query_count'), 'public query', 'public queries')} and kept "
+            f"{counted(search_doc.get('source_count'), 'source', 'sources')}."
         )
         note = search_doc.get("excluded_note") or ""
         if isinstance(note, str) and note.strip():
@@ -919,7 +919,7 @@ def build_html(path: Path, brief: dict) -> str:
         "{{DECISION_SPEED}}": cited_html(brief.get("decision_speed")),
         "{{YES_TO_HEAR}}": cited_html(brief.get("yes_to_hear")),
         "{{OBJECTIONS}}": render_items(brief.get("likely_objections") or []),
-        "{{DISC}}": html_escape(style.get("disc_hypothesis") or ""),
+        "{{DISC}}": html_escape(finish_sentence(style.get("disc_hypothesis") or "")),
         "{{DISC_CONFIDENCE}}": html_escape(style.get("confidence") or ""),
         "{{HOW}}": render_items(brief.get("how_to_communicate") or []),
         "{{OPENING}}": html_escape((play.get("opening") or {}).get("text") or ""),
@@ -2437,6 +2437,23 @@ def search_count(raw: int, deduped: int, name_matched: int, anchor_kept: int) ->
         "name_matched": name_matched,
         "anchor_kept": anchor_kept,
     }
+
+
+def counted(count: object, singular: str, plural: str) -> str:
+    """1 source, 2 sources. A missing count reads as zero, not the word None."""
+    try:
+        number = int(count)
+    except (TypeError, ValueError):
+        number = 0
+    return f"{number} {singular if number == 1 else plural}"
+
+
+def finish_sentence(text: str) -> str:
+    """Keep a bare label such as 'insufficient evidence' from running into the next label."""
+    cleaned = (text or "").strip()
+    if cleaned and cleaned[-1] not in ".!?":
+        cleaned += "."
+    return cleaned
 
 
 def excluded_people_note(count: int) -> str:

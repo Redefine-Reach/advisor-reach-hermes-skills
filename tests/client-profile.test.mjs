@@ -4390,3 +4390,58 @@ test("two candidates use identity confirm, and NONE does not write a pdf", () =>
   assert.equal(rendered.payload.ok, true, rendered.stdout + rendered.stderr);
   if (bin) assert.equal(rendered.payload.pages, 1);
 });
+
+test("a one-source brief uses the singular and ends the DISC line", async () => {
+  const page = {
+    url: "https://advisorreach.ai/journal/listing-meetings",
+    title: "David Marshall on listing meetings",
+    text: "David Marshall writes for AdvisorReach in Phoenix.",
+  };
+  const { server } = replayServer([page]);
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const id = run(
+      [
+        "intake",
+        "--actor",
+        "owner",
+        "--name",
+        "David Marshall",
+        "--city",
+        "Phoenix",
+        "--type",
+        "buyer",
+        "--company",
+        "AdvisorReach",
+      ],
+      ctx,
+    ).payload.client_id;
+    const searched = await runAsync(["search", id, "--actor", "owner"], ctx, {
+      EXA_API_KEY: "exa-test-key",
+      EXA_API_BASE: `http://127.0.0.1:${port}`,
+    });
+    assert.equal(searched.payload.ok, true, searched.stdout + searched.stderr);
+    assert.equal(searched.payload.source_count, 1);
+    const listed = run(["identity", "candidates", id, "--actor", "owner"], ctx);
+    assert.equal(listed.payload.next, "write", listed.stdout);
+    const brief = loadGood([searched.payload.sources[0].evidence_id], (next) => {
+      next.communication_style.disc_hypothesis = "insufficient evidence";
+      next.communication_style.confidence = "low";
+      next.identity_match.level = "high";
+    });
+    const checked = validate(ctx, id, brief);
+    assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
+    const rendered = run(["brief", "render", id, "--actor", "owner"], ctx);
+    assert.equal(rendered.payload.ok, true, rendered.stdout + rendered.stderr);
+    const html = readFileSync(join(ctx.data, id, "brief.html"), "utf8");
+    assert.match(html, /kept 1 source\./);
+    assert.doesNotMatch(html, /1 sources/);
+    assert.match(html, /insufficient evidence\. <span class="conf">Confidence: low\./);
+    assert.match(html, /Owner-picked\. Medium\./);
+    assert.doesNotMatch(html, /\bconfirmed\b/i);
+    assert.doesNotMatch(html, /consent|permission|text the lead|Reply YES/i);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
