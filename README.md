@@ -204,6 +204,9 @@ captured as the Delivery Target, then verify with `list` that it is `origin`/`te
 scheduled text whose content `daily-brief` defines. Routing prefix pinned by
 `tests/schedule-text.test.mjs`.
 
+### learning-loop
+Explicit preferences and repeated corrections (the same correction twice), tagged to the owner or to one named client, plus style and acted-on signals from a draft the owner edits, sends, or skips. One script, `skills/learning-loop/scripts/learning_loop.py`, saves without an approval prompt and returns a one-line `confirm` only after read-back. `apply` is what a new session, including after `/new`, runs before a Daily Brief or the next draft of a kind. `list` answers "what do you remember"; `forget` removes one; `show` lists learned draft signals. Every save calls the box do-not-keep gate (`/opt/box/arin_donotkeep.py`) and refuses when that module is missing. Client procedures are small skills the script writes under `$HERMES_HOME/skills/c-<client>--<procedure>/`. The script does not turn background review on. Contract: `tests/learning-loop.test.mjs`.
+
 ### daily-brief
 The morning brief / daily update: what a Brief Job's prompt says (first line `User timezone: <IANA>`,
 the DELIVERY FORMAT paragraph) and what the fire-time run does — gather honestly from what is
