@@ -1078,7 +1078,10 @@ def show_level(level: str) -> str:
 
 
 def estimate_pages(html: str) -> int:
-    plain = re.sub(r"<[^>]+>", " ", html or "")
+    # Stylesheet text is not copy. Counting it made a one-page brief look like two.
+    visible = re.sub(r"<style\b[^>]*>.*?</style>", " ", html or "", flags=re.IGNORECASE | re.DOTALL)
+    visible = re.sub(r"<script\b[^>]*>.*?</script>", " ", visible, flags=re.IGNORECASE | re.DOTALL)
+    plain = re.sub(r"<[^>]+>", " ", visible)
     plain = re.sub(r"\s+", " ", plain).strip()
     # 9pt Letter copy with these margins holds about this much before a second page.
     return 1 if len(plain) <= 3800 else (1 + (len(plain) - 1) // 3800)
