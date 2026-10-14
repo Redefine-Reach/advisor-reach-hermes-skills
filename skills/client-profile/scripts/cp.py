@@ -1376,6 +1376,17 @@ def build_queries(name: str, city: str, urls: list[str], company: str = "") -> t
         if spec.get("type"):
             item["type"] = spec["type"]
         queries.append(item)
+    company_hosts: list[str] = []
+    for url in urls:
+        if not isinstance(url, str) or not is_http_url(url) or is_instagram(url):
+            continue
+        host = host_of(url)
+        if host and host not in SOCIAL_HOSTS and host not in company_hosts:
+            company_hosts.append(host)
+    if company_hosts:
+        for item in queries:
+            if item.get("target") == "company" and "include_domains" not in item:
+                item["include_domains"] = company_hosts[:3]
     inaccessible: list[dict] = []
     for url in urls:
         if url_has_blocked_token(url):
@@ -1640,7 +1651,12 @@ def exa_search_body(query: dict) -> dict:
         "query": query["q"],
         "numResults": EXA_TOP,
         "type": query.get("type") or "auto",
-        "contents": {"text": {"maxCharacters": EXA_TEXT_CHARS}},
+        "contents": {
+            "text": {"maxCharacters": EXA_TEXT_CHARS},
+            # Highlights are the sentences that matched the query. A LinkedIn or
+            # news page often puts the employer there, not in the opening text.
+            "highlights": {"numSentences": 2, "highlightsPerUrl": 3},
+        },
     }
     domains = query.get("include_domains")
     if domains:
@@ -1654,10 +1670,29 @@ def result_text(row: dict) -> str:
     text = row.get("text")
     if isinstance(text, str) and text.strip():
         return text
+    return result_snippet(row)
+
+
+def result_snippet(row: dict) -> str:
+    """Employer and query matches that may sit outside the opening text."""
+    parts: list[str] = []
+    for key in ("snippet", "summary", "author", "company", "employer"):
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(value)
     highlights = row.get("highlights")
     if isinstance(highlights, list):
-        return " ".join(part for part in highlights if isinstance(part, str))
-    return ""
+        parts.extend(part for part in highlights if isinstance(part, str) and part.strip())
+    entities = row.get("entities")
+    if isinstance(entities, list):
+        for entity in entities:
+            if isinstance(entity, str) and entity.strip():
+                parts.append(entity)
+            elif isinstance(entity, dict):
+                label = entity.get("text") or entity.get("name") or entity.get("company") or ""
+                if isinstance(label, str) and label.strip():
+                    parts.append(label)
+    return " ".join(parts)
 
 
 def load_search(path: Path) -> dict | None:
@@ -1910,13 +1945,22 @@ def given_urls(intake: dict) -> list[str]:
     return [item for item in (intake.get("urls") or []) if isinstance(item, str)]
 
 
-def source_matches_anchors(title: str, excerpt: str, url: str, intake: dict) -> bool:
-    """Company or a given url beats a city. City alone never identifies a person."""
-    blob = f"{title or ''} {excerpt or ''}"
+def company_host_hit(url: str, company: str) -> bool:
+    """True when the page itself is on the company's domain."""
+    slug = re.sub(r"[^a-z0-9]", "", (company or "").casefold())
+    if len(slug) < 3:
+        return False
+    host = host_of(url)
+    return bool(host) and any(label == slug for label in host.split("."))
+
+
+def source_matches_anchors(title: str, excerpt: str, url: str, intake: dict, snippet: str = "") -> bool:
+    """Company name, highlight, domain, or a given url. City alone is not a person."""
+    blob = f"{title or ''} {excerpt or ''} {snippet or ''}"
     company = (intake.get("company") or "").strip()
     role = (intake.get("role") or "").strip()
     urls = given_urls(intake)
-    company_hit = bool(company) and phrase_present(blob, company)
+    company_hit = bool(company) and (phrase_present(blob, company) or company_host_hit(url, company))
     link_hit = link_matches(url, urls) or domain_matches(url, urls)
     if company or urls:
         return company_hit or link_hit
@@ -2043,9 +2087,17 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
                 seen.add(key_url)
                 title = raw.get("title") if isinstance(raw.get("title"), str) else ""
                 text = result_text(raw)
-                item = {"url": url, "title": title, "text": text, "query": query["q"], "target": query.get("target") or ""}
+                snippet = result_snippet(raw)
+                item = {
+                    "url": url,
+                    "title": title,
+                    "text": text,
+                    "snippet": snippet,
+                    "query": query["q"],
+                    "target": query.get("target") or "",
+                }
                 found.append(item)
-                if not text.strip():
+                if not text.strip() and not snippet.strip():
                     need_text.append(url)
         if need_text:
             filled = exa_post("/contents", {"urls": need_text, "text": {"maxCharacters": EXA_TEXT_CHARS}}, key)
@@ -2060,6 +2112,8 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
                 if not raw:
                     continue
                 item["text"] = result_text(raw)
+                if not item.get("snippet"):
+                    item["snippet"] = result_snippet(raw)
                 if not item["title"] and isinstance(raw.get("title"), str):
                     item["title"] = raw["title"]
     except ExaError:
@@ -2070,10 +2124,11 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
         )
     kept: list[dict] = []
     for item in found:
-        blob = f"{item['title']} {item['text']}"
+        snippet = item.get("snippet") or ""
+        blob = f"{item['title']} {item['text']} {snippet}"
         if not full_name_match(blob, first, last):
             continue
-        cleaned, _ = sanitize_untrusted(item["text"] or item["title"])
+        cleaned, _ = sanitize_untrusted(item["text"] or snippet or item["title"])
         if not cleaned:
             continue
         title_clean, _ = sanitize_untrusted(item["title"] or item["url"])
@@ -2085,6 +2140,8 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
             "excerpt": cleaned,
             "query": item["query"],
             "target": item["target"],
+            "text": item["text"] or "",
+            "snippet": snippet,
         })
     tally = search_count(raw_count, len(found), len(kept), 0)
     if not kept:
@@ -2098,7 +2155,13 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
     for item in kept:
         marker = profile_marker(item["url"])
         item["profile"] = marker
-        if source_matches_anchors(item["title"], item["excerpt"], item["url"], intake):
+        if source_matches_anchors(
+            item["title"],
+            item.get("text") or item["excerpt"],
+            item["url"],
+            intake,
+            item.get("snippet") or "",
+        ):
             matched.append(item)
             continue
         if marker:
@@ -2149,13 +2212,20 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
     for item in matched:
         if item["profile"] and item["profile"] not in profiles:
             profiles.append(item["profile"])
+    linkedin_n = sum(1 for marker in profiles if marker.startswith("linkedin:"))
+    x_n = sum(1 for marker in profiles if marker.startswith("x:"))
+    # One LinkedIn and one X for the same company are one person. Two profiles
+    # of the same kind stay split so two different people are not merged.
+    same_person = bool((intake.get("company") or "").strip() or given_urls(intake)) and linkedin_n <= 1 and x_n <= 1
     used = [int(row.get("candidate") or 0) for row in rows]
     start = (max(used) + 1) if used else 1
     profile_n = {marker: start + index for index, marker in enumerate(profiles)}
     loose = {"n": start + len(profiles), "ids": {}}
-    conflict = len(profiles) > 1
+    conflict = False if same_person else len(profiles) > 1
 
     def candidate_numbers(item: dict) -> list[int]:
+        if same_person:
+            return [start]
         if item["profile"]:
             return [profile_n[item["profile"]]]
         if len(profiles) == 1:

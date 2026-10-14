@@ -3285,3 +3285,185 @@ test("a company anchor drops Phoenix city-only namesakes and keeps the company s
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+function replayServer(pages) {
+  const hits = [];
+  const server = createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      let body = {};
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+      } catch {
+        body = {};
+      }
+      hits.push({ path: req.url, body });
+      const results = req.url === "/contents" ? [] : pages;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results }));
+    });
+  });
+  return { server, hits };
+}
+
+test("replayed David Marshall search keeps other source kinds and still drops namesakes", async () => {
+  const journal = {
+    url: "https://advisorreach.ai/journal/listing-meetings",
+    title: "David Marshall on listing meetings",
+    text: "David Marshall writes for AdvisorReach in Phoenix.",
+  };
+  const journalBuyers = {
+    url: "https://advisorreach.ai/journal/buyers",
+    title: "David Marshall journal",
+    text: "David Marshall writes about Phoenix buyers.",
+  };
+  const journalSellers = {
+    url: "https://advisorreach.ai/journal/sellers",
+    title: "David Marshall notes",
+    text: "David Marshall covers Phoenix listings.",
+  };
+  const linkedin = {
+    url: "https://www.linkedin.com/in/david-marshall-advisorreach",
+    title: "David Marshall",
+    text: "David Marshall. Greater Phoenix Area. Helps homeowners plan a sale.",
+    highlights: ["AdvisorReach · Phoenix, Arizona"],
+  };
+  const xPage = {
+    url: "https://x.com/dmarshall",
+    title: "David Marshall",
+    text: "David Marshall in Phoenix.",
+    highlights: ["AdvisorReach"],
+  };
+  const news = {
+    url: "https://news.example.com/marshall-buyers",
+    title: "David Marshall interview",
+    text: "David Marshall spoke in Phoenix about buyer meetings.",
+    highlights: ["AdvisorReach founder David Marshall"],
+  };
+  const podcast = {
+    url: "https://podcast.example.com/marshall",
+    title: "David Marshall on the show",
+    text: "David Marshall joins the podcast from Phoenix.",
+    highlights: ["his firm AdvisorReach"],
+  };
+  const recorder = {
+    url: "https://www.axios.com/local/phoenix/david-marshall-recorder",
+    title: "David Marshall, Navajo County recorder",
+    text: "David Marshall is the Navajo County recorder in Phoenix.",
+    highlights: ["Navajo County recorder"],
+  };
+  const legislator = {
+    url: "https://www.azleg.gov/members/david-marshall",
+    title: "David Marshall, Arizona legislator",
+    text: "David Marshall is an Arizona legislator from Phoenix.",
+    highlights: ["Arizona House"],
+  };
+  const phoenixPages = [journal, linkedin, xPage, news, podcast, recorder, legislator];
+  const withSite = [journal, journalBuyers, journalSellers, linkedin, xPage, news, podcast, recorder, legislator];
+  const arizonaNamesakes = [
+    ["https://www.axios.com/az/david-marshall-recorder", "David Marshall is the Navajo County recorder in Arizona."],
+    ["https://www.azleg.gov/members/david-marshall-az", "David Marshall is an Arizona legislator."],
+    ["https://example.com/dentist", "David Marshall is a dentist in Arizona."],
+    ["https://example.com/pastor", "David Marshall is a pastor in Arizona."],
+    ["https://example.com/coach", "David Marshall coaches in Arizona."],
+    ["https://example.com/desert-peak", "David Marshall leads Desert Peak Realty in Arizona."],
+  ].map(([url, text]) => ({ url, title: "David Marshall", text }));
+  const arizonaPages = [
+    {
+      url: "https://www.linkedin.com/in/david-marshall-az",
+      title: "David Marshall",
+      text: "David Marshall. Arizona.",
+      highlights: ["AdvisorReach"],
+    },
+    {
+      url: "https://advisorreach.ai/journal/arizona",
+      title: "David Marshall",
+      text: "David Marshall writes in Arizona.",
+    },
+    {
+      url: "https://news.example.com/arizona-marshall",
+      title: "David Marshall",
+      text: "David Marshall in Arizona.",
+      highlights: ["AdvisorReach"],
+    },
+    ...arizonaNamesakes,
+  ];
+
+  async function searchCase(label, pages, extraArgs) {
+    const { server, hits } = replayServer(pages);
+    const port = await listen(server);
+    try {
+      const ctx = world();
+      const id = run(
+        ["intake", "--actor", "owner", "--name", "David Marshall", "--type", "buyer", "--company", "AdvisorReach", ...extraArgs],
+        ctx,
+      ).payload.client_id;
+      const searched = await runAsync(["search", id, "--actor", "owner"], ctx, {
+        EXA_API_KEY: "exa-test-key",
+        EXA_API_BASE: `http://127.0.0.1:${port}`,
+      });
+      return { searched, hits, label };
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  }
+
+  const phoenix = await searchCase("phoenix", phoenixPages, ["--city", "Phoenix"]);
+  assert.equal(phoenix.searched.payload.ok, true, phoenix.searched.stdout + phoenix.searched.stderr);
+  const phoenixUrls = phoenix.searched.payload.sources.map((item) => item.url);
+  assert.deepEqual(phoenixUrls, [journal.url, linkedin.url, xPage.url, news.url, podcast.url]);
+  assert.equal(phoenix.searched.payload.excluded_people, 2);
+  assert.equal(phoenix.searched.payload.counts.anchor_kept, 5);
+  assert.equal(phoenix.searched.payload.counts.name_matched, 7);
+  assert.equal(phoenix.searched.payload.conflict, false);
+  assert.equal(new Set(phoenix.searched.payload.sources.map((item) => item.candidate)).size, 1);
+  assert.equal(phoenixUrls.includes(recorder.url), false);
+  assert.equal(phoenixUrls.includes(legislator.url), false);
+  const hosts = new Set(phoenixUrls.map((url) => new URL(url).hostname.replace(/^www\./, "")));
+  assert.ok(hosts.has("advisorreach.ai") && hosts.has("linkedin.com") && hosts.has("x.com"));
+  assert.ok(hosts.has("news.example.com") && hosts.has("podcast.example.com"));
+  const issued = phoenix.hits.filter((hit) => hit.path === "/search");
+  assert.equal(issued.length, 6);
+  assert.ok(issued.some((hit) => (hit.body.includeDomains || []).includes("linkedin.com") && hit.body.query.includes('"AdvisorReach"') && hit.body.query.includes("LinkedIn")));
+  assert.ok(issued.some((hit) => (hit.body.includeDomains || []).includes("x.com")));
+  assert.ok(issued.some((hit) => hit.body.category === "news" && hit.body.query.includes('"AdvisorReach"')));
+  assert.ok(issued.some((hit) => hit.body.query.includes("podcast") && hit.body.query.includes('"AdvisorReach"')));
+  assert.ok(issued.every((hit) => hit.body.contents && hit.body.contents.highlights));
+  assert.doesNotMatch(phoenix.searched.stdout, /\bconfirmed\b/i);
+
+  const site = await searchCase("site", withSite, ["--city", "Phoenix", "--url", "https://advisorreach.ai"]);
+  assert.equal(site.searched.payload.ok, true, site.searched.stdout + site.searched.stderr);
+  const siteUrls = site.searched.payload.sources.map((item) => item.url);
+  assert.deepEqual(siteUrls, [
+    journal.url,
+    journalBuyers.url,
+    journalSellers.url,
+    linkedin.url,
+    xPage.url,
+    news.url,
+    podcast.url,
+  ]);
+  assert.equal(site.searched.payload.excluded_people, 2);
+  assert.equal(siteUrls.filter((url) => url.includes("advisorreach.ai")).length, 3);
+  assert.equal(siteUrls.includes(linkedin.url), true);
+  const siteIssued = site.hits.filter((hit) => hit.path === "/search");
+  assert.ok(siteIssued.some((hit) => (hit.body.includeDomains || []).includes("advisorreach.ai")));
+  assert.ok(siteIssued.some((hit) => (hit.body.includeDomains || []).includes("linkedin.com")));
+  assert.doesNotMatch(site.searched.stdout, /\bconfirmed\b/i);
+
+  const arizona = await searchCase("arizona", arizonaPages, ["--city", "Arizona"]);
+  assert.equal(arizona.searched.payload.ok, true, arizona.searched.stdout + arizona.searched.stderr);
+  assert.notEqual(arizona.searched.payload.status, "need_anchor");
+  assert.equal(arizona.searched.payload.counts.anchor_kept, 3);
+  assert.equal(arizona.searched.payload.counts.name_matched, 9);
+  assert.equal(arizona.searched.payload.excluded_people, 6);
+  const arizonaUrls = arizona.searched.payload.sources.map((item) => item.url);
+  assert.deepEqual(arizonaUrls, [
+    "https://www.linkedin.com/in/david-marshall-az",
+    "https://advisorreach.ai/journal/arizona",
+    "https://news.example.com/arizona-marshall",
+  ]);
+  assert.equal(arizonaUrls.some((url) => url.includes("azleg.gov") || url.includes("recorder")), false);
+  assert.doesNotMatch(arizona.searched.stdout, /\bconfirmed\b/i);
+});
