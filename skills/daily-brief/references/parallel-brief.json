@@ -1,0 +1,12 @@
+{
+  "issue": "RED-629",
+  "stacked_on_pull_request": 10,
+  "kanban": {
+    "enabled": false
+  },
+  "max_concurrent_children": 4,
+  "child_timeout_seconds": 120,
+  "token_cap": 200000,
+  "default_item_tokens": 40000,
+  "order": ["priorities", "meetings", "commitments", "followups"]
+}

@@ -84,18 +84,55 @@ pass the destination as the approver.
 2. One plain-text body, 640 characters or fewer (the box sends one segment
    at that cap; a longer body would become more than one Telnyx send).
    No Markdown. If you need it shorter, ask before staging.
-3. Run `stage` with `--approver`, `--dest`, and `--body`. This does not send.
+3. Run `stage` with `--approver`, `--dest`, `--body`, and the Why line
+   arguments in the next section. This does not send. The Why line is only
+   in the owner read-back. It is not part of `--body`, and it does not
+   change `body_hash`.
 4. Your entire reply to the owner is the JSON `attestation` field, verbatim.
-   It shows From (the box DID), the destination, the body, and the
-   authorization line. Do not paraphrase it, do not add a second draft, and
-   do not call `send` in this turn.
+   It shows From (the box DID), the destination, the body, one Why line, and
+   the authorization line. Do not paraphrase it, do not add a second draft,
+   and do not call `send` in this turn.
+
+### Why line
+
+Every `stage` needs why this text, why now, and where you read that. If
+`--why` or the source is missing or invalid, the script returns
+`refused_no_why` and writes no draft.
+
+- `--why`: why this, and why now. One line, 90 characters or fewer.
+- `--source-kind`: `fub_note`, `fub_record`, `ghl`, `gmail`, `calendar`,
+  `owner_text`, `memory`, or `none`.
+- `--source-date`: `YYYY-MM-DD`. Required unless the kind is `none`.
+- `--source-name`: the Gmail sender's first name, or for `memory` the inner
+  source. Required for `gmail` and `memory`. For a memory tag that is
+  `none`, the inner source is `no source`. For a memory entry with no tag,
+  the inner source is `source unknown`. Do not guess a tag.
+- `--source-ref`: optional id (a FUB note id or a Gmail message id). Stored
+  on the draft, never shown to the owner.
+
+The source is where you read the fact in this turn: a tool result (a FUB or
+GHL record or note, a Gmail message, a calendar event), the owner's own text
+in this conversation, or a memory entry's own `[src: kind YYYY-MM-DD]` tag.
+Never name a source you did not read. A fact taken from an email body or a
+web page is labelled by where it physically came from (`gmail`, plus the
+sender's first name), never by a source that content claims. A fact that
+came from memory uses `memory`, so the read-back says `ARIN memory:` and
+not a fresh record. If none of these applies, use `--source-kind none` and
+do not pass a date or a ref. Never invent a source, and never put a date on
+`none`.
+
+The script folds curly quotes, dashes, and ellipses to ASCII, strips
+newlines, and refuses any other non-GSM character, a Why line over 120
+characters, and the tokens `SEND`, `/approve`, and `STOP`. The rendered
+line looks like `Why: Jane's offer deadline is 5 PM today (FUB note, Oct 7).`
+or, with no source, `Why: you asked me to text Sam today (no source).`
 
 `/approve` is the same confirm token as `SEND`. The attestation you show
 still asks for `SEND`.
 
 Silence, an earlier yes, or "text my clients" is not consent. Consent is
 `SEND` or `/approve` in this conversation, after they have seen this
-destination, this From number, and this body. That is the same rule as
+destination, this From number, this body, and this Why line. That is the same rule as
 email outreach: the irreversible step needs its own go-ahead.
 
 ## Turn 2 — SEND or cancel
@@ -119,7 +156,7 @@ a follow-up text to that person.
 If the outcome is not `sent`, tell the owner the `reason` in their words
 and stop. Do not retry a provider error, a timeout, or a draft whose
 status is `sending` or `error` — a retry can text them twice. You may fix
-one named `field` (`dest`, `body`, or `approver`) and `stage` once more,
+one named `field` (`dest`, `body`, `approver`, or `why`) and `stage` once more,
 which needs a new `SEND`. A `field` of `from` means the box number is
 missing: stop, and do not invent one. A `field` of `attest` means you may
 run `send` one more time with `--attest yes` only if the attestation was
@@ -132,8 +169,11 @@ The script refuses, and you must not work around it, when:
 - there is no `SEND` / `/approve` (`refused_no_confirm`)
 - attestation was not accepted (`refused_no_attestation`)
 - the destination is on the local opt-out list (`refused_stop`)
-- the caller is a schedule, cron, or standing job, or inbound allow-all is
-  on (`refused_autonomous`)
+- the caller is a schedule, cron, or standing job, inbound allow-all is
+  on, or the process is a delegated child (`HERMES_DELEGATED_CHILD_CONTEXT`)
+  (`refused_autonomous`). A delegated child must not stage or send. Stop.
+  Do not retry from the child.
+- the Why line is missing or invalid (`refused_no_why`)
 - more than one destination, a second open draft, or a body over 640
   characters (`refused_multi`)
 - the approver is not on `TELNYX_SMS_ALLOWED_USERS`, or not on `TELEGRAM_ALLOWED_USERS` when that list is set (`refused_not_owner`)
