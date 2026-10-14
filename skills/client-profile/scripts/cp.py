@@ -2580,7 +2580,203 @@ def cmd_evidence_render(client_id: str, opts: dict[str, list[str]]) -> None:
 
 def stop_identity(path: Path, status: str, message: str) -> None:
     write_json(path / "candidates.json", {"candidates": [], "status": status})
+    clear_pick_pending(path)
     emit({"ok": True, "status": status, "message": message, "candidates": []})
+
+
+def clear_pick_pending(path: Path) -> None:
+    """Drop this record's waiting list, and the pointer to it."""
+    file_path = path / "pending.json"
+    if file_path.is_file():
+        file_path.unlink()
+    pointer = data_root() / "pick-pending.json"
+    if not pointer.is_file():
+        return
+    try:
+        meta = json.loads(pointer.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pointer.unlink()
+        return
+    if isinstance(meta, dict) and meta.get("client_id") == path.name:
+        pointer.unlink()
+
+
+def remember_pick_pending(client_id: str, path: Path, intake: dict, candidates: list[dict]) -> dict:
+    """Save the choices the owner was just shown, on this record."""
+    choices = []
+    for index, candidate in enumerate(candidates, start=1):
+        choices.append({
+            "reply": index,
+            "candidate": candidate["n"],
+            "label": candidate["label"],
+            "evidence_ids": candidate.get("evidence_ids") or [],
+        })
+    name = intake.get("name") or ""
+    city = intake.get("city") or ""
+    labels = " ".join(f"{item['reply']}) {item['label']}" for item in choices)
+    if len(choices) == 1:
+        reply_line = "Reply 1 or NONE."
+    elif len(choices) == 2:
+        reply_line = "Reply 1, 2 or NONE."
+    else:
+        earlier = ", ".join(str(item["reply"]) for item in choices[:-1])
+        reply_line = f"Reply {earlier} or {choices[-1]['reply']}, or NONE."
+    prompt = f"Found {len(choices)} {name} in {city}: {labels}. {reply_line}"
+    saved_at = now_iso()
+    doc = {
+        "client_id": client_id,
+        "name": name,
+        "city": city,
+        "choices": choices,
+        "prompt": prompt,
+        "awaiting": True,
+        "saved_at": saved_at,
+    }
+    write_json(path / "pending.json", doc)
+    write_json(data_root() / "pick-pending.json", {"client_id": client_id, "saved_at": saved_at})
+    return doc
+
+
+def active_pick_pending() -> tuple[str, Path, dict] | None:
+    """The record whose candidate list the next text should answer."""
+    pointer = data_root() / "pick-pending.json"
+    if pointer.is_file():
+        try:
+            meta = json.loads(pointer.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            meta = {}
+        client_id = meta.get("client_id") if isinstance(meta, dict) else ""
+        path = client_path(client_id) if isinstance(client_id, str) else None
+        if path is not None and (path / "pending.json").is_file():
+            try:
+                doc = json.loads((path / "pending.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                doc = None
+            if isinstance(doc, dict) and doc.get("choices") and not doc.get("closed"):
+                return client_id, path, doc
+    newest: tuple[str, str, Path, dict] | None = None
+    for folder in profile_dirs():
+        file_path = folder / "pending.json"
+        if not file_path.is_file():
+            continue
+        try:
+            doc = json.loads(file_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(doc, dict) or not doc.get("choices") or doc.get("closed"):
+            continue
+        saved = doc.get("saved_at") if isinstance(doc.get("saved_at"), str) else ""
+        if newest is None or saved >= newest[0]:
+            newest = (saved, folder.name, folder, doc)
+    if newest is None:
+        return None
+    return newest[1], newest[2], newest[3]
+
+
+def parse_pick_reply(positional: list[str], opts: dict[str, list[str]]) -> str:
+    raw = flag(opts, "reply")
+    if not raw and positional:
+        raw = positional[0]
+    token = (raw or "").strip()
+    if not token or token == "true":
+        fail("usage", "pick 1, or pick NONE")
+    if token.casefold() == "none":
+        return "NONE"
+    match = re.fullmatch(r"(?:reply\s+)?(\d+)\.?", token, re.IGNORECASE)
+    if not match:
+        fail("bad_reply", "Reply with a number or NONE.")
+    return match.group(1)
+
+
+def selected_evidence_text(path: Path) -> str:
+    rows = load_evidence(path)
+    blocks: list[str] = []
+    for row in rows:
+        if row.get("identity_status") != "confirmed":
+            continue
+        evidence_id = row.get("evidence_id") or ""
+        if not isinstance(evidence_id, str) or not EVIDENCE_RE.fullmatch(evidence_id):
+            continue
+        blocks.append(
+            f'<<<UNTRUSTED_EVIDENCE id="{evidence_id}">>>\n'
+            f"title: {fence_field(row.get('title'))}\n"
+            f"url: {fence_field(row.get('url'))}\n"
+            f"excerpt: {fence_field(row.get('excerpt'))}\n"
+            "<<<END_UNTRUSTED_EVIDENCE>>>"
+        )
+    return "\n\n".join(blocks)
+
+
+def run_confirm(client_id: str, opts: dict[str, list[str]]) -> tuple[dict, int]:
+    """Run identity confirm and return its JSON instead of printing it."""
+    global _emit_sink
+    sink: list[tuple[dict, int]] = []
+    previous = _emit_sink
+    _emit_sink = sink
+    try:
+        cmd_confirm(client_id, opts)
+    except SystemExit:
+        pass
+    finally:
+        _emit_sink = previous
+    if not sink:
+        fail("internal", "The reply could not be resolved.")
+    return sink[-1]
+
+
+def cmd_pick(positional: list[str], opts: dict[str, list[str]]) -> None:
+    """Resolve the owner's next text against the saved candidate list."""
+    gate(actor_of(opts), mutate=True)
+    reply = parse_pick_reply(positional, opts)
+    found = active_pick_pending()
+    if found is None:
+        fail(
+            "no_pending",
+            "No profile is waiting for a reply. Start with the person's name and city.",
+        )
+    client_id, path, doc = found
+    actor = actor_of(opts) or "owner"
+    if reply == "NONE":
+        payload, code = run_confirm(client_id, {"none": ["true"], "actor": [actor]})
+        if code:
+            emit(payload, code)
+        doc["awaiting"] = False
+        doc["closed"] = "none"
+        doc["selected"] = None
+        write_json(path / "pending.json", doc)
+        emit({
+            "ok": True,
+            "client_id": client_id,
+            "reply": "NONE",
+            "next": "stop",
+            "status": "none",
+        })
+    number = int(reply)
+    choice = None
+    for item in doc.get("choices") or []:
+        if isinstance(item, dict) and int(item.get("reply") or 0) == number:
+            choice = item
+            break
+    if choice is None:
+        prompt = doc.get("prompt") or "Reply with a listed number or NONE."
+        emit({"ok": False, "error": "unknown_reply", "message": prompt, "say": prompt}, 1)
+    payload, code = run_confirm(
+        client_id,
+        {"candidate": [str(choice["candidate"])], "actor": [actor]},
+    )
+    if code:
+        emit(payload, code)
+    doc["awaiting"] = False
+    doc["selected"] = number
+    write_json(path / "pending.json", doc)
+    emit({
+        "ok": True,
+        "client_id": client_id,
+        "reply": number,
+        "candidate": choice["candidate"],
+        "next": "write",
+        "evidence": selected_evidence_text(path),
+    })
 
 
 def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
@@ -2639,7 +2835,14 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
             "evidence_ids": [row["evidence_id"] for row in group],
         })
     write_json(path / "candidates.json", {"candidates": candidates, "status": "matches"})
-    emit({"ok": True, "status": "matches", "candidates": candidates})
+    pending = remember_pick_pending(client_id, path, intake, candidates)
+    emit({
+        "ok": True,
+        "status": "matches",
+        "candidates": candidates,
+        "prompt": pending["prompt"],
+        "pending_saved": True,
+    })
 
 
 def cmd_confirm(client_id: str, opts: dict[str, list[str]]) -> None:
@@ -3113,6 +3316,9 @@ def main(argv: list[str]) -> None:
         if rest[0] == "candidates":
             cmd_candidates(positional[0], opts)
         cmd_confirm(positional[0], opts)
+    if command == "pick":
+        positional, opts = parse_flags(rest)
+        cmd_pick(positional, opts)
     if command == "brief":
         if not rest or rest[0] not in {"validate", "render"}:
             fail("usage", "brief validate|render")

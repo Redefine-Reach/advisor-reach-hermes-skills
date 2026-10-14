@@ -3974,3 +3974,126 @@ test("company-anchored dkmarshall LinkedIn pages stay, and city-only namesakes s
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test("tonight's David Marshall pages keep several sites, including dkmarshall posts", async () => {
+  const fixture = JSON.parse(
+    readFileSync(join(fixtures, "profile-replay", "david-marshall-advisorreach.json"), "utf8"),
+  );
+  const { server } = replayServer(fixture.results);
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const id = run(
+      [
+        "intake",
+        "--actor",
+        "owner",
+        "--name",
+        "David Marshall",
+        "--city",
+        "Phoenix",
+        "--type",
+        "buyer",
+        "--company",
+        "AdvisorReach",
+      ],
+      ctx,
+    ).payload.client_id;
+    const searched = await runAsync(["search", id, "--actor", "owner"], ctx, {
+      EXA_API_KEY: "exa-test-key",
+      EXA_API_BASE: `http://127.0.0.1:${port}`,
+    });
+    assert.equal(searched.payload.ok, true, searched.stdout + searched.stderr);
+    const urls = searched.payload.sources.map((item) => item.url);
+    const hosts = new Set(urls.map((url) => new URL(url).host.replace(/^www\./, "")));
+    assert.ok(hosts.size >= 4, [...hosts].join(","));
+    for (const host of ["advisorreach.ai", "linkedin.com", "news.example.com", "podcast.example.com", "x.com"]) {
+      assert.ok(hosts.has(host), host);
+    }
+    assert.ok(urls.includes("https://www.linkedin.com/in/dkmarshall"));
+    assert.ok(urls.includes("https://www.linkedin.com/posts/dkmarshall_advisorreach-activity-1"));
+    assert.ok(urls.includes("https://www.linkedin.com/posts/dkmarshall_showing-activity-2"));
+    assert.equal(urls.includes("https://www.axios.com/local/phoenix/david-marshall-recorder"), false);
+    assert.equal(urls.includes("https://www.azleg.gov/members/david-marshall"), false);
+    assert.ok(searched.payload.source_count >= 5, JSON.stringify(urls));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("the owner's next text resolves 1 against the saved list and writes the one-page pdf", () => {
+  assert.match(skill, /op: pick/);
+  assert.match(skill, /Do not ask which profile/);
+  assert.doesNotMatch(skill, /\bconfirmed\b/i);
+  const ctx = world();
+  const seeded = seed(ctx, {
+    name: "David Marshall",
+    city: "Phoenix",
+    type: "buyer",
+    evidence: {
+      url: "https://advisorreach.ai/journal/listing-meetings",
+      title: "David Marshall on listing meetings",
+      excerpt: "David Marshall writes for AdvisorReach in Phoenix.",
+      origin: "web",
+      query: '"David Marshall" "Phoenix" "AdvisorReach"',
+      candidate: 1,
+    },
+  });
+  const listed = run(["identity", "candidates", seeded.id], ctx);
+  assert.equal(listed.payload.ok, true, listed.stdout);
+  assert.match(listed.payload.prompt, /Found 1 David Marshall in Phoenix/);
+  assert.match(listed.payload.prompt, /Reply 1 or NONE/);
+  const pending = JSON.parse(readFileSync(join(ctx.data, seeded.id, "pending.json"), "utf8"));
+  assert.equal(pending.awaiting, true);
+  assert.equal(pending.choices[0].reply, 1);
+  assert.equal(pending.choices[0].candidate, 1);
+  const picked = run(["pick", "1", "--actor", "owner"], ctx);
+  assert.equal(picked.payload.ok, true, picked.stdout + picked.stderr);
+  assert.equal(picked.payload.client_id, seeded.id);
+  assert.equal(picked.payload.reply, 1);
+  assert.equal(picked.payload.next, "write");
+  assert.doesNotMatch(picked.stdout, /\bconfirmed\b/i);
+  assert.doesNotMatch(picked.stdout, /which profile/i);
+  const brief = loadGood(seeded.evidenceIds);
+  const checked = validate(ctx, seeded.id, brief);
+  assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
+  const bin = existsSync("/tmp/weasyprint") ? "/tmp/weasyprint" : weasyBin();
+  const rendered = run(
+    ["brief", "render", seeded.id, "--actor", "owner"],
+    ctx,
+    bin ? { ...weasyEnv(bin), WEASYPRINT_BIN: bin } : {},
+  );
+  assert.equal(rendered.payload.ok, true, rendered.stdout + rendered.stderr);
+  assert.equal(existsSync(join(ctx.data, seeded.id, "brief.html")), true);
+  if (bin) {
+    assert.equal(rendered.payload.pdf, true, JSON.stringify(rendered.payload));
+    assert.equal(rendered.payload.pages, 1);
+  }
+});
+
+test("NONE on the next text resolves against the saved list and does not write a pdf", () => {
+  const ctx = world();
+  const seeded = seed(ctx, {
+    name: "David Marshall",
+    city: "Phoenix",
+    type: "buyer",
+    evidence: {
+      url: "https://advisorreach.ai/journal/listing-meetings",
+      title: "David Marshall on listing meetings",
+      excerpt: "David Marshall writes for AdvisorReach in Phoenix.",
+      origin: "web",
+      query: '"David Marshall" "Phoenix" "AdvisorReach"',
+      candidate: 1,
+    },
+  });
+  run(["identity", "candidates", seeded.id], ctx);
+  const picked = run(["pick", "NONE", "--actor", "owner"], ctx);
+  assert.equal(picked.payload.ok, true, picked.stdout + picked.stderr);
+  assert.equal(picked.payload.client_id, seeded.id);
+  assert.equal(picked.payload.reply, "NONE");
+  assert.equal(picked.payload.next, "stop");
+  assert.doesNotMatch(picked.stdout, /\bconfirmed\b/i);
+  const rendered = run(["brief", "render", seeded.id, "--actor", "owner"], ctx);
+  assert.equal(rendered.payload.ok, false, rendered.stdout);
+  assert.equal(existsSync(join(ctx.data, seeded.id, "brief.pdf")), false);
+});
