@@ -2031,6 +2031,43 @@ test("a missing Exa key says search is unavailable and refuses a one-source brie
   assert.equal(existsSync(join(ctx.data, made.id, "brief.json")), false);
 });
 
+test("brief and text use plain words for articles and fused phrases", () => {
+  assert.match(skill, /verify their style directly/);
+  assert.match(skill, /a stated interest/);
+  assert.doesNotMatch(skill, /verify-before-use, identity level/);
+  const ctx = world();
+  const made = seed(ctx);
+  confirm(ctx, made.id, 1);
+  const brief = loadGood(made.evidenceIds, (next) => {
+    next.snapshot = "They showed an stated interest in the appointment.";
+    next.communication_style.disc_hypothesis = "Working hypothesis only: style-verify directly. This is a hypothesis.";
+    next.appointment_playbook.opening.text = "Open with an public fact and a agenda.";
+    next.appointment_playbook.lead_points[0].text = "verify-before-use before you leave.";
+  });
+  const checked = validate(ctx, made.id, brief);
+  assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
+  const stored = JSON.parse(readFileSync(join(ctx.data, made.id, "brief.json"), "utf8"));
+  const blob = JSON.stringify(stored);
+  assert.match(blob, /a stated interest/);
+  assert.doesNotMatch(blob, /an stated/);
+  assert.match(blob, /verify their style directly/);
+  assert.doesNotMatch(blob, /style-verify/);
+  assert.match(blob, /a public fact and an agenda/);
+  assert.match(blob, /verify before use before you leave/);
+  assert.doesNotMatch(blob, /verify-before-use/);
+  const rendered = run(["brief", "render", made.id, "--actor", "owner"], ctx);
+  assert.equal(rendered.payload.ok, true, rendered.stdout);
+  const html = readFileSync(join(ctx.data, made.id, "brief.html"), "utf8");
+  assert.match(html, /a stated interest/);
+  assert.match(html, /verify their style directly/);
+  assert.doesNotMatch(html, /an stated|style-verify/);
+  run(["deliver", made.id, "--actor", "owner"], ctx);
+  const sms = run(["sms-summary", made.id], ctx);
+  assert.equal(sms.payload.ok, true, sms.stdout);
+  assert.match(sms.payload.text, /verify their style directly/);
+  assert.doesNotMatch(sms.payload.text, /style-verify/);
+});
+
 test("search keeps news with each profile and does not reuse a manual candidate", async () => {
   const server = createServer((req, res) => {
     const chunks = [];

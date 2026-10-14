@@ -561,7 +561,7 @@ def screen_brief(brief: dict) -> list[dict]:
             if pattern.search(text):
                 errors.append({"code": "fair_housing", "category": category, "path": path})
         if CTA_RE.search(text):
-            errors.append({"code": "outbound_cta", "path": path, "message": "Brief contains a phone number or text-this-number instruction."})
+            errors.append({"code": "outbound_cta", "path": path, "message": "Brief contains a phone number or an instruction to text this number."})
         if STREET_RE.search(text) or POBOX_RE.search(text) or UNIT_RE.search(text):
             errors.append({"code": "street_address", "path": path, "message": "Brief contains a street address."})
     return dedupe_errors(errors)
@@ -650,7 +650,68 @@ def claim_targets(brief: dict) -> list[tuple[str, dict, bool]]:
     return found
 
 
+FUSED_PHRASES = (
+    (re.compile(r"\bstyle-verify directly\b", re.IGNORECASE), "verify their style directly"),
+    (re.compile(r"\bstyle-verify\b", re.IGNORECASE), "verify their style"),
+    (re.compile(r"\bverify-before-use\b", re.IGNORECASE), "verify before use"),
+)
+# "an" before a consonant sound, and "a" before a vowel sound. Skip silent h, "useful"/"one", and short acronyms.
+AN_BEFORE_CONSONANT = re.compile(
+    r"\ban (?!honest\b|hour\b|honou?r\b|heir\b|html\b|https?\b)([bcdfghjklmnpqrstvwxz]\w*)",
+    re.IGNORECASE,
+)
+A_BEFORE_VOWEL = re.compile(
+    r"\ba (?!one\b|once\b|uni\w*|use\w*|user\w*|eu\w*)([aeiou]\w*)",
+    re.IGNORECASE,
+)
+
+
+def _skip_acronym(word: str) -> bool:
+    return word.isupper() and 2 <= len(word) <= 6
+
+
+def plain_words(text: str) -> str:
+    if text.startswith("http://") or text.startswith("https://"):
+        return text
+    for pattern, replacement in FUSED_PHRASES:
+        text = pattern.sub(replacement, text)
+
+    def an_fix(match: re.Match[str]) -> str:
+        word = match.group(1)
+        if _skip_acronym(word):
+            return match.group(0)
+        article = "A" if match.group(0)[0].isupper() else "a"
+        return f"{article} {word}"
+
+    def a_fix(match: re.Match[str]) -> str:
+        word = match.group(1)
+        if _skip_acronym(word):
+            return match.group(0)
+        article = "An" if match.group(0)[0].isupper() else "an"
+        return f"{article} {word}"
+
+    text = AN_BEFORE_CONSONANT.sub(an_fix, text)
+    return A_BEFORE_VOWEL.sub(a_fix, text)
+
+
+def plain_brief(brief: dict) -> None:
+    def walk(node: object) -> object:
+        if isinstance(node, str):
+            return plain_words(node)
+        if isinstance(node, list):
+            return [walk(item) for item in node]
+        if isinstance(node, dict):
+            return {key: walk(value) for key, value in node.items()}
+        return node
+
+    cleaned = walk(brief)
+    if isinstance(cleaned, dict):
+        brief.clear()
+        brief.update(cleaned)
+
+
 def evaluate_brief(path: Path, brief: dict) -> dict:
+    plain_brief(brief)
     schema = load_schema()
     errors: list[dict] = []
     warnings: list[dict] = []
@@ -1889,7 +1950,9 @@ def cmd_sms(client_id: str, opts: dict[str, list[str]]) -> None:
     second = re.sub(r"https?://\S+", "", second).strip()
     style = " Style: insufficient evidence."
     if disc.strip().lower() != "insufficient evidence":
-        style = " Style: " + redact(disc)[0] + "."
+        style = " Style: " + plain_words(redact(disc)[0]) + "."
+    first = plain_words(first)
+    second = plain_words(second)
     identity = f" Identity: {level}."
     banner = "Verify before use."
 
