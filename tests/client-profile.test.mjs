@@ -2103,3 +2103,118 @@ test("search keeps news with each profile and does not reuse a manual candidate"
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test("Exa base prefers EXA_API_BASE, then EXA_BASE_URL, and joins /search once", async () => {
+  const baseFn = script.slice(script.indexOf("def exa_base"), script.indexOf("def canon_url"));
+  assert.ok(baseFn.includes("EXA_API_BASE"));
+  assert.ok(baseFn.indexOf("EXA_API_BASE") < baseFn.indexOf("EXA_BASE_URL"));
+  assert.match(baseFn, /https:\/\/api\.exa\.ai/);
+  const hits = [];
+  const server = createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      const path = (req.url || "").split("?")[0];
+      hits.push(path);
+      const payload = path.endsWith("/contents")
+        ? {
+            results: [{
+              url: "https://www.linkedin.com/in/dana-whitfield-example",
+              title: "Dana Whitfield",
+              text: "Dana Whitfield is a broker in Scottsdale.",
+            }],
+          }
+        : {
+            results: [{
+              url: "https://www.linkedin.com/in/dana-whitfield-example",
+              title: "Dana Whitfield",
+              text: "",
+            }],
+          };
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(payload));
+    });
+  });
+  const port = await listen(server);
+  const root = `http://127.0.0.1:${port}`;
+  const searchOnce = async (extra) => {
+    hits.length = 0;
+    const ctx = world();
+    const id = run(
+      ["intake", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"],
+      ctx,
+    ).payload.client_id;
+    const searched = await runAsync(["search", id, "--actor", "owner"], ctx, {
+      EXA_API_KEY: "exa-test-key",
+      ...extra,
+    });
+    assert.equal(searched.payload.ok, true, searched.stdout + searched.stderr);
+    assert.ok(searched.payload.source_count > 0);
+    return hits.slice();
+  };
+  try {
+    const proxyOnly = await searchOnce({ EXA_API_BASE: "", EXA_BASE_URL: `${root}/exa-proxy/` });
+    assert.ok(proxyOnly.includes("/exa-proxy/search"), JSON.stringify(proxyOnly));
+    assert.ok(proxyOnly.includes("/exa-proxy/contents"), JSON.stringify(proxyOnly));
+    assert.equal(proxyOnly.some((path) => path.includes("//") || path.includes("/search/search")), false);
+
+    const already = await searchOnce({ EXA_BASE_URL: `${root}/exa-proxy/search` });
+    assert.ok(already.includes("/exa-proxy/search"), JSON.stringify(already));
+    assert.ok(already.includes("/exa-proxy/contents"), JSON.stringify(already));
+    assert.equal(already.some((path) => path.includes("/search/search")), false);
+
+    const apiWins = await searchOnce({
+      EXA_API_BASE: root,
+      EXA_BASE_URL: `${root}/exa-proxy`,
+    });
+    assert.ok(apiWins.includes("/search"), JSON.stringify(apiWins));
+    assert.ok(apiWins.includes("/contents"), JSON.stringify(apiWins));
+    assert.equal(apiWins.some((path) => path.startsWith("/exa-proxy")), false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("a fictional name with no Exa sources is couldn't find, not an empty brief", async () => {
+  const server = createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end('{"results":[]}');
+    });
+  });
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const intake = run(
+      ["intake", "--actor", "owner", "--name", "Avery Quindle", "--city", "Flagstaff", "--type", "buyer"],
+      ctx,
+    );
+    assert.equal(intake.payload.ok, true, intake.stdout);
+    const id = intake.payload.client_id;
+    const searched = await runAsync(["search", id, "--actor", "owner"], ctx, {
+      EXA_API_KEY: "exa-test-key",
+      EXA_API_BASE: `http://127.0.0.1:${port}`,
+    });
+    assert.equal(searched.payload.ok, false, searched.stdout);
+    assert.equal(searched.payload.error, "couldnt_find");
+    assert.equal(searched.payload.status, "couldnt_find");
+    assert.equal(searched.payload.message, "couldn't find");
+    assert.equal(searched.payload.source_count, 0);
+    assert.equal(Object.hasOwn(searched.payload, "sources"), false);
+    const stored = JSON.parse(readFileSync(join(ctx.data, id, "search.json"), "utf8"));
+    assert.equal(stored.status, "couldnt_find");
+    assert.equal(stored.source_count, 0);
+    const listed = run(["identity", "candidates", id], ctx);
+    assert.equal(listed.payload.ok, true, listed.stdout);
+    assert.equal(listed.payload.status, "couldnt_find");
+    assert.equal(listed.payload.message, "couldn't find");
+    const checked = validate(ctx, id, loadGood(["ev_00000000"]));
+    assert.equal(checked.payload.ok, false, JSON.stringify(checked.payload));
+    assert.ok(codes(checked.payload).includes("couldnt_find"));
+    assert.equal(existsSync(join(ctx.data, id, "brief.json")), false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

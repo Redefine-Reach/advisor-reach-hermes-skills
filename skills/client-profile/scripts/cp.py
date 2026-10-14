@@ -657,6 +657,15 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
     schema_validate(brief, schema, "", schema, errors)
     if errors:
         return {"ok": False, "errors": errors, "warnings": warnings, "brief": None}
+    if search_missed(path) and not any(
+        row.get("identity_status") == "confirmed" for row in load_evidence(path)
+    ):
+        return {
+            "ok": False,
+            "errors": [{"code": "couldnt_find", "message": "couldn't find"}],
+            "warnings": warnings,
+            "brief": None,
+        }
     identity = load_identity(path)
     if not identity or identity.get("status") != "confirmed":
         return {
@@ -1280,7 +1289,28 @@ def exa_key() -> str:
 
 
 def exa_base() -> str:
-    return (os.environ.get("EXA_API_BASE") or "https://api.exa.ai").rstrip("/")
+    """API root. EXA_API_BASE wins, then the box proxy EXA_BASE_URL, then api.exa.ai.
+
+    A proxy value may already end in /search. That segment is removed here so
+    /search and /contents are joined once, with no doubled slash.
+    """
+    chosen = ""
+    for name in ("EXA_API_BASE", "EXA_BASE_URL"):
+        raw = (os.environ.get(name) or "").strip()
+        if raw:
+            chosen = raw
+            break
+    if not chosen:
+        chosen = "https://api.exa.ai"
+    root = chosen.rstrip("/")
+    if root.lower().endswith("/search"):
+        root = root[: -len("/search")].rstrip("/")
+    return root or "https://api.exa.ai"
+
+
+def exa_url(path: str) -> str:
+    endpoint = path if path.startswith("/") else "/" + path
+    return exa_base() + endpoint
 
 
 def canon_url(url: str) -> str:
@@ -1296,7 +1326,7 @@ def canon_url(url: str) -> str:
 
 def exa_post(path: str, payload: dict, key: str) -> dict:
     req = urllib.request.Request(
-        exa_base() + path,
+        exa_url(path),
         data=json.dumps(payload).encode("utf-8"),
         method="POST",
         headers={
@@ -1356,6 +1386,15 @@ def load_search(path: Path) -> dict | None:
     except (OSError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def search_missed(path: Path) -> bool:
+    doc = load_search(path)
+    if not doc:
+        return False
+    if doc.get("status") == "couldnt_find":
+        return True
+    return doc.get("status") == "done" and int(doc.get("source_count") or 0) == 0
 
 
 def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
@@ -1445,6 +1484,32 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
             "query": item["query"],
             "target": item["target"],
         })
+    if not kept:
+        save_evidence(path, rows)
+        write_json(path / "search.json", {
+            "status": "couldnt_find",
+            "message": "couldn't find",
+            "query_count": len(queries),
+            "queries": [query["q"] for query in queries],
+            "targets": [query.get("target") for query in queries],
+            "source_count": 0,
+            "sources": [],
+            "profile_count": 0,
+        })
+        audit("search", client_id, {"queries": len(queries), "sources": 0}, actor)
+        missed = {
+            "ok": False,
+            "error": "couldnt_find",
+            "status": "couldnt_find",
+            "message": "couldn't find",
+            "query_count": len(queries),
+            "source_count": 0,
+        }
+        if inaccessible:
+            missed["inaccessible"] = inaccessible
+        if codes:
+            missed["warnings"] = [warning(code) for code in codes]
+        emit(missed, 1)
     # One identity until the owner says otherwise. Distinct LinkedIn or X
     # profiles stay separate so two people are not merged into one brief.
     profiles: list[str] = []
@@ -1667,6 +1732,8 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
     usable = [row for row in rows if row.get("identity_status") != "inaccessible"]
     parts = split_name(intake.get("name") or "")
     if not usable:
+        if search_missed(path):
+            stop_identity(path, "couldnt_find", "couldn't find")
         write_json(path / "candidates.json", {"candidates": []})
         emit({"ok": True, "candidates": []})
     if not parts:
