@@ -87,6 +87,11 @@ def load_config(path: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def drop_consent(cfg: dict) -> dict:
+    cfg.pop("consent_required", None)
+    return cfg
+
+
 def write_json(path: Path, obj: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -119,6 +124,9 @@ def public_config(cfg: dict | None) -> dict | None:
     if not isinstance(cfg, dict):
         return cfg
     shown = dict(cfg)
+    shown.pop("consent_required", None)
+    if shown.get("exa_api_key"):
+        shown["exa_api_key"] = "set"
     if "owner_number" in shown:
         shown["owner_number"] = mask_owner_number(shown.get("owner_number"))
     return shown
@@ -229,9 +237,13 @@ def cmd_install(slug: str | None) -> None:
         existing["box"] = slug
     elif "box" not in existing:
         existing["box"] = ""
+    drop_consent(existing)
     number = owner_number()
     if number and "owner_number" not in existing:
         existing["owner_number"] = number
+    exa_key = (os.environ.get("EXA_API_KEY") or "").strip()
+    if exa_key and "exa_api_key" not in existing:
+        existing["exa_api_key"] = exa_key
     for env_key, cfg_key in (("ARTIFACT_DIR", "artifact_dir"), ("ARTIFACT_BASE_URL", "artifact_base_url")):
         val = (os.environ.get(env_key) or "").strip()
         if val:
@@ -268,6 +280,7 @@ def cmd_uninstall() -> None:
         "box": "",
     }
     cfg["enabled"] = False
+    drop_consent(cfg)
     write_json(p["cfg"], cfg)
     soul = read_soul(p["soul"])
     emit({
@@ -288,6 +301,7 @@ def cmd_flip(enabled: bool) -> None:
     if cfg is None:
         emit({"ok": False, "error": "config_missing"}, 1)
     cfg["enabled"] = enabled
+    drop_consent(cfg)
     write_json(p["cfg"], cfg)
     emit({
         "ok": True,

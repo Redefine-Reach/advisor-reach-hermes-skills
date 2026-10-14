@@ -1,8 +1,8 @@
 {
-  "snapshot": "Public-source appointment brief for a confirmed identity.",
+  "snapshot": "Public-source appointment brief for this buyer.",
   "identity_match": {
-    "level": "confirmed",
-    "basis": "Owner selected candidate 1 from public profiles."
+    "level": "medium",
+    "basis": "One public page uses this full name in this city."
   },
   "communication_style": {
     "disc_hypothesis": "Working hypothesis only: steady and concrete. This is a hypothesis, not a diagnosis.",
@@ -12,6 +12,20 @@
   "how_to_communicate": [
     {
       "text": "Lead with the agenda and one concrete next step.",
+      "evidence_ids": ["__EV1__"]
+    }
+  ],
+  "decision_speed": {
+    "text": "Public sources do not show how quickly this person decides.",
+    "evidence_ids": ["__EV1__"]
+  },
+  "yes_to_hear": {
+    "text": "A concrete agenda and one next step are what the sources support saying.",
+    "evidence_ids": ["__EV1__"]
+  },
+  "likely_objections": [
+    {
+      "text": "A missing fact in the sources is a likely reason to pause.",
       "evidence_ids": ["__EV1__"]
     }
   ],

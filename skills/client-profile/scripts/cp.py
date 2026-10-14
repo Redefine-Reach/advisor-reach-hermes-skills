@@ -3,10 +3,12 @@
 
 Data root: $CLIENT_PROFILE_ROOT or /opt/data/client-profile.
 Config:    $CLIENT_PROFILE_ROOT/config.json  {"enabled": true|false, ...}
-           A stored consent_required key is ignored. Research is public information only.
+           A stored consent_required key is ignored and is not a consent step.
+           Research is public information only. Never contact the client or lead.
 Audit:     <root>/../audit/client-profile.jsonl
 
-No network, no CRM write, no Human Design, no street-address field.
+Network is used only by `search`, and only to call Exa when a key is set.
+No CRM write, no Human Design, no street-address field.
 """
 from __future__ import annotations
 
@@ -18,6 +20,8 @@ import secrets
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -179,8 +183,45 @@ WARNING_TEXT = {
     "instructions_removed": "Instruction-like lines were removed from untrusted text.",
 }
 
-QUERY_CAP = 6
+QUERY_CAP = 8
+# Six public targets, always. Known profile URLs fill any room left under the cap.
+QUERY_TARGETS = (
+    {"target": "linkedin", "stem": "LinkedIn", "include_domains": ["linkedin.com"]},
+    {"target": "x", "stem": "X", "include_domains": ["x.com", "twitter.com"]},
+    {"target": "company", "stem": "company site"},
+    {"target": "news", "stem": "news", "category": "news"},
+    {"target": "podcast", "stem": "podcast"},
+    {"target": "general", "stem": "", "type": "keyword"},
+)
+SEARCH_UNAVAILABLE = (
+    "Search is unavailable. No Exa key is set, so this brief was not filled from a multi-source search."
+)
+EXA_TOP = 3
+EXA_TEXT_CHARS = 1000
 EXCERPT_CAP = 1200
+LEVEL_RANK = {"low": 0, "medium": 1, "high": 2}
+CONFIRMED_WORD = re.compile(r"\bconfirmed\b", re.IGNORECASE)
+NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v", "phd", "md", "esq"}
+# Both the given name and the surname have to be common. A rare surname is not.
+COMMON_GIVEN = frozenset({
+    "james", "john", "robert", "michael", "william", "david", "richard", "joseph",
+    "thomas", "charles", "christopher", "daniel", "matthew", "anthony", "mark",
+    "donald", "steven", "andrew", "paul", "joshua", "kenneth", "kevin", "brian",
+    "george", "timothy", "ronald", "edward", "jason", "jeffrey", "ryan", "jacob",
+    "gary", "nicholas", "eric", "jonathan", "stephen", "larry", "justin", "scott",
+    "brandon", "benjamin", "samuel", "raymond", "gregory", "alexander", "patrick",
+    "frank", "jack", "dennis", "jerry", "mary", "patricia", "jennifer", "linda",
+    "elizabeth", "barbara", "susan", "jessica", "sarah", "karen",
+})
+COMMON_SURNAMES = frozenset({
+    "smith", "johnson", "williams", "brown", "jones", "garcia", "miller", "davis",
+    "rodriguez", "martinez", "hernandez", "lopez", "gonzalez", "wilson", "anderson",
+    "thomas", "taylor", "moore", "jackson", "martin", "lee", "perez", "thompson",
+    "white", "harris", "sanchez", "clark", "ramirez", "lewis", "robinson", "walker",
+    "young", "allen", "king", "wright", "scott", "torres", "nguyen", "hill",
+    "flores", "green", "adams", "nelson", "baker", "hall", "rivera", "campbell",
+    "mitchell", "carter", "roberts",
+})
 PURGE_DAYS = 90
 ARTIFACT_DAYS = 7
 
@@ -254,6 +295,9 @@ def public_config(cfg: dict | None) -> dict | None:
     if not isinstance(cfg, dict):
         return cfg
     shown = dict(cfg)
+    shown.pop("consent_required", None)
+    if shown.get("exa_api_key"):
+        shown["exa_api_key"] = "set"
     if "owner_number" in shown:
         shown["owner_number"] = mask_owner_number(shown.get("owner_number"))
     return shown
@@ -575,6 +619,13 @@ def claim_targets(brief: dict) -> list[tuple[str, dict, bool]]:
         for index, item in enumerate(brief.get(key) or []):
             if isinstance(item, dict):
                 found.append((f"/{key}/{index}", item, False))
+    for key in ("decision_speed", "yes_to_hear"):
+        item = brief.get(key)
+        if isinstance(item, dict):
+            found.append((f"/{key}", item, False))
+    for index, item in enumerate(brief.get("likely_objections") or []):
+        if isinstance(item, dict):
+            found.append((f"/likely_objections/{index}", item, False))
     play = brief.get("appointment_playbook") or {}
     if isinstance(play, dict):
         opening = play.get("opening")
@@ -616,8 +667,49 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
     style = brief["communication_style"]
     disc = style["disc_hypothesis"].strip()
     insufficient = disc.lower() == "insufficient evidence"
-    if brief["identity_match"]["level"] != "confirmed":
-        errors.append({"code": "identity_level", "path": "/identity_match/level"})
+    intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
+    parts = split_name(intake.get("name") or "")
+    if not parts:
+        errors.append({"code": "couldnt_find", "message": "couldn't find"})
+    else:
+        first, last = parts
+        candidate = int(identity.get("candidate") or 0)
+        sources = full_name_source_count(rows, candidate, first, last)
+        matches = web_match_count(rows, first, last)
+        allowed = allowed_identity_level(sources, matches)
+        claimed = brief["identity_match"]["level"]
+        if LEVEL_RANK[claimed] > LEVEL_RANK[allowed]:
+            brief["identity_match"]["level"] = allowed
+            warnings.append({
+                "code": "identity_downgraded",
+                "path": "/identity_match/level",
+                "from": claimed,
+                "to": allowed,
+            })
+        overclaim = sources < 2 or matches >= 3
+        basis = brief["identity_match"].get("basis") or ""
+        snapshot = brief.get("snapshot") or ""
+        if overclaim and (CONFIRMED_WORD.search(basis) or CONFIRMED_WORD.search(snapshot)):
+            errors.append({
+                "code": "identity_overclaim",
+                "path": "/identity_match",
+                "message": "Do not say confirmed. Rate identity confidence high, medium, or low.",
+            })
+    search_doc = load_search(path)
+    if search_doc and search_doc.get("status") == "unavailable":
+        if any(row.get("origin") == "web" for row in rows):
+            errors.append({"code": "thin_without_search", "message": SEARCH_UNAVAILABLE})
+        if "Search is unavailable" not in (brief.get("snapshot") or ""):
+            errors.append({"code": "search_unavailable", "message": SEARCH_UNAVAILABLE})
+    elif search_doc and search_doc.get("status") == "done":
+        cited_urls = set()
+        for source in (brief.get("appendix") or {}).get("sources") or []:
+            if isinstance(source, dict) and source.get("url"):
+                cited_urls.add(canon_url(source["url"]))
+        for source in search_doc.get("sources") or []:
+            url = source.get("url") or ""
+            if url and canon_url(url) not in cited_urls:
+                errors.append({"code": "uncited_source", "path": "/appendix/sources", "url": url})
     if insufficient:
         if style.get("confidence") != "low":
             previous = style.get("confidence")
@@ -630,7 +722,6 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
             })
     elif "hypothesis" not in disc.lower():
         errors.append({"code": "disc_not_labeled_hypothesis", "path": "/communication_style/disc_hypothesis"})
-    intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
     play = brief["appointment_playbook"]
     if intake.get("type") == "listing" and "pricing_conversation" not in play:
         errors.append({"code": "pricing_conversation_required", "path": "/appointment_playbook/pricing_conversation"})
@@ -682,6 +773,15 @@ def html_escape(value: str) -> str:
     )
 
 
+def cited_html(item: object) -> str:
+    if not isinstance(item, dict):
+        return "<p>None recorded.</p>"
+    text = html_escape(item.get("text") or "")
+    ids = ", ".join(html_escape(i) for i in item.get("evidence_ids") or [])
+    cite = f" <span class=\"cite\">{ids}</span>" if ids else ""
+    return f"<p>{text}{cite}</p>"
+
+
 def render_items(items: list) -> str:
     if not items:
         return "<p>None recorded.</p>"
@@ -717,20 +817,37 @@ def build_html(path: Path, brief: dict) -> str:
     appt_html = f" · {html_escape(appt)}" if appt else ""
     pricing = play.get("pricing_conversation")
     if pricing:
-        pricing_html = f"<p>{html_escape(pricing.get('text') or '')}</p>"
+        pricing_html = f"<h2>Pricing conversation</h2><p>{html_escape(pricing.get('text') or '')}</p>"
     elif intake.get("type") == "listing":
-        pricing_html = "<p>Missing.</p>"
+        pricing_html = "<h2>Pricing conversation</h2><p>Missing.</p>"
     else:
-        pricing_html = "<p>Not required for this appointment type.</p>"
+        pricing_html = ""
+    search_doc = load_search(path)
+    if search_doc and search_doc.get("status") == "unavailable":
+        search_notice = f"<p class=\"banner\">{html_escape(SEARCH_UNAVAILABLE)}</p>"
+    elif search_doc and search_doc.get("status") == "done":
+        search_notice = (
+            "<p class=\"banner\">"
+            + html_escape(
+                f"Searched {search_doc.get('query_count')} public queries and kept {search_doc.get('source_count')} sources."
+            )
+            + "</p>"
+        )
+    else:
+        search_notice = ""
     mapping = {
         "{{NAME}}": html_escape(intake.get("name") or ""),
         "{{CITY}}": html_escape(intake.get("city") or ""),
         "{{APPT_TYPE}}": html_escape(intake.get("type") or ""),
         "{{APPT_AT}}": appt_html,
         "{{GUARDRAIL}}": html_escape(brief.get("guardrail_notice") or ""),
+        "{{SEARCH_NOTICE}}": search_notice,
         "{{SNAPSHOT}}": html_escape(brief.get("snapshot") or ""),
-        "{{IDENTITY_LEVEL}}": html_escape((brief.get("identity_match") or {}).get("level") or ""),
+        "{{IDENTITY_LEVEL}}": html_escape(show_level((brief.get("identity_match") or {}).get("level") or "")),
         "{{IDENTITY_BASIS}}": html_escape((brief.get("identity_match") or {}).get("basis") or ""),
+        "{{DECISION_SPEED}}": cited_html(brief.get("decision_speed")),
+        "{{YES_TO_HEAR}}": cited_html(brief.get("yes_to_hear")),
+        "{{OBJECTIONS}}": render_items(brief.get("likely_objections") or []),
         "{{DISC}}": html_escape(style.get("disc_hypothesis") or ""),
         "{{DISC_CONFIDENCE}}": html_escape(style.get("confidence") or ""),
         "{{HOW}}": render_items(brief.get("how_to_communicate") or []),
@@ -835,6 +952,108 @@ def reject_address_flag(argv: list[str]) -> None:
             fail("no_address_field", "Street address is not collected.")
 
 
+def name_tokens(name: str) -> list[str]:
+    tokens: list[str] = []
+    for raw in re.split(r"\s+", (name or "").strip()):
+        cleaned = raw.strip(".,;:\"'`“”")
+        if not cleaned:
+            continue
+        if cleaned.casefold().rstrip(".") in NAME_SUFFIXES:
+            continue
+        tokens.append(cleaned)
+    return tokens
+
+
+def split_name(name: str) -> tuple[str, str] | None:
+    tokens = name_tokens(name)
+    if len(tokens) < 2:
+        return None
+    return tokens[0], tokens[-1]
+
+
+def word_present(text: str, word: str) -> bool:
+    if not word:
+        return False
+    return re.search(rf"(?<!\w){re.escape(word)}(?!\w)", text or "", re.IGNORECASE) is not None
+
+
+def full_name_match(text: str, first: str, last: str) -> bool:
+    return word_present(text, first) and word_present(text, last)
+
+
+def is_common_name(first: str, last: str) -> bool:
+    return first.casefold() in COMMON_GIVEN and last.casefold() in COMMON_SURNAMES
+
+
+def has_profile_url(intake: dict) -> bool:
+    for url in intake.get("urls") or []:
+        if is_http_url(url) and not is_instagram(url):
+            return True
+    return False
+
+
+def row_name_match(row: dict, first: str, last: str) -> bool:
+    if row.get("identity_status") == "inaccessible":
+        return False
+    if row.get("origin") == "manual":
+        return True
+    blob = f"{row.get('title') or ''} {row.get('excerpt') or ''}"
+    return full_name_match(blob, first, last)
+
+
+def full_name_source_count(rows: list[dict], candidate: int, first: str, last: str) -> int:
+    keys: list[str] = []
+    for row in rows:
+        if int(row.get("candidate") or 0) != candidate:
+            continue
+        if row.get("identity_status") != "confirmed":
+            continue
+        blob = f"{row.get('title') or ''} {row.get('excerpt') or ''}"
+        if not full_name_match(blob, first, last):
+            continue
+        key = (row.get("url") or "").strip() or str(row.get("evidence_id") or "")
+        if key and key not in keys:
+            keys.append(key)
+    return len(keys)
+
+
+def web_match_count(rows: list[dict], first: str, last: str) -> int:
+    numbers: list[int] = []
+    for row in rows:
+        if row.get("origin") == "manual" or row.get("identity_status") == "inaccessible":
+            continue
+        blob = f"{row.get('title') or ''} {row.get('excerpt') or ''}"
+        if not full_name_match(blob, first, last):
+            continue
+        number = int(row.get("candidate") or 0)
+        if number not in numbers:
+            numbers.append(number)
+    return len(numbers)
+
+
+def allowed_identity_level(source_count: int, match_count: int) -> str:
+    # High needs two or more full-name sources and fewer than three people.
+    # A single source, or three or more candidate matches, is never high.
+    if source_count >= 2 and match_count < 3:
+        return "high"
+    if source_count >= 2 and match_count >= 3:
+        return "medium"
+    if source_count == 1 and match_count < 3:
+        return "medium"
+    return "low"
+
+
+def show_level(level: str) -> str:
+    return {"high": "High", "medium": "Medium", "low": "Low"}.get((level or "").lower(), "Low")
+
+
+def estimate_pages(html: str) -> int:
+    plain = re.sub(r"<[^>]+>", " ", html or "")
+    plain = re.sub(r"\s+", " ", plain).strip()
+    # 9pt Letter copy with these margins holds about this much before a second page.
+    return 1 if len(plain) <= 3800 else (1 + (len(plain) - 1) // 3800)
+
+
 def build_queries(name: str, city: str, urls: list[str]) -> tuple[list[dict], list[dict], list[str]]:
     codes: list[str] = []
     clean_name, name_codes = redact(name)
@@ -846,12 +1065,22 @@ def build_queries(name: str, city: str, urls: list[str]) -> tuple[list[dict], li
     queries: list[dict] = []
     quoted_name = escape_quotes(clean_name)
     quoted_city = escape_quotes(clean_city)
-    if clean_name and clean_city:
-        queries.append(f'"{quoted_name}" "{quoted_city}" professional profile company')
-        queries.append(f'"{quoted_name}" "{quoted_city}" interview news community')
-    elif clean_name:
-        queries.append(f'"{quoted_name}" professional profile company')
-        queries.append(f'"{quoted_name}" interview news community')
+    for spec in QUERY_TARGETS:
+        stem = spec["stem"]
+        if clean_name and clean_city:
+            text = f'"{quoted_name}" "{quoted_city}"' + (f" {stem}" if stem else "")
+        elif clean_name:
+            text = f'"{quoted_name}"' + (f" {stem}" if stem else "")
+        else:
+            continue
+        item = {"q": text, "target": spec["target"]}
+        if spec.get("include_domains"):
+            item["include_domains"] = list(spec["include_domains"])
+        if spec.get("category"):
+            item["category"] = spec["category"]
+        if spec.get("type"):
+            item["type"] = spec["type"]
+        queries.append(item)
     inaccessible: list[dict] = []
     for url in urls:
         if url_has_blocked_token(url):
@@ -868,17 +1097,22 @@ def build_queries(name: str, city: str, urls: list[str]) -> tuple[list[dict], li
             continue
         if len(queries) >= QUERY_CAP:
             break
-        queries.append(f'"{quoted_name}" {url}')
+        queries.append({"q": f'"{quoted_name}" {url}', "target": "url"})
     safe = []
-    for text in queries[:QUERY_CAP]:
+    for item in queries[:QUERY_CAP]:
+        text = item["q"]
         url_part = text.split(" ", 1)[-1] if text.count(" ") else ""
         body = text
         if url_part.startswith("http://") or url_part.startswith("https://"):
             body = text[: text.rfind(url_part)]
         if contains_blocked_token(body):
             fail("address_token_in_query", "A query would have contained a blocked token.")
-        safe.append(text)
-    listed = [{"id": f"q{i + 1}", "q": text} for i, text in enumerate(safe)]
+        safe.append(item)
+    listed = []
+    for index, item in enumerate(safe):
+        row = dict(item)
+        row["id"] = f"q{index + 1}"
+        listed.append(row)
     return listed, inaccessible, unique(codes)
 
 
@@ -905,6 +1139,7 @@ def cmd_selftest() -> None:
     checks.append({"name": "schema", "ok": schema_ok})
     checks.append({"name": "template", "ok": TEMPLATE_PATH.is_file()})
     checks.append({"name": "public_research", "ok": is_consent_required() is False})
+    checks.append({"name": "exa", "ok": True, "present": bool(exa_key())})
     present = os.path.isfile("/usr/bin/weasyprint") and os.access("/usr/bin/weasyprint", os.X_OK)
     checks.append({"name": "weasyprint", "ok": True, "present": present})
     required = [c for c in checks if c["name"] != "weasyprint"]
@@ -1009,6 +1244,249 @@ def cmd_queries(client_id: str, opts: dict[str, list[str]]) -> None:
     if not queries:
         fail("no_queries", "No safe name-and-city query could be built.")
     result: dict = {"ok": True, "queries": queries}
+    if inaccessible:
+        result["inaccessible"] = inaccessible
+    if codes:
+        result["warnings"] = [warning(code) for code in codes]
+    emit(result)
+
+
+def exa_key() -> str:
+    env = os.environ.get("EXA_API_KEY", "").strip()
+    if env:
+        return env
+    return _cfg_value("exa_api_key")
+
+
+def exa_base() -> str:
+    return (os.environ.get("EXA_API_BASE") or "https://api.exa.ai").rstrip("/")
+
+
+def canon_url(url: str) -> str:
+    parsed = urlparse((url or "").strip())
+    host = (parsed.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    path = parsed.path or "/"
+    if path != "/" and path.endswith("/"):
+        path = path[:-1]
+    return f"{host}{path}"
+
+
+def exa_post(path: str, payload: dict, key: str) -> dict:
+    req = urllib.request.Request(
+        exa_base() + path,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "advisorreach-client-profile",
+            "x-api-key": key,
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        fail("search_failed", f"Exa returned HTTP {exc.code}.")
+    except (urllib.error.URLError, TimeoutError, OSError):
+        fail("search_failed", "Exa could not be reached.")
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        fail("search_failed", "Exa returned a non-JSON response.")
+    if not isinstance(parsed, dict):
+        fail("search_failed", "Exa returned an unexpected response.")
+    return parsed
+
+
+def exa_search_body(query: dict) -> dict:
+    body: dict = {
+        "query": query["q"],
+        "numResults": EXA_TOP,
+        "type": query.get("type") or "auto",
+        "contents": {"text": {"maxCharacters": EXA_TEXT_CHARS}},
+    }
+    domains = query.get("include_domains")
+    if domains:
+        body["includeDomains"] = domains
+    if query.get("category"):
+        body["category"] = query["category"]
+    return body
+
+
+def result_text(row: dict) -> str:
+    text = row.get("text")
+    if isinstance(text, str) and text.strip():
+        return text
+    highlights = row.get("highlights")
+    if isinstance(highlights, list):
+        return " ".join(part for part in highlights if isinstance(part, str))
+    return ""
+
+
+def load_search(path: Path) -> dict | None:
+    file_path = path / "search.json"
+    if not file_path.is_file():
+        return None
+    try:
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
+    actor = gate(actor_of(opts), mutate=True)
+    path = require_client(client_id)
+    intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
+    urls = list(intake.get("urls") or [])
+    for item in intake.get("inaccessible_urls") or []:
+        if isinstance(item, dict) and item.get("url"):
+            urls.append(item["url"])
+    queries, inaccessible, codes = build_queries(intake.get("name") or "", intake.get("city") or "", urls)
+    if not queries:
+        fail("no_queries", "No safe name-and-city query could be built.")
+    key = exa_key()
+    if not key:
+        write_json(path / "search.json", {
+            "status": "unavailable",
+            "message": SEARCH_UNAVAILABLE,
+            "query_count": 0,
+            "source_count": 0,
+            "sources": [],
+        })
+        fail("search_unavailable", SEARCH_UNAVAILABLE)
+    parts = split_name(intake.get("name") or "")
+    if not parts:
+        write_json(path / "search.json", {
+            "status": "unavailable",
+            "message": "couldn't find",
+            "query_count": 0,
+            "source_count": 0,
+            "sources": [],
+        })
+        fail("couldnt_find", "couldn't find")
+    first, last = parts
+    rows = [row for row in load_evidence(path) if row.get("via") != "exa"]
+    found: list[dict] = []
+    seen: set[str] = set()
+    need_text: list[str] = []
+    for query in queries:
+        payload = exa_post("/search", exa_search_body(query), key)
+        for raw in payload.get("results") or []:
+            if not isinstance(raw, dict):
+                continue
+            url = raw.get("url") if isinstance(raw.get("url"), str) else ""
+            if not is_http_url(url) or dangerous_url(url) or is_instagram(url):
+                continue
+            key_url = canon_url(url)
+            if not key_url or key_url in seen:
+                continue
+            seen.add(key_url)
+            title = raw.get("title") if isinstance(raw.get("title"), str) else ""
+            text = result_text(raw)
+            item = {"url": url, "title": title, "text": text, "query": query["q"], "target": query.get("target") or ""}
+            found.append(item)
+            if not text.strip():
+                need_text.append(url)
+    if need_text:
+        filled = exa_post("/contents", {"urls": need_text, "text": {"maxCharacters": EXA_TEXT_CHARS}}, key)
+        by_url = {}
+        for raw in filled.get("results") or []:
+            if isinstance(raw, dict) and isinstance(raw.get("url"), str):
+                by_url[canon_url(raw["url"])] = raw
+        for item in found:
+            if item["text"].strip():
+                continue
+            raw = by_url.get(canon_url(item["url"]))
+            if not raw:
+                continue
+            item["text"] = result_text(raw)
+            if not item["title"] and isinstance(raw.get("title"), str):
+                item["title"] = raw["title"]
+    kept: list[dict] = []
+    for item in found:
+        blob = f"{item['title']} {item['text']}"
+        if not full_name_match(blob, first, last):
+            continue
+        cleaned, _ = sanitize_untrusted(item["text"] or item["title"])
+        if not cleaned:
+            continue
+        title_clean, _ = sanitize_untrusted(item["title"] or item["url"])
+        if len(cleaned) > EXCERPT_CAP:
+            cleaned = cleaned[:EXCERPT_CAP]
+        kept.append({
+            "url": item["url"],
+            "title": title_clean or item["url"],
+            "excerpt": cleaned,
+            "query": item["query"],
+            "target": item["target"],
+        })
+    # One identity until the owner says otherwise. Distinct LinkedIn or X
+    # profiles stay separate so two people are not merged into one brief.
+    profiles: list[str] = []
+    for item in kept:
+        host = (urlparse(item["url"]).hostname or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+        slug = (urlparse(item["url"]).path or "").rstrip("/").lower()
+        marker = ""
+        if host == "linkedin.com" and slug.startswith("/in/"):
+            marker = "linkedin:" + slug
+        elif host in {"x.com", "twitter.com"} and slug.count("/") == 1 and slug != "/":
+            marker = "x:" + slug
+        if marker and marker not in profiles:
+            profiles.append(marker)
+        item["profile"] = marker
+    profile_n = {marker: index + 1 for index, marker in enumerate(profiles)}
+    if len(profiles) == 1 or not profiles:
+        shared = 1
+    else:
+        shared = len(profiles) + 1
+    sources = []
+    for item in kept:
+        number = profile_n.get(item["profile"]) or shared
+        evidence_id = "ev_" + secrets.token_hex(8)
+        rows.append({
+            "evidence_id": evidence_id,
+            "url": item["url"],
+            "title": item["title"],
+            "excerpt": item["excerpt"],
+            "origin": "web",
+            "query": item["query"],
+            "candidate": number,
+            "identity_status": "unconfirmed",
+            "added_at": now_iso(),
+            "fetched": True,
+            "via": "exa",
+            "target": item["target"],
+        })
+        sources.append({
+            "evidence_id": evidence_id,
+            "url": item["url"],
+            "title": item["title"],
+            "target": item["target"],
+        })
+    save_evidence(path, rows)
+    write_json(path / "search.json", {
+        "status": "done",
+        "query_count": len(queries),
+        "queries": [query["q"] for query in queries],
+        "targets": [query.get("target") for query in queries],
+        "source_count": len(sources),
+        "sources": sources,
+        "profile_count": len(profiles),
+    })
+    audit("search", client_id, {"queries": len(queries), "sources": len(sources)}, actor)
+    result = {
+        "ok": True,
+        "status": "done",
+        "query_count": len(queries),
+        "source_count": len(sources),
+        "sources": sources,
+    }
     if inaccessible:
         result["inaccessible"] = inaccessible
     if codes:
@@ -1137,19 +1615,41 @@ def cmd_evidence_render(client_id: str, opts: dict[str, list[str]]) -> None:
     emit({"ok": True, "count": len(blocks), "text": "\n\n".join(blocks)})
 
 
+def stop_identity(path: Path, status: str, message: str) -> None:
+    write_json(path / "candidates.json", {"candidates": [], "status": status})
+    emit({"ok": True, "status": status, "message": message, "candidates": []})
+
+
 def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
     gate(actor_of(opts), mutate=False)
     path = require_client(client_id)
+    intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
+    rows = load_evidence(path)
+    usable = [row for row in rows if row.get("identity_status") != "inaccessible"]
+    parts = split_name(intake.get("name") or "")
+    if not usable:
+        write_json(path / "candidates.json", {"candidates": []})
+        emit({"ok": True, "candidates": []})
+    if not parts:
+        stop_identity(path, "couldnt_find", "couldn't find")
+    first, last = parts
+    manual = [row for row in usable if row.get("origin") == "manual"]
+    if is_common_name(first, last) and not has_profile_url(intake) and not manual:
+        stop_identity(path, "need_profile_link", "This name is common. Send a profile link instead of a guess.")
     grouped: dict[int, list[dict]] = {}
-    for row in load_evidence(path):
-        if row.get("identity_status") == "inaccessible":
+    for row in usable:
+        if is_common_name(first, last) and not has_profile_url(intake) and row.get("origin") != "manual":
+            continue
+        if not row_name_match(row, first, last):
             continue
         grouped.setdefault(int(row["candidate"]), []).append(row)
+    if not grouped:
+        stop_identity(path, "couldnt_find", "couldn't find")
     candidates = []
     for number in sorted(grouped):
-        rows = grouped[number]
+        group = grouped[number]
         labels = []
-        for row in rows:
+        for row in group:
             label, _ = redact(row.get("title") or "")
             if label:
                 labels.append(label)
@@ -1159,10 +1659,10 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
         candidates.append({
             "n": number,
             "label": text,
-            "evidence_ids": [row["evidence_id"] for row in rows],
+            "evidence_ids": [row["evidence_id"] for row in group],
         })
-    write_json(path / "candidates.json", {"candidates": candidates})
-    emit({"ok": True, "candidates": candidates})
+    write_json(path / "candidates.json", {"candidates": candidates, "status": "matches"})
+    emit({"ok": True, "status": "matches", "candidates": candidates})
 
 
 def cmd_confirm(client_id: str, opts: dict[str, list[str]]) -> None:
@@ -1195,9 +1695,21 @@ def cmd_confirm(client_id: str, opts: dict[str, list[str]]) -> None:
     ]
     if not matched:
         fail("unknown_candidate", "That candidate has no usable evidence.")
+    intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
+    parts = split_name(intake.get("name") or "")
+    if not parts:
+        fail("couldnt_find", "couldn't find")
+    first, last = parts
+    if is_common_name(first, last) and not has_profile_url(intake):
+        if any(row.get("origin") != "manual" for row in matched):
+            fail("need_profile_link", "This name is common. Send a profile link instead of a guess.")
+    named = [row for row in matched if row_name_match(row, first, last)]
+    if not named:
+        fail("couldnt_find", "couldn't find")
+    named_ids = {row["evidence_id"] for row in named}
     confirmed: list[str] = []
     for row in rows:
-        if int(row.get("candidate") or 0) == number and row.get("identity_status") != "inaccessible":
+        if row.get("evidence_id") in named_ids:
             row["identity_status"] = "confirmed"
             confirmed.append(row["evidence_id"])
         elif row.get("identity_status") == "confirmed":
@@ -1256,8 +1768,9 @@ def cmd_render(client_id: str, opts: dict[str, list[str]]) -> None:
     if pdf_path.exists():
         pdf_path.unlink()
     wrote_pdf = try_weasyprint(html_path, pdf_path)
-    audit("brief_render", client_id, {"html": 1, "pdf": 1 if wrote_pdf else 0}, actor)
-    payload: dict = {"ok": True, "html": True, "pdf": wrote_pdf}
+    pages = estimate_pages(html)
+    audit("brief_render", client_id, {"html": 1, "pdf": 1 if wrote_pdf else 0, "pages": pages}, actor)
+    payload: dict = {"ok": True, "html": True, "pdf": wrote_pdf, "pages": pages}
     if not wrote_pdf:
         payload["pdf_skipped"] = "weasyprint_unavailable"
     emit(payload)
@@ -1328,7 +1841,7 @@ def cmd_sms(client_id: str, opts: dict[str, list[str]]) -> None:
         fail("bad_url", "Delivery URL is not public.")
     if url.startswith("https://artifacts.local/"):
         fail("bad_url", "Delivery URL is a placeholder; ARTIFACT_BASE_URL is not set. Re-run install from the box shell.")
-    level = (brief.get("identity_match") or {}).get("level") or "confirmed"
+    level = show_level((brief.get("identity_match") or {}).get("level") or "low")
     disc = (brief.get("communication_style") or {}).get("disc_hypothesis") or ""
     leads = (brief.get("appointment_playbook") or {}).get("lead_points") or []
     first = redact(leads[0].get("text") if leads else "")[0]
@@ -1574,6 +2087,11 @@ def main(argv: list[str]) -> None:
         if len(positional) != 1:
             fail("usage", "queries <client_id>")
         cmd_queries(positional[0], opts)
+    if command == "search":
+        positional, opts = parse_flags(rest)
+        if len(positional) != 1:
+            fail("usage", "search <client_id>")
+        cmd_search(positional[0], opts)
     if command == "evidence":
         if not rest or rest[0] not in {"add", "block", "render"}:
             fail("usage", "evidence add|render|block <client_id>")

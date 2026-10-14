@@ -1,8 +1,8 @@
 {
   "snapshot": "Little public information was found for this appointment.",
   "identity_match": {
-    "level": "confirmed",
-    "basis": "Owner confirmed the only candidate. Public searches did not show a professional profile."
+    "level": "low",
+    "basis": "The only note does not show a public profile for this full name."
   },
   "communication_style": {
     "disc_hypothesis": "insufficient evidence",
@@ -10,6 +10,20 @@
     "evidence_ids": []
   },
   "how_to_communicate": [],
+  "decision_speed": {
+    "text": "Decision speed is not in the sources.",
+    "evidence_ids": ["__EV1__"]
+  },
+  "yes_to_hear": {
+    "text": "What they need to hear is not in the sources.",
+    "evidence_ids": ["__EV1__"]
+  },
+  "likely_objections": [
+    {
+      "text": "Missing public information is a likely reason to pause.",
+      "evidence_ids": ["__EV1__"]
+    }
+  ],
   "appointment_playbook": {
     "opening": {
       "text": "Confirm you have the right person and ask what they want from the meeting.",
