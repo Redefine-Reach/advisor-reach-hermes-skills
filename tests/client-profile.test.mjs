@@ -967,6 +967,9 @@ test("render escapes html and skips pdf when weasyprint is absent", () => {
   assert.doesNotMatch(html, /<script/);
   assert.match(html, /What we don't know/);
   assert.match(html, /Verify before use/);
+  assert.match(html, /Searched 1 public query and kept 1 source\./);
+  assert.doesNotMatch(html, /kept 1 sources/);
+  assert.match(html, new RegExp(`Opening\\.</strong> Thanks for the time[\\s\\S]*${made.evidenceIds[0]}`));
   if (!existsSync("/usr/bin/weasyprint")) {
     assert.equal(rendered.payload.pdf, false);
     assert.equal(rendered.payload.pdf_skipped, "weasyprint_unavailable");
@@ -992,6 +995,8 @@ test("case 20 sms summary and delivery expiry", () => {
   assert.ok(summary.payload.text.length <= expected.max_chars);
   assert.match(summary.payload.text, new RegExp(expected.banner));
   assert.equal(summary.payload.text.split(ready.delivered.url).length - 1, 1);
+  assert.match(summary.payload.text, /Style: Working hypothesis only: steady and concrete\./);
+  assert.doesNotMatch(summary.payload.text, /[A-Za-z]…\.|This is a…|with a…|hypoth…|preferenc…/);
   for (const banned of expected.forbidden) assert.equal(summary.payload.text.includes(banned), false);
   const longCtx = world();
   const made = seed(longCtx);
