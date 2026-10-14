@@ -1890,6 +1890,12 @@ test("two full-name sources can be high, and the fixture brief is one page", () 
   assert.match(html, /Decision speed/);
   assert.match(html, /What they need to hear/);
   assert.match(html, /Likely objections/);
+  assert.match(html, /Verified facts/);
+  assert.match(html, /Client stated/);
+  assert.match(html, /Observations/);
+  assert.match(html, /Hypotheses/);
+  assert.match(html, /Recommendations/);
+  assert.match(html, /What we don't know/);
   assert.doesNotMatch(html, /\bconfirmed\b/i);
   assert.match(html, /size:\s*Letter/);
 });
