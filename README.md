@@ -68,16 +68,17 @@ Profile field-by-field, and a 90-day game plan. Locked template (`assets/templat
 `assets/render.py` (jinja2 + weasyprint) from small per-section JSON files; delivered via `present-file`.
 
 ### client-profile
-Appointment brief for one named person the owner is about to meet (buyer, listing, or other).
-Intake is name, city, and appointment type. `scripts/cp.py` builds name-and-city queries, holds
-evidence, requires an identity pick, and validates a cited DISC-lens brief (fair-housing screen
-in code, non-empty unknowns). Render uses the locked `assets/template.html` and WeasyPrint when
-the box has it. Delivery is an opaque file in `ARTIFACT_DIR` with a 7-day expiry. Research
-uses only publicly available information. Never contact the client or lead. The enable
+One-page appointment brief for one named person the owner is about to meet (buyer, listing, or other).
+Intake is name, city, and appointment type. `scripts/cp.py` builds name-and-city queries for
+LinkedIn, the company site, news, and podcasts, holds evidence, and stops with "couldn't find"
+when no result contains the full first and last name. A common name asks for a profile link
+instead of a guess. Identity confidence on the brief is high, medium, or low. The brief also
+covers decision speed, what they need to hear to say yes, and likely objections. Research uses
+only publicly available information. There is no consent step and no text to the lead. The enable
 flag is `/opt/data/client-profile/config.json`, not an environment variable. Install is
-files-only (`install/cp_install.py`). No CRM write, Human Design, people-data vendor, or street
-address. Contract: `tests/client-profile.test.mjs`. Merging here does not reach boxes until
-`SKILLS_REF` advances.
+files-only (`install/cp_install.py`) and drops a stored `consent_required` key. No CRM write,
+Human Design, people-data vendor, or street address. Contract: `tests/client-profile.test.mjs`.
+Merging here does not reach boxes until `SKILLS_REF` advances.
 
 ### advisorreach-site
 Team ARIN's way to change `https://advisorreach.ai` (the ARIN Lane): clones

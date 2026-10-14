@@ -9,6 +9,9 @@
     "identity_match",
     "communication_style",
     "how_to_communicate",
+    "decision_speed",
+    "yes_to_hear",
+    "likely_objections",
     "appointment_playbook",
     "verified_facts",
     "client_stated",
@@ -26,6 +29,14 @@
     "communication_style": {"$ref": "#/$defs/communication_style"},
     "how_to_communicate": {
       "type": "array",
+      "items": {"$ref": "#/$defs/cited"}
+    },
+    "decision_speed": {"$ref": "#/$defs/cited"},
+    "yes_to_hear": {"$ref": "#/$defs/cited"},
+    "likely_objections": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
       "items": {"$ref": "#/$defs/cited"}
     },
     "appointment_playbook": {"$ref": "#/$defs/playbook"},
@@ -72,7 +83,7 @@
       "additionalProperties": false,
       "required": ["level", "basis"],
       "properties": {
-        "level": {"enum": ["confirmed", "ambiguous", "none"]},
+        "level": {"enum": ["high", "medium", "low"]},
         "basis": {"type": "string", "minLength": 1}
       }
     },

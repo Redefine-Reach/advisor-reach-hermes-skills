@@ -3,7 +3,8 @@
 
 Data root: $CLIENT_PROFILE_ROOT or /opt/data/client-profile.
 Config:    $CLIENT_PROFILE_ROOT/config.json  {"enabled": true|false, ...}
-           A stored consent_required key is ignored. Research is public information only.
+           A stored consent_required key is ignored and is not a consent step.
+           Research is public information only. Never contact the client or lead.
 Audit:     <root>/../audit/client-profile.jsonl
 
 No network, no CRM write, no Human Design, no street-address field.
@@ -179,8 +180,32 @@ WARNING_TEXT = {
     "instructions_removed": "Instruction-like lines were removed from untrusted text.",
 }
 
-QUERY_CAP = 6
+QUERY_CAP = 8
+QUERY_STEMS = ("LinkedIn", "company site", "news", "podcast")
 EXCERPT_CAP = 1200
+LEVEL_RANK = {"low": 0, "medium": 1, "high": 2}
+CONFIRMED_WORD = re.compile(r"\bconfirmed\b", re.IGNORECASE)
+NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v", "phd", "md", "esq"}
+# Both the given name and the surname have to be common. A rare surname is not.
+COMMON_GIVEN = frozenset({
+    "james", "john", "robert", "michael", "william", "david", "richard", "joseph",
+    "thomas", "charles", "christopher", "daniel", "matthew", "anthony", "mark",
+    "donald", "steven", "andrew", "paul", "joshua", "kenneth", "kevin", "brian",
+    "george", "timothy", "ronald", "edward", "jason", "jeffrey", "ryan", "jacob",
+    "gary", "nicholas", "eric", "jonathan", "stephen", "larry", "justin", "scott",
+    "brandon", "benjamin", "samuel", "raymond", "gregory", "alexander", "patrick",
+    "frank", "jack", "dennis", "jerry", "mary", "patricia", "jennifer", "linda",
+    "elizabeth", "barbara", "susan", "jessica", "sarah", "karen",
+})
+COMMON_SURNAMES = frozenset({
+    "smith", "johnson", "williams", "brown", "jones", "garcia", "miller", "davis",
+    "rodriguez", "martinez", "hernandez", "lopez", "gonzalez", "wilson", "anderson",
+    "thomas", "taylor", "moore", "jackson", "martin", "lee", "perez", "thompson",
+    "white", "harris", "sanchez", "clark", "ramirez", "lewis", "robinson", "walker",
+    "young", "allen", "king", "wright", "scott", "torres", "nguyen", "hill",
+    "flores", "green", "adams", "nelson", "baker", "hall", "rivera", "campbell",
+    "mitchell", "carter", "roberts",
+})
 PURGE_DAYS = 90
 ARTIFACT_DAYS = 7
 
@@ -254,6 +279,7 @@ def public_config(cfg: dict | None) -> dict | None:
     if not isinstance(cfg, dict):
         return cfg
     shown = dict(cfg)
+    shown.pop("consent_required", None)
     if "owner_number" in shown:
         shown["owner_number"] = mask_owner_number(shown.get("owner_number"))
     return shown
@@ -575,6 +601,13 @@ def claim_targets(brief: dict) -> list[tuple[str, dict, bool]]:
         for index, item in enumerate(brief.get(key) or []):
             if isinstance(item, dict):
                 found.append((f"/{key}/{index}", item, False))
+    for key in ("decision_speed", "yes_to_hear"):
+        item = brief.get(key)
+        if isinstance(item, dict):
+            found.append((f"/{key}", item, False))
+    for index, item in enumerate(brief.get("likely_objections") or []):
+        if isinstance(item, dict):
+            found.append((f"/likely_objections/{index}", item, False))
     play = brief.get("appointment_playbook") or {}
     if isinstance(play, dict):
         opening = play.get("opening")
@@ -616,8 +649,34 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
     style = brief["communication_style"]
     disc = style["disc_hypothesis"].strip()
     insufficient = disc.lower() == "insufficient evidence"
-    if brief["identity_match"]["level"] != "confirmed":
-        errors.append({"code": "identity_level", "path": "/identity_match/level"})
+    intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
+    parts = split_name(intake.get("name") or "")
+    if not parts:
+        errors.append({"code": "couldnt_find", "message": "couldn't find"})
+    else:
+        first, last = parts
+        candidate = int(identity.get("candidate") or 0)
+        sources = full_name_source_count(rows, candidate, first, last)
+        matches = web_match_count(rows, first, last)
+        allowed = allowed_identity_level(sources, matches)
+        claimed = brief["identity_match"]["level"]
+        if LEVEL_RANK[claimed] > LEVEL_RANK[allowed]:
+            brief["identity_match"]["level"] = allowed
+            warnings.append({
+                "code": "identity_downgraded",
+                "path": "/identity_match/level",
+                "from": claimed,
+                "to": allowed,
+            })
+        overclaim = sources < 2 or matches >= 3
+        basis = brief["identity_match"].get("basis") or ""
+        snapshot = brief.get("snapshot") or ""
+        if overclaim and (CONFIRMED_WORD.search(basis) or CONFIRMED_WORD.search(snapshot)):
+            errors.append({
+                "code": "identity_overclaim",
+                "path": "/identity_match",
+                "message": "Do not say confirmed. Rate identity confidence high, medium, or low.",
+            })
     if insufficient:
         if style.get("confidence") != "low":
             previous = style.get("confidence")
@@ -630,7 +689,6 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
             })
     elif "hypothesis" not in disc.lower():
         errors.append({"code": "disc_not_labeled_hypothesis", "path": "/communication_style/disc_hypothesis"})
-    intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
     play = brief["appointment_playbook"]
     if intake.get("type") == "listing" and "pricing_conversation" not in play:
         errors.append({"code": "pricing_conversation_required", "path": "/appointment_playbook/pricing_conversation"})
@@ -682,6 +740,15 @@ def html_escape(value: str) -> str:
     )
 
 
+def cited_html(item: object) -> str:
+    if not isinstance(item, dict):
+        return "<p>None recorded.</p>"
+    text = html_escape(item.get("text") or "")
+    ids = ", ".join(html_escape(i) for i in item.get("evidence_ids") or [])
+    cite = f" <span class=\"cite\">{ids}</span>" if ids else ""
+    return f"<p>{text}{cite}</p>"
+
+
 def render_items(items: list) -> str:
     if not items:
         return "<p>None recorded.</p>"
@@ -717,11 +784,11 @@ def build_html(path: Path, brief: dict) -> str:
     appt_html = f" · {html_escape(appt)}" if appt else ""
     pricing = play.get("pricing_conversation")
     if pricing:
-        pricing_html = f"<p>{html_escape(pricing.get('text') or '')}</p>"
+        pricing_html = f"<h2>Pricing conversation</h2><p>{html_escape(pricing.get('text') or '')}</p>"
     elif intake.get("type") == "listing":
-        pricing_html = "<p>Missing.</p>"
+        pricing_html = "<h2>Pricing conversation</h2><p>Missing.</p>"
     else:
-        pricing_html = "<p>Not required for this appointment type.</p>"
+        pricing_html = ""
     mapping = {
         "{{NAME}}": html_escape(intake.get("name") or ""),
         "{{CITY}}": html_escape(intake.get("city") or ""),
@@ -729,8 +796,11 @@ def build_html(path: Path, brief: dict) -> str:
         "{{APPT_AT}}": appt_html,
         "{{GUARDRAIL}}": html_escape(brief.get("guardrail_notice") or ""),
         "{{SNAPSHOT}}": html_escape(brief.get("snapshot") or ""),
-        "{{IDENTITY_LEVEL}}": html_escape((brief.get("identity_match") or {}).get("level") or ""),
+        "{{IDENTITY_LEVEL}}": html_escape(show_level((brief.get("identity_match") or {}).get("level") or "")),
         "{{IDENTITY_BASIS}}": html_escape((brief.get("identity_match") or {}).get("basis") or ""),
+        "{{DECISION_SPEED}}": cited_html(brief.get("decision_speed")),
+        "{{YES_TO_HEAR}}": cited_html(brief.get("yes_to_hear")),
+        "{{OBJECTIONS}}": render_items(brief.get("likely_objections") or []),
         "{{DISC}}": html_escape(style.get("disc_hypothesis") or ""),
         "{{DISC_CONFIDENCE}}": html_escape(style.get("confidence") or ""),
         "{{HOW}}": render_items(brief.get("how_to_communicate") or []),
@@ -835,6 +905,108 @@ def reject_address_flag(argv: list[str]) -> None:
             fail("no_address_field", "Street address is not collected.")
 
 
+def name_tokens(name: str) -> list[str]:
+    tokens: list[str] = []
+    for raw in re.split(r"\s+", (name or "").strip()):
+        cleaned = raw.strip(".,;:\"'`“”")
+        if not cleaned:
+            continue
+        if cleaned.casefold().rstrip(".") in NAME_SUFFIXES:
+            continue
+        tokens.append(cleaned)
+    return tokens
+
+
+def split_name(name: str) -> tuple[str, str] | None:
+    tokens = name_tokens(name)
+    if len(tokens) < 2:
+        return None
+    return tokens[0], tokens[-1]
+
+
+def word_present(text: str, word: str) -> bool:
+    if not word:
+        return False
+    return re.search(rf"(?<!\w){re.escape(word)}(?!\w)", text or "", re.IGNORECASE) is not None
+
+
+def full_name_match(text: str, first: str, last: str) -> bool:
+    return word_present(text, first) and word_present(text, last)
+
+
+def is_common_name(first: str, last: str) -> bool:
+    return first.casefold() in COMMON_GIVEN and last.casefold() in COMMON_SURNAMES
+
+
+def has_profile_url(intake: dict) -> bool:
+    for url in intake.get("urls") or []:
+        if is_http_url(url) and not is_instagram(url):
+            return True
+    return False
+
+
+def row_name_match(row: dict, first: str, last: str) -> bool:
+    if row.get("identity_status") == "inaccessible":
+        return False
+    if row.get("origin") == "manual":
+        return True
+    blob = f"{row.get('title') or ''} {row.get('excerpt') or ''}"
+    return full_name_match(blob, first, last)
+
+
+def full_name_source_count(rows: list[dict], candidate: int, first: str, last: str) -> int:
+    keys: list[str] = []
+    for row in rows:
+        if int(row.get("candidate") or 0) != candidate:
+            continue
+        if row.get("identity_status") != "confirmed":
+            continue
+        blob = f"{row.get('title') or ''} {row.get('excerpt') or ''}"
+        if not full_name_match(blob, first, last):
+            continue
+        key = (row.get("url") or "").strip() or str(row.get("evidence_id") or "")
+        if key and key not in keys:
+            keys.append(key)
+    return len(keys)
+
+
+def web_match_count(rows: list[dict], first: str, last: str) -> int:
+    numbers: list[int] = []
+    for row in rows:
+        if row.get("origin") == "manual" or row.get("identity_status") == "inaccessible":
+            continue
+        blob = f"{row.get('title') or ''} {row.get('excerpt') or ''}"
+        if not full_name_match(blob, first, last):
+            continue
+        number = int(row.get("candidate") or 0)
+        if number not in numbers:
+            numbers.append(number)
+    return len(numbers)
+
+
+def allowed_identity_level(source_count: int, match_count: int) -> str:
+    # High needs two or more full-name sources and fewer than three people.
+    # A single source, or three or more candidate matches, is never high.
+    if source_count >= 2 and match_count < 3:
+        return "high"
+    if source_count >= 2 and match_count >= 3:
+        return "medium"
+    if source_count == 1 and match_count < 3:
+        return "medium"
+    return "low"
+
+
+def show_level(level: str) -> str:
+    return {"high": "High", "medium": "Medium", "low": "Low"}.get((level or "").lower(), "Low")
+
+
+def estimate_pages(html: str) -> int:
+    plain = re.sub(r"<[^>]+>", " ", html or "")
+    plain = re.sub(r"\s+", " ", plain).strip()
+    # 9pt Letter copy with these margins holds about this much before a second page.
+    return 1 if len(plain) <= 3800 else (1 + (len(plain) - 1) // 3800)
+
+
 def build_queries(name: str, city: str, urls: list[str]) -> tuple[list[dict], list[dict], list[str]]:
     codes: list[str] = []
     clean_name, name_codes = redact(name)
@@ -843,15 +1015,14 @@ def build_queries(name: str, city: str, urls: list[str]) -> tuple[list[dict], li
     codes.extend(city_codes)
     if contains_blocked_token(clean_name) or contains_blocked_token(clean_city):
         fail("address_token_in_query", "A query would have contained a blocked token.")
-    queries: list[dict] = []
+    queries: list[str] = []
     quoted_name = escape_quotes(clean_name)
     quoted_city = escape_quotes(clean_city)
-    if clean_name and clean_city:
-        queries.append(f'"{quoted_name}" "{quoted_city}" professional profile company')
-        queries.append(f'"{quoted_name}" "{quoted_city}" interview news community')
-    elif clean_name:
-        queries.append(f'"{quoted_name}" professional profile company')
-        queries.append(f'"{quoted_name}" interview news community')
+    for stem in QUERY_STEMS:
+        if clean_name and clean_city:
+            queries.append(f'"{quoted_name}" "{quoted_city}" {stem}')
+        elif clean_name:
+            queries.append(f'"{quoted_name}" {stem}')
     inaccessible: list[dict] = []
     for url in urls:
         if url_has_blocked_token(url):
@@ -1137,19 +1308,41 @@ def cmd_evidence_render(client_id: str, opts: dict[str, list[str]]) -> None:
     emit({"ok": True, "count": len(blocks), "text": "\n\n".join(blocks)})
 
 
+def stop_identity(path: Path, status: str, message: str) -> None:
+    write_json(path / "candidates.json", {"candidates": [], "status": status})
+    emit({"ok": True, "status": status, "message": message, "candidates": []})
+
+
 def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
     gate(actor_of(opts), mutate=False)
     path = require_client(client_id)
+    intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
+    rows = load_evidence(path)
+    usable = [row for row in rows if row.get("identity_status") != "inaccessible"]
+    parts = split_name(intake.get("name") or "")
+    if not usable:
+        write_json(path / "candidates.json", {"candidates": []})
+        emit({"ok": True, "candidates": []})
+    if not parts:
+        stop_identity(path, "couldnt_find", "couldn't find")
+    first, last = parts
+    manual = [row for row in usable if row.get("origin") == "manual"]
+    if is_common_name(first, last) and not has_profile_url(intake) and not manual:
+        stop_identity(path, "need_profile_link", "This name is common. Send a profile link instead of a guess.")
     grouped: dict[int, list[dict]] = {}
-    for row in load_evidence(path):
-        if row.get("identity_status") == "inaccessible":
+    for row in usable:
+        if is_common_name(first, last) and not has_profile_url(intake) and row.get("origin") != "manual":
+            continue
+        if not row_name_match(row, first, last):
             continue
         grouped.setdefault(int(row["candidate"]), []).append(row)
+    if not grouped:
+        stop_identity(path, "couldnt_find", "couldn't find")
     candidates = []
     for number in sorted(grouped):
-        rows = grouped[number]
+        group = grouped[number]
         labels = []
-        for row in rows:
+        for row in group:
             label, _ = redact(row.get("title") or "")
             if label:
                 labels.append(label)
@@ -1159,10 +1352,10 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
         candidates.append({
             "n": number,
             "label": text,
-            "evidence_ids": [row["evidence_id"] for row in rows],
+            "evidence_ids": [row["evidence_id"] for row in group],
         })
-    write_json(path / "candidates.json", {"candidates": candidates})
-    emit({"ok": True, "candidates": candidates})
+    write_json(path / "candidates.json", {"candidates": candidates, "status": "matches"})
+    emit({"ok": True, "status": "matches", "candidates": candidates})
 
 
 def cmd_confirm(client_id: str, opts: dict[str, list[str]]) -> None:
@@ -1195,9 +1388,21 @@ def cmd_confirm(client_id: str, opts: dict[str, list[str]]) -> None:
     ]
     if not matched:
         fail("unknown_candidate", "That candidate has no usable evidence.")
+    intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
+    parts = split_name(intake.get("name") or "")
+    if not parts:
+        fail("couldnt_find", "couldn't find")
+    first, last = parts
+    if is_common_name(first, last) and not has_profile_url(intake):
+        if any(row.get("origin") != "manual" for row in matched):
+            fail("need_profile_link", "This name is common. Send a profile link instead of a guess.")
+    named = [row for row in matched if row_name_match(row, first, last)]
+    if not named:
+        fail("couldnt_find", "couldn't find")
+    named_ids = {row["evidence_id"] for row in named}
     confirmed: list[str] = []
     for row in rows:
-        if int(row.get("candidate") or 0) == number and row.get("identity_status") != "inaccessible":
+        if row.get("evidence_id") in named_ids:
             row["identity_status"] = "confirmed"
             confirmed.append(row["evidence_id"])
         elif row.get("identity_status") == "confirmed":
@@ -1256,8 +1461,9 @@ def cmd_render(client_id: str, opts: dict[str, list[str]]) -> None:
     if pdf_path.exists():
         pdf_path.unlink()
     wrote_pdf = try_weasyprint(html_path, pdf_path)
-    audit("brief_render", client_id, {"html": 1, "pdf": 1 if wrote_pdf else 0}, actor)
-    payload: dict = {"ok": True, "html": True, "pdf": wrote_pdf}
+    pages = estimate_pages(html)
+    audit("brief_render", client_id, {"html": 1, "pdf": 1 if wrote_pdf else 0, "pages": pages}, actor)
+    payload: dict = {"ok": True, "html": True, "pdf": wrote_pdf, "pages": pages}
     if not wrote_pdf:
         payload["pdf_skipped"] = "weasyprint_unavailable"
     emit(payload)
@@ -1328,7 +1534,7 @@ def cmd_sms(client_id: str, opts: dict[str, list[str]]) -> None:
         fail("bad_url", "Delivery URL is not public.")
     if url.startswith("https://artifacts.local/"):
         fail("bad_url", "Delivery URL is a placeholder; ARTIFACT_BASE_URL is not set. Re-run install from the box shell.")
-    level = (brief.get("identity_match") or {}).get("level") or "confirmed"
+    level = show_level((brief.get("identity_match") or {}).get("level") or "low")
     disc = (brief.get("communication_style") or {}).get("disc_hypothesis") or ""
     leads = (brief.get("appointment_playbook") or {}).get("lead_points") or []
     first = redact(leads[0].get("text") if leads else "")[0]

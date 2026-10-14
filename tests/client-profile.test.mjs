@@ -369,19 +369,25 @@ test("query escaping and phone email dob stripping", () => {
   const blob = queries.stdout;
   assert.doesNotMatch(blob, /dana@example.com|555-0199|01\/02\/1980|85251/);
   assert.match(queries.payload.queries[0].q, /Ann \\"AJ\\" Example/);
-  assert.match(queries.payload.queries[0].q, /professional profile company/);
-  assert.match(queries.payload.queries[1].q, /interview news community/);
+  assert.match(queries.payload.queries[0].q, /LinkedIn/);
+  assert.match(queries.payload.queries[1].q, /company site/);
+  assert.match(queries.payload.queries[2].q, /news/);
+  assert.match(queries.payload.queries[3].q, /podcast/);
 });
 
-test("queries cap at 6 and keep the known url", () => {
+test("queries cover LinkedIn, the company site, news, and podcasts, and cap at 8", () => {
   const ctx = world();
   const args = ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"];
   for (let i = 0; i < 8; i += 1) args.push("--url", `https://example.com/p/${i}`);
   const intake = run(args, ctx);
   assert.equal(intake.payload.ok, true, intake.stdout);
   const queries = run(["queries", intake.payload.client_id], ctx);
-  assert.equal(queries.payload.queries.length, 6);
-  assert.match(queries.payload.queries[2].q, /https:\/\/example\.com\/p\/0/);
+  assert.equal(queries.payload.queries.length, 8);
+  assert.match(queries.payload.queries[0].q, /LinkedIn/);
+  assert.match(queries.payload.queries[1].q, /company site/);
+  assert.match(queries.payload.queries[2].q, /news/);
+  assert.match(queries.payload.queries[3].q, /podcast/);
+  assert.match(queries.payload.queries[4].q, /https:\/\/example\.com\/p\/0/);
 });
 
 test("case 21 private instagram is not fetched", () => {
@@ -1037,7 +1043,8 @@ test("install uninstall on and off are files-only", () => {
   writeFileSync(configPath, JSON.stringify(turnedOff));
   const again = exec(["install", "joe-gilmour"]);
   assert.equal(again.payload.ok, true, JSON.stringify(again.payload));
-  assert.equal(again.payload.config.consent_required, true);
+  assert.equal("consent_required" in again.payload.config, false);
+  assert.equal("consent_required" in JSON.parse(readFileSync(configPath, "utf8")), false);
   const rewritten = readFileSync(join(box, "SOUL.md"), "utf8");
   assert.equal(rewritten.split("<!-- BEGIN client-profile v2 -->").length - 1, 1);
   assert.equal(rewritten.includes("<!-- BEGIN client-profile v1 -->"), false);
@@ -1618,4 +1625,184 @@ test("owner paste never joins a web candidate", () => {
   run(["evidence", "add", id, "--url", "https://example.org/stranger", "--title", "Avery Stranger", "--excerpt", "A different person with the same first name in town.", "--origin", "web", "--query", "q", "--candidate", "1"], ctx);
   const manual = run(["evidence", "add", id, "--url", "https://example.com/bio", "--title", "Bio", "--excerpt", "Project engineer who likes the full set of numbers.", "--origin", "manual", "--query", "owner paste", "--candidate", "1"], ctx).payload;
   assert.equal(manual.candidate, 2);
+});
+
+test("a made-up Avery in Flagstaff returns couldn't find", () => {
+  assert.match(skill, /couldn't find/);
+  assert.match(skill, /profile link/);
+  assert.match(skill, /one-page/i);
+  assert.match(skill, /decision_speed/);
+  assert.match(skill, /There is no consent step/);
+  assert.match(skill, /Do not text the lead/);
+  const ctx = world();
+  const intake = run(
+    ["intake", "--actor", "owner", "--name", "Avery Quindle", "--city", "Flagstaff", "--type", "buyer"],
+    ctx,
+  );
+  assert.equal(intake.payload.ok, true, intake.stdout);
+  const id = intake.payload.client_id;
+  addEvidence(ctx, id, {
+    url: "https://example.com/avery-johnson",
+    title: "Avery Johnson",
+    excerpt: "Avery Johnson is a trail guide in Flagstaff.",
+    origin: "web",
+    query: '"Avery Quindle" "Flagstaff" LinkedIn',
+    candidate: 1,
+  });
+  const listed = run(["identity", "candidates", id], ctx);
+  assert.equal(listed.payload.ok, true, listed.stdout);
+  assert.equal(listed.payload.status, "couldnt_find");
+  assert.equal(listed.payload.message, "couldn't find");
+  assert.deepEqual(listed.payload.candidates, []);
+  const picked = run(["identity", "confirm", id, "--candidate", "1", "--actor", "owner"], ctx);
+  assert.equal(picked.payload.ok, false);
+  assert.equal(picked.payload.error, "couldnt_find");
+  assert.equal(picked.payload.message, "couldn't find");
+  const brief = loadGood(["ev_00000000"]);
+  const checked = validate(ctx, id, brief);
+  assert.equal(checked.payload.ok, false);
+  assert.equal(existsSync(join(ctx.data, id, "brief.json")), false);
+});
+
+test("Avery with no last name in Flagstaff returns couldn't find", () => {
+  const ctx = world();
+  const id = run(["intake", "--name", "Avery", "--city", "Flagstaff", "--type", "other"], ctx).payload.client_id;
+  addEvidence(ctx, id, {
+    url: "https://example.com/avery-flagstaff",
+    title: "Avery in Flagstaff",
+    excerpt: "Avery posts about Flagstaff hiking.",
+    origin: "web",
+    query: '"Avery" "Flagstaff" news',
+    candidate: 1,
+  });
+  const listed = run(["identity", "candidates", id], ctx);
+  assert.equal(listed.payload.status, "couldnt_find");
+  assert.equal(listed.payload.message, "couldn't find");
+  assert.deepEqual(listed.payload.candidates, []);
+});
+
+test("a common name asks for a profile link instead of guessing", () => {
+  const ctx = world();
+  const id = run(["intake", "--name", "John Smith", "--city", "Phoenix", "--type", "buyer"], ctx).payload.client_id;
+  addEvidence(ctx, id, {
+    url: "https://example.com/john-smith",
+    title: "John Smith, broker",
+    excerpt: "John Smith is a broker in Phoenix.",
+    origin: "web",
+    query: '"John Smith" "Phoenix" LinkedIn',
+    candidate: 1,
+  });
+  const listed = run(["identity", "candidates", id], ctx);
+  assert.equal(listed.payload.ok, true, listed.stdout);
+  assert.equal(listed.payload.status, "need_profile_link");
+  assert.match(listed.payload.message, /profile link/);
+  assert.deepEqual(listed.payload.candidates, []);
+  const picked = run(["identity", "confirm", id, "--candidate", "1", "--actor", "owner"], ctx);
+  assert.equal(picked.payload.ok, false);
+  assert.equal(picked.payload.error, "need_profile_link");
+});
+
+test("one full-name source cannot be rated confirmed or high", () => {
+  const ctx = world();
+  const made = seed(ctx);
+  confirm(ctx, made.id, 1);
+  const over = loadGood(made.evidenceIds, (next) => {
+    next.identity_match.level = "high";
+    next.snapshot = "This is a confirmed identity.";
+  });
+  const rejected = validate(ctx, made.id, over);
+  assert.equal(rejected.payload.ok, false, JSON.stringify(rejected.payload));
+  assert.ok(codes(rejected.payload).includes("identity_overclaim"));
+  const high = loadGood(made.evidenceIds, (next) => {
+    next.identity_match.level = "high";
+  });
+  const checked = validate(ctx, made.id, high);
+  assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
+  assert.ok(checked.payload.warnings.some((item) => item.code === "identity_downgraded" && item.to === "medium"));
+  const stored = JSON.parse(readFileSync(join(ctx.data, made.id, "brief.json"), "utf8"));
+  assert.equal(stored.identity_match.level, "medium");
+  assert.equal(/\bconfirmed\b/i.test(JSON.stringify(stored.identity_match)), false);
+});
+
+test("three candidate matches cannot be rated confirmed or high", () => {
+  const ctx = world();
+  const made = seed(ctx, {
+    name: "Dana Whitfield",
+    city: "Scottsdale",
+    type: "buyer",
+    evidence: [1, 2, 3].map((n) => ({
+      url: `https://example.com/dana-${n}`,
+      title: "Dana Whitfield, broker",
+      excerpt: `Dana Whitfield keeps a Scottsdale profile number ${n}.`,
+      origin: "web",
+      query: '"Dana Whitfield" "Scottsdale" LinkedIn',
+      candidate: n,
+    })),
+  });
+  const listed = run(["identity", "candidates", made.id], ctx);
+  assert.equal(listed.payload.candidates.length, 3);
+  confirm(ctx, made.id, 1);
+  const claimed = loadGood([made.evidenceIds[0]], (next) => {
+    next.identity_match.level = "high";
+    next.identity_match.basis = "Owner confirmed this candidate.";
+  });
+  const rejected = validate(ctx, made.id, claimed);
+  assert.equal(rejected.payload.ok, false, JSON.stringify(rejected.payload));
+  assert.ok(codes(rejected.payload).includes("identity_overclaim"));
+  const modest = loadGood([made.evidenceIds[0]], (next) => {
+    next.identity_match.level = "high";
+  });
+  const checked = validate(ctx, made.id, modest);
+  assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
+  const stored = JSON.parse(readFileSync(join(ctx.data, made.id, "brief.json"), "utf8"));
+  assert.equal(stored.identity_match.level, "low");
+});
+
+test("two full-name sources can be high, and the fixture brief is one page", () => {
+  const ctx = world();
+  const made = seed(ctx, {
+    name: "Dana Whitfield",
+    city: "Scottsdale",
+    type: "buyer",
+    evidence: [
+      {
+        url: "https://example.com/dana-linkedin",
+        title: "Dana Whitfield on LinkedIn",
+        excerpt: "Dana Whitfield lists a Scottsdale practice.",
+        origin: "web",
+        query: '"Dana Whitfield" "Scottsdale" LinkedIn',
+        candidate: 1,
+      },
+      {
+        url: "https://example.com/dana-news",
+        title: "Dana Whitfield news",
+        excerpt: "Dana Whitfield spoke with a Scottsdale news desk.",
+        origin: "web",
+        query: '"Dana Whitfield" "Scottsdale" news',
+        candidate: 1,
+      },
+    ],
+  });
+  confirm(ctx, made.id, 1);
+  const brief = loadGood(made.evidenceIds, (next) => {
+    next.identity_match.level = "high";
+    next.identity_match.basis = "Two public sources use this full name.";
+    next.verified_facts[0].evidence_ids = made.evidenceIds;
+    next.verified_facts[0].confidence = "high";
+  });
+  const checked = validate(ctx, made.id, brief);
+  assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
+  const stored = JSON.parse(readFileSync(join(ctx.data, made.id, "brief.json"), "utf8"));
+  assert.equal(stored.identity_match.level, "high");
+  const rendered = run(["brief", "render", made.id, "--actor", "owner"], ctx);
+  assert.equal(rendered.payload.ok, true, rendered.stdout);
+  assert.equal(rendered.payload.pages, 1);
+  const html = readFileSync(join(ctx.data, made.id, "brief.html"), "utf8");
+  assert.match(html, /Identity confidence/);
+  assert.match(html, /High/);
+  assert.match(html, /Decision speed/);
+  assert.match(html, /What they need to hear/);
+  assert.match(html, /Likely objections/);
+  assert.doesNotMatch(html, /\bconfirmed\b/i);
+  assert.match(html, /size:\s*Letter/);
 });
