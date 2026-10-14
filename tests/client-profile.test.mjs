@@ -967,6 +967,8 @@ test("render escapes html and skips pdf when weasyprint is absent", () => {
   assert.doesNotMatch(html, /<script/);
   assert.match(html, /What we don't know/);
   assert.match(html, /Verify before use/);
+  assert.match(html, /Searched 1 public query and kept 1 source\./);
+  assert.doesNotMatch(html, /kept 1 sources/);
   if (!existsSync("/usr/bin/weasyprint")) {
     assert.equal(rendered.payload.pdf, false);
     assert.equal(rendered.payload.pdf_skipped, "weasyprint_unavailable");
@@ -993,6 +995,9 @@ test("case 20 sms summary and delivery expiry", () => {
   assert.match(summary.payload.text, new RegExp(expected.banner));
   assert.equal(summary.payload.text.split(ready.delivered.url).length - 1, 1);
   for (const banned of expected.forbidden) assert.equal(summary.payload.text.includes(banned), false);
+  assert.doesNotMatch(summary.payload.text, /\.\./);
+  assert.doesNotMatch(summary.payload.text, /…\./);
+  assert.match(summary.payload.text, /Identity: \w+\. Style:/);
   const longCtx = world();
   const made = seed(longCtx);
   confirm(longCtx, made.id, 1);
@@ -1008,6 +1013,9 @@ test("case 20 sms summary and delivery expiry", () => {
   assert.equal(sms.payload.ok, true, sms.stdout + sms.stderr);
   assert.ok(sms.payload.text.length <= 300);
   assert.equal(sms.payload.text.includes(delivered.payload.url), true);
+  assert.doesNotMatch(sms.payload.text, /…\./);
+  assert.doesNotMatch(sms.payload.text, /\.\u2026/);
+  assert.match(sms.payload.text, /Identity: \w+\. Style:/);
 });
 
 test("audit lines have no client name or excerpt", () => {
