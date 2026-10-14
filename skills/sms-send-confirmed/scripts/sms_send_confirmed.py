@@ -863,7 +863,19 @@ def refuse_context(failure: GateFailure, *, approver: str = "", dest: str = "", 
     return emit(payload, failure.status)
 
 
-def stage(approver_raw: str, dest_raw: str, body_raw: str) -> int:
+def one_line(raw: str) -> str:
+    return " ".join(str(raw or "").split())
+
+
+def stage(
+    approver_raw: str,
+    dest_raw: str,
+    body_raw: str,
+    why_raw: str = "",
+    source_kind_raw: str = "",
+    source_date_raw: str = "",
+    source_name_raw: str = "",
+) -> int:
     try:
         ctx = context()
         approver = resolve_approver(approver_raw, ctx["phones"], ctx["telegram"])
@@ -875,6 +887,10 @@ def stage(approver_raw: str, dest_raw: str, body_raw: str) -> int:
                 field="dest",
             )
         body = str(body_raw or "").strip()
+        why = one_line(why_raw)
+        source_kind = one_line(source_kind_raw)
+        source_date = one_line(source_date_raw)
+        source_name = one_line(source_name_raw)
         limit = max_body_chars()
         if not body:
             raise GateFailure("error", "body is empty", field="body", status=EXIT_ERROR)
@@ -903,6 +919,10 @@ def stage(approver_raw: str, dest_raw: str, body_raw: str) -> int:
                 "from": ctx["from"],
                 "body": body,
                 "body_hash": body_hash(body),
+                "why": why,
+                "source_kind": source_kind,
+                "source_date": source_date,
+                "source_name": source_name,
                 "attestation_version": ATTESTATION_VERSION,
                 "created_at": iso(now),
                 "expires_at": iso(expires),
@@ -918,6 +938,10 @@ def stage(approver_raw: str, dest_raw: str, body_raw: str) -> int:
                 "from": ctx["from"],
                 "body_len": len(body),
                 "body_hash": record["body_hash"],
+                "why": why,
+                "source_kind": source_kind,
+                "source_date": source_date,
+                "source_name": source_name,
                 "attestation_version": ATTESTATION_VERSION,
                 "expires_at": record["expires_at"],
                 "attestation": shown,
@@ -1602,6 +1626,10 @@ def build_parser() -> argparse.ArgumentParser:
     stage_cmd.add_argument("--approver", required=True)
     stage_cmd.add_argument("--dest", required=True)
     stage_cmd.add_argument("--body", required=True)
+    stage_cmd.add_argument("--why", default="")
+    stage_cmd.add_argument("--source-kind", default="")
+    stage_cmd.add_argument("--source-date", default="")
+    stage_cmd.add_argument("--source-name", default="")
 
     send_cmd = sub.add_parser("send", help="Send one staged draft after SEND and attestation.")
     send_cmd.add_argument("--draft-id", required=True)
@@ -1632,7 +1660,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.cmd == "stage":
-        return stage(args.approver, args.dest, args.body)
+        return stage(
+            args.approver,
+            args.dest,
+            args.body,
+            args.why,
+            args.source_kind,
+            args.source_date,
+            args.source_name,
+        )
     if args.cmd == "send":
         return send(args.draft_id, args.confirm, args.attest)
     if args.cmd == "cancel":

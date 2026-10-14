@@ -711,6 +711,59 @@ print("ok")
   assert.equal(out, "ok");
 });
 
+test("stage keeps optional why and source fields and still stages without them", () => {
+  const plain = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY]);
+  assert.equal(plain.payload.outcome, "staged", plain.stdout);
+  assert.equal(plain.payload.provider_called, false);
+  assert.equal(plain.payload.why, "");
+  assert.equal(plain.payload.source_kind, "");
+  assert.equal(plain.payload.source_date, "");
+  assert.equal(plain.payload.source_name, "");
+  assert.equal(plain.callLines.length, 0);
+  const dir = mkdtempSync(join(tmpdir(), "sms-why-"));
+  const staged = run(
+    [
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      DEST,
+      "--body",
+      BODY,
+      "--why",
+      "They asked for the listing timeline",
+      "--source-kind",
+      "owner_text",
+      "--source-date",
+      "2026-10-14",
+      "--source-name",
+      "Owner text",
+    ],
+    {},
+    dir,
+  );
+  assert.equal(staged.payload.outcome, "staged", staged.stdout);
+  assert.equal(staged.payload.provider_called, false);
+  assert.equal(staged.payload.why, "They asked for the listing timeline");
+  assert.equal(staged.payload.source_kind, "owner_text");
+  assert.equal(staged.payload.source_date, "2026-10-14");
+  assert.equal(staged.payload.source_name, "Owner text");
+  assert.match(staged.payload.attestation, /Reply SEND to confirm you authorize this one message/);
+  assert.equal(staged.payload.attestation.includes("listing timeline"), false);
+  assert.equal(staged.callLines.length, 0);
+  const draft = JSON.parse(
+    readFileSync(join(staged.dir, "drafts", `${staged.payload.draft_id}.json`), "utf8"),
+  );
+  assert.equal(draft.approver, OWNER);
+  assert.equal(draft.dest, DEST);
+  assert.equal(draft.body, BODY);
+  assert.equal(draft.why, "They asked for the listing timeline");
+  assert.equal(draft.source_kind, "owner_text");
+  assert.equal(draft.source_date, "2026-10-14");
+  assert.equal(draft.source_name, "Owner text");
+  assert.equal(draft.status, "pending");
+});
+
 test("owner-event skill forbids auto-reply and the hook skips only captured inbounds", () => {
   const eventSkill = readFileSync(join(root, "skills", "sms-inbound-owner-event", "SKILL.md"), "utf8");
   const hook = readFileSync(join(root, "skills", "sms-send-confirmed", "method-a", "session_inbound_hook.py"), "utf8");
