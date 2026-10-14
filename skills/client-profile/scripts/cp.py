@@ -8,7 +8,8 @@ Config:    $CLIENT_PROFILE_ROOT/config.json  {"enabled": true|false, ...}
 Audit:     <root>/../audit/client-profile.jsonl
 
 Network is used only by `search` and `profile`, and only to call Exa when a key is set.
-No CRM write, no Human Design, no street-address field.
+No CRM write and no Human Design. A street is stored for the resident lookup only.
+It is never placed in a web query or in the PDF.
 """
 from __future__ import annotations
 
@@ -1166,6 +1167,9 @@ def actor_of(opts: dict[str, list[str]]) -> str | None:
 
 
 def reject_address_flag(argv: list[str]) -> None:
+    """Profile stores a street for the resident lookup. Every other command refuses it."""
+    if len(argv) > 1 and argv[1] == "profile":
+        return
     for token in argv:
         if token == "--address" or token.startswith("--address="):
             fail("no_address_field", "Street address is not collected.")
@@ -3120,18 +3124,27 @@ def profile_slug(name: str) -> str:
     return slug or "person"
 
 
-def profile_record_key(name: str, city: str, company: str) -> str:
-    """Name slug plus a short hash of city and company. The model does not invent it."""
-    material = f"{(city or '').casefold()}|{company_slug(company)}"
+def profile_record_key(name: str, city: str, company: str, address: str = "") -> str:
+    """Name slug plus a short hash. The street is hashed, never written into the key."""
+    street = hashlib.sha256((address or "").casefold().strip().encode("utf-8")).hexdigest()[:8]
+    material = f"{(city or '').casefold()}|{company_slug(company)}|{street}"
     digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:6]
     return f"{profile_slug(name)}-{digest}"
 
 
-def profile_fingerprint(name: str, city: str, company: str, urls: list[str], appt_type: str) -> str:
+def profile_fingerprint(
+    name: str,
+    city: str,
+    company: str,
+    urls: list[str],
+    appt_type: str,
+    address: str = "",
+) -> str:
     payload = {
         "name": (name or "").casefold().strip(),
         "city": (city or "").casefold().strip(),
         "company": company_slug(company),
+        "address": hashlib.sha256((address or "").casefold().strip().encode("utf-8")).hexdigest(),
         "urls": sorted(canon_url(url) for url in urls if canon_url(url)),
         "type": appt_type,
     }
@@ -3227,12 +3240,40 @@ def name_as_phrase(text: str, name: str) -> bool:
     return re.search(forward, blob, re.IGNORECASE) is not None or re.search(reverse, blob, re.IGNORECASE) is not None
 
 
-def page_anchor_kind(page: dict, company: str, city: str, urls: list[str]) -> str:
-    """Owner link, company ignoring case and spacing, or the city when no company was given."""
+def place_matches_lookup(blob: str, city: str, lookup: dict) -> bool:
+    places = list(place_phrases(city))
+    prop = lookup.get("property") if isinstance(lookup.get("property"), dict) else {}
+    seen = {item.casefold() for item in places}
+    for extra in (prop.get("neighborhood") or "", prop.get("city") or ""):
+        if not isinstance(extra, str):
+            continue
+        for phrase in place_phrases(extra):
+            if phrase.casefold() not in seen:
+                places.append(phrase)
+                seen.add(phrase.casefold())
+    return any(phrase_present(blob, phrase) for phrase in places)
+
+
+def page_anchor_kind(
+    page: dict,
+    company: str,
+    city: str,
+    urls: list[str],
+    lookup: dict | None = None,
+) -> str:
+    """Owner link, then a resident-lookup city, then company or city.
+
+    A lookup match anchors a page in that city or neighborhood ahead of the
+    company. A namesake in another city stays out, even when the company matches.
+    """
     url = page.get("url") or ""
     blob = f"{page.get('title') or ''} {page.get('text') or ''} {page.get('snippet') or ''}"
     if urls and (link_matches(url, urls) or domain_matches(url, urls)):
         return "link"
+    if isinstance(lookup, dict) and lookup.get("status") == "match":
+        if place_matches_lookup(blob, city, lookup):
+            return "address"
+        return ""
     if company:
         slug = company_slug(company)
         if len(slug) < 3:
@@ -3258,7 +3299,7 @@ def left_out_note(count: int) -> str:
 
 def profile_level(pages: list[dict]) -> str:
     anchored = [page for page in pages if page.get("anchored")]
-    strong = any(page.get("anchor_kind") in {"company", "link"} for page in anchored)
+    strong = any(page.get("anchor_kind") in {"company", "link", "address"} for page in anchored)
     if len(anchored) >= 2 and strong:
         return "High"
     return "Medium"
@@ -3268,7 +3309,10 @@ def identity_block(pages: list[dict], owner_picked: bool) -> dict:
     level = profile_level(pages)
     line = f"Owner-picked. {level}." if owner_picked else f"{level}."
     anchored = sum(1 for page in pages if page.get("anchored"))
-    if level == "High":
+    kinds = {page.get("anchor_kind") for page in pages if page.get("anchored")}
+    if level == "High" and "address" in kinds:
+        basis = f"{anchored} anchored sources include the resident lookup."
+    elif level == "High":
         basis = f"{anchored} anchored sources include the company or a link the owner gave."
     elif anchored == 1:
         basis = "One anchored source."
@@ -3337,18 +3381,224 @@ def given_name(name: str) -> str:
     return tokens[0] if tokens else (name or "").strip()
 
 
-def intake_question(name: str, work: str, city: str) -> str:
-    """One question for the missing piece. Empty when name, work, and city are enough to search."""
-    who = given_name(name)
-    need_work = not (work or "").strip()
+LOOKUP_UNAVAILABLE_SAY = (
+    "People and property lookup isn't set up yet, so this brief uses public web pages only."
+)
+LOOKUP_NO_RESIDENT_SAY = (
+    "The people and property lookup did not return this resident, so this brief uses public web pages only."
+)
+
+
+def intake_question(name: str, address: str, city: str) -> str:
+    """One question for the missing required parts.
+
+    Empty when the full name, the street, and the city are all present.
+    A profession, a company, or a link is not required and is not asked for.
+    """
+    tokens = name_tokens(name)
+    need_name = len(tokens) < 2
+    need_street = not (address or "").strip()
     need_city = not (city or "").strip()
-    if need_work and need_city:
-        return f"What does {who} do, and where does he live?"
-    if need_work:
-        return f"What does {who} do?"
-    if need_city:
-        return f"Where does {who} live?"
-    return ""
+    if not need_name and not need_street and not need_city:
+        return ""
+    who = given_name(name) if tokens else ""
+    if need_name and need_street and need_city:
+        return "What's the full name, the street address, and the city and state?"
+    if need_name and need_street:
+        return "What's the full name and the street address?"
+    if need_name and need_city:
+        return "What's the full name, and what city and state?"
+    if need_name:
+        return "What's the full name?"
+    if need_street and need_city:
+        return f"What's the street address for {who}, and what city and state?"
+    if need_street:
+        return f"What's the street address for {who}?"
+    return "What city and state?"
+
+
+def city_without_street(city: str, street: str) -> str:
+    cleaned = city or ""
+    street = (street or "").strip()
+    if street and len(street) >= 4:
+        cleaned = re.sub(re.escape(street), " ", cleaned, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", cleaned).strip(" ,;-")
+
+
+def queries_hide_street(queries: list[dict], street: str) -> None:
+    street = (street or "").strip()
+    if len(street) < 4:
+        return
+    folded = street.casefold()
+    for query in queries:
+        if folded in json.dumps(query).casefold():
+            fail("address_token_in_query", "A query would have contained a blocked token.")
+
+
+def lookup_key() -> str:
+    env = os.environ.get("IDENTITY_LOOKUP_KEY", "").strip()
+    if env:
+        return env
+    return _cfg_value("identity_lookup_key")
+
+
+def scrub_street(value: str, street: str) -> str:
+    cleaned = value or ""
+    street = (street or "").strip()
+    if street and len(street) >= 4:
+        cleaned = re.sub(re.escape(street), " ", cleaned, flags=re.IGNORECASE)
+    cleaned = STREET_RE.sub(" ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip(" ,;.-")
+
+
+def resident_name_matches(requested: str, resident: str) -> bool:
+    if name_as_phrase(resident or "", requested):
+        return True
+    return name_as_phrase(requested or "", resident)
+
+
+def lookup_unavailable(reason: str) -> dict:
+    return {
+        "status": "provider_unavailable",
+        "reason": reason,
+        "say": LOOKUP_UNAVAILABLE_SAY,
+    }
+
+
+def lookup_excerpt(lookup: dict) -> str:
+    """Facts the provider returned. The street is not one of them."""
+    parts: list[str] = []
+    resident = lookup.get("resident") if isinstance(lookup.get("resident"), dict) else {}
+    name = resident.get("name") if isinstance(resident.get("name"), str) else ""
+    if name:
+        parts.append(f"Resident {name}")
+    occupancy = lookup.get("occupancy") if isinstance(lookup.get("occupancy"), str) else ""
+    if occupancy in {"owner", "renter"}:
+        parts.append(f"Occupancy {occupancy}")
+    prop = lookup.get("property") if isinstance(lookup.get("property"), dict) else {}
+    tenure = prop.get("tenure") if isinstance(prop.get("tenure"), str) else ""
+    years = lookup.get("tenure_years")
+    if not tenure and isinstance(years, int) and not isinstance(years, bool):
+        tenure = f"{years} years"
+    if tenure:
+        parts.append(f"Tenure {tenure}")
+    household = lookup.get("household")
+    if isinstance(household, int) and not isinstance(household, bool):
+        parts.append(f"Household size {household}")
+    purchased = prop.get("purchase_date") if isinstance(prop.get("purchase_date"), str) else ""
+    if purchased:
+        parts.append(f"Purchase date {purchased}")
+    neighborhood = prop.get("neighborhood") if isinstance(prop.get("neighborhood"), str) else ""
+    city = prop.get("city") if isinstance(prop.get("city"), str) else ""
+    if neighborhood:
+        parts.append(neighborhood)
+    if city:
+        parts.append(city)
+    if not parts:
+        return ""
+    return ". ".join(parts) + "."
+
+
+def lookup_page(lookup: dict) -> dict | None:
+    if lookup.get("status") != "match":
+        return None
+    excerpt = lookup_excerpt(lookup)
+    if not excerpt:
+        return None
+    source = lookup.get("source") if isinstance(lookup.get("source"), dict) else {}
+    title = source.get("name") if isinstance(source.get("name"), str) else ""
+    title = title.strip() or "Property records"
+    return {
+        "url": "",
+        "title": title,
+        "excerpt": excerpt,
+        "host": "property-records",
+        "anchored": True,
+        "anchor_kind": "address",
+    }
+
+
+def lookup_matched(lookup: dict | None) -> bool:
+    return isinstance(lookup, dict) and isinstance(lookup.get("page"), dict)
+
+
+def prepend_lookup(pages: list[dict], lookup: dict | None) -> list[dict]:
+    page = lookup.get("page") if isinstance(lookup, dict) else None
+    if not isinstance(page, dict):
+        return pages
+    if any(item.get("host") == "property-records" and item.get("anchor_kind") == "address" for item in pages):
+        return pages
+    return [page, *pages]
+
+
+def _lookup_text(value: object, street: str) -> str:
+    if not isinstance(value, str):
+        return ""
+    return scrub_street(value, street)
+
+
+def load_identity_fixture(path: str, name: str, street: str) -> dict:
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return lookup_unavailable("no_provider")
+    if not isinstance(raw, dict) or raw.get("status") != "match":
+        status = raw.get("status") if isinstance(raw, dict) else ""
+        if status == "provider_unavailable":
+            return lookup_unavailable(str(raw.get("reason") or "no_provider"))
+        return {"status": "no_match", "reason": "no_resident", "say": LOOKUP_NO_RESIDENT_SAY}
+    resident = raw.get("resident") if isinstance(raw.get("resident"), dict) else {}
+    resident_name = _lookup_text(resident.get("name"), street)
+    if not resident_name_matches(name, resident_name):
+        return {"status": "no_match", "reason": "no_resident", "say": LOOKUP_NO_RESIDENT_SAY}
+    source = raw.get("source") if isinstance(raw.get("source"), dict) else {}
+    prop = raw.get("property") if isinstance(raw.get("property"), dict) else {}
+    occupancy = _lookup_text(raw.get("occupancy"), street).casefold()
+    years = raw.get("tenure_years")
+    household = raw.get("household")
+    result: dict = {
+        "status": "match",
+        "reason": "",
+        "say": "",
+        "source": {
+            "name": _lookup_text(source.get("name"), street),
+            "id": _lookup_text(source.get("id"), street),
+        },
+        "resident": {
+            "name": resident_name,
+            "match": _lookup_text(resident.get("match"), street) or "resident",
+        },
+        "occupancy": occupancy if occupancy in {"owner", "renter"} else "",
+        "tenure_years": years if isinstance(years, int) and not isinstance(years, bool) else None,
+        "household": household if isinstance(household, int) and not isinstance(household, bool) else None,
+        "property": {
+            "purchase_date": _lookup_text(prop.get("purchase_date"), street),
+            "tenure": _lookup_text(prop.get("tenure"), street),
+            "neighborhood": _lookup_text(prop.get("neighborhood"), street),
+            "city": _lookup_text(prop.get("city"), street),
+        },
+    }
+    page = lookup_page(result)
+    if page:
+        result["page"] = page
+    return result
+
+
+def identity_lookup(name: str, address: str, city: str) -> dict:
+    """Resident match and property facts for a name plus address.
+
+    No vendor is wired. A fixture is the only successful path, and only when
+    IDENTITY_LOOKUP_FIXTURE is set. The street is an input and is never copied
+    into the result. The city is not sent to a vendor.
+    """
+    if not (address or "").strip() or not (city or "").strip():
+        return {"status": "no_match", "reason": "no_resident", "say": LOOKUP_NO_RESIDENT_SAY}
+    fixture = os.environ.get("IDENTITY_LOOKUP_FIXTURE", "").strip()
+    if fixture:
+        return load_identity_fixture(fixture, name, address)
+    if not lookup_key():
+        return lookup_unavailable("no_key")
+    return lookup_unavailable("no_provider")
 
 
 def anchor_say(name: str, company: str, city: str) -> str:
@@ -3520,6 +3770,7 @@ def classify_profile_pages(
     company: str,
     city: str,
     urls: list[str],
+    lookup: dict | None = None,
 ) -> tuple[str, list[list[dict]], int]:
     """Return one|many|needs_anchor|no_match, people, and the left-out count."""
     named: list[dict] = []
@@ -3533,7 +3784,7 @@ def classify_profile_pages(
             continue
         if len(excerpt) > EXCERPT_CAP:
             excerpt = excerpt[:EXCERPT_CAP]
-        kind = page_anchor_kind(page, company, city, urls)
+        kind = page_anchor_kind(page, company, city, urls, lookup)
         named.append({
             "url": page["url"],
             "title": title or page["url"],
@@ -3587,6 +3838,39 @@ def build_people(groups: list[list[dict]]) -> list[dict]:
     return people
 
 
+def public_lookup(doc: dict) -> dict | None:
+    lookup = doc.get("lookup")
+    if not isinstance(lookup, dict) or not lookup.get("status"):
+        return None
+    payload: dict = {
+        "status": lookup.get("status"),
+        "say": lookup.get("say") or "",
+    }
+    reason = lookup.get("reason") or ""
+    if reason:
+        payload["reason"] = reason
+    page = lookup.get("page") if isinstance(lookup.get("page"), dict) else None
+    if lookup.get("status") == "match" and page:
+        payload["source"] = {
+            "title": page.get("title") or "",
+            "host": page.get("host") or "",
+            "excerpt": page.get("excerpt") or "",
+        }
+    return payload
+
+
+def attach_lookup(payload: dict, doc: dict) -> dict:
+    looked = public_lookup(doc)
+    if looked:
+        payload["lookup"] = looked
+    intake = doc.get("intake") if isinstance(doc.get("intake"), dict) else {}
+    blob = json.dumps(payload).casefold()
+    for secret in (intake.get("address"), intake.get("phone"), intake.get("email")):
+        if isinstance(secret, str) and len(secret.strip()) >= 4 and secret.casefold() in blob:
+            fail("street_in_output", "The street address was removed from the result.")
+    return payload
+
+
 def public_profile(doc: dict) -> dict:
     status = doc.get("status")
     pending = doc.get("pending") if isinstance(doc.get("pending"), dict) else {}
@@ -3629,7 +3913,7 @@ def public_profile(doc: dict) -> dict:
         payload["queries_succeeded"] = doc.get("queries_succeeded") or 0
         payload["queries"] = doc.get("queries") or []
         payload["banner"] = doc.get("banner") or ""
-        return payload
+        return attach_lookup(payload, doc)
     if status == "needs_disambiguation":
         payload["say"] = doc.get("say") or pending.get("prompt") or ""
         payload["choices"] = [
@@ -3643,7 +3927,7 @@ def public_profile(doc: dict) -> dict:
             "choices": payload["choices"],
         }
         payload["next"] = "reply"
-        return payload
+        return attach_lookup(payload, doc)
     if status in {"needs_anchor", "no_match", "none"}:
         payload["say"] = doc.get("say") or ""
         payload["query_count"] = doc.get("query_count") or 0
@@ -3652,10 +3936,10 @@ def public_profile(doc: dict) -> dict:
         payload["next"] = "stop"
         if status == "none":
             payload["reply"] = "NONE"
-        return payload
+        return attach_lookup(payload, doc)
     payload["say"] = doc.get("say") or ""
     payload["next"] = "stop"
-    return payload
+    return attach_lookup(payload, doc)
 
 
 def open_profile_docs() -> list[dict]:
@@ -3741,6 +4025,7 @@ def apply_profile_reply(doc: dict, reply: str, actor: str) -> None:
             "next": "reply",
         })
     pages = [page for page in match.get("pages") or [] if isinstance(page, dict)]
+    pages = prepend_lookup(pages, doc.get("lookup") if isinstance(doc.get("lookup"), dict) else None)
     sources = number_sources(pages)
     doc["sources"] = sources
     doc["evidence"] = fence_sources(sources)
@@ -3768,13 +4053,14 @@ def finish_profile_doc(
     found: list[dict],
     failed: int,
     succeeded: int,
+    lookup: dict,
 ) -> dict:
     name = intake["name"]
     city = intake["city"]
     company = intake.get("company") or ""
     urls = list(intake.get("urls") or [])
-    kind, groups, left = classify_profile_pages(found, name, company, city, urls)
-    if failed and kind == "no_match":
+    kind, groups, left = classify_profile_pages(found, name, company, city, urls, lookup)
+    if failed and kind == "no_match" and not lookup_matched(lookup):
         reason = "unreachable"
         emit_profile_unavailable(reason)
     people = build_people(groups) if groups else []
@@ -3797,7 +4083,30 @@ def finish_profile_doc(
         "owner_picked": False,
         "sections": None,
         "delivery": None,
+        "lookup": {key: value for key, value in lookup.items() if key != "resident"},
     }
+    if lookup_matched(lookup) and kind in {"no_match", "needs_anchor"}:
+        pages = prepend_lookup([], lookup)
+        sources = number_sources(pages)
+        label = choice_label(pages)
+        prompt = people_say(name, city, [{"reply": 1, "label": label}])
+        base.update({
+            "status": "ready",
+            "next": "write",
+            "sources": sources,
+            "evidence": fence_sources(sources),
+            "identity": identity_block(pages, False),
+            "pending": {
+                "awaiting": True,
+                "prompt": prompt,
+                "choices": [{"reply": 1, "label": label, "pages": pages}],
+                "closed": None,
+            },
+            "banner": "",
+            "name_hits": 0 if kind == "no_match" else base["name_hits"],
+        })
+        base["banner"] = profile_banner(base)
+        return base
     if kind == "no_match":
         base.update({
             "status": "no_match",
@@ -3835,7 +4144,7 @@ def finish_profile_doc(
             "pending": {"awaiting": True, "prompt": say, "choices": choices, "closed": None},
         })
         return base
-    pages = people[0]["pages"]
+    pages = prepend_lookup(people[0]["pages"], lookup)
     sources = number_sources(pages)
     prompt = people_say(name, city, people)
     choices = [{"reply": 1, "label": people[0]["label"], "pages": pages}]
@@ -3877,22 +4186,26 @@ def cmd_profile(positional: list[str], opts: dict[str, list[str]]) -> None:
             fail("rejected_url", "Only http(s) URLs are accepted.")
     company = flag(opts, "company") or ""
     role = flag(opts, "role") or ""
+    address = (flag(opts, "address") or "").strip()
+    phone = (flag(opts, "phone") or "").strip()
+    email = (flag(opts, "email") or "").strip()
     clean_name, _ = redact(name)
     clean_city, _ = redact(city) if city and city.strip() else ("", [])
     clean_company, _ = redact(company) if company else ("", [])
     clean_role, _ = redact(role) if role else ("", [])
     if not clean_name:
         fail("name_empty_after_redaction", "Name was empty after removing blocked tokens.")
-    if city and city.strip() and not clean_city:
+    if city and city.strip() and not clean_city and not address:
         fail("city_empty_after_redaction", "City was empty after removing blocked tokens.")
     if MINOR_RE.search(clean_name) or (clean_city and MINOR_RE.search(clean_city)):
         fail("minor", "Subject appears to be a minor. Stop.")
-    # Name, a profession or company, and a city are enough. Anything missing
-    # is one question, before Exa. A link the owner already sent does not
-    # replace those three, and it is kept when they are all present.
-    work = clean_company.strip() or clean_role.strip()
-    question = intake_question(clean_name, work, clean_city)
+    # Full name, street, and city are required. Anything missing is one
+    # question, before the lookup and before Exa. A profession, a company,
+    # or a link does not replace those three.
+    question = intake_question(clean_name, address, clean_city)
     if question:
+        if address and address.casefold() in question.casefold():
+            fail("street_in_output", "The street address was removed from the result.")
         emit({
             "ok": True,
             "status": "needs_anchor",
@@ -3902,10 +4215,14 @@ def cmd_profile(positional: list[str], opts: dict[str, list[str]]) -> None:
             "queries_succeeded": 0,
             "name_hits": 0,
         })
-    clean_company = work
+    clean_company = clean_company.strip() or clean_role.strip()
+    query_city = city_without_street(clean_city, address)
+    lookup = identity_lookup(clean_name, address, query_city)
     stored_urls = [url for url in urls if not is_instagram(url)]
-    fingerprint = profile_fingerprint(clean_name, clean_city, clean_company, stored_urls, appt_type)
-    record = profile_record_key(clean_name, clean_city, clean_company)
+    fingerprint = profile_fingerprint(
+        clean_name, query_city, clean_company, stored_urls, appt_type, address
+    )
+    record = profile_record_key(clean_name, query_city, clean_company, address)
     existing = load_profile_doc(record)
     reusable = bool(
         existing
@@ -3924,25 +4241,30 @@ def cmd_profile(positional: list[str], opts: dict[str, list[str]]) -> None:
             "no_pending",
             "No profile is waiting for a reply. Start with the person's name and city.",
         )
-    queries, _, _ = build_queries(clean_name, clean_city, stored_urls, clean_company)
+    queries, _, _ = build_queries(clean_name, query_city, stored_urls, clean_company)
+    queries_hide_street(queries, address)
     if not queries:
         fail("no_queries", "No safe name-and-city query could be built.")
     key = exa_key()
     if not key:
         emit_profile_unavailable("no_key")
     found, failed, succeeded, failure_reason = collect_profile_pages(queries, key)
-    if failed and succeeded == 0:
+    if failed and succeeded == 0 and not lookup_matched(lookup):
         emit_profile_unavailable(failure_reason)
     intake = {
         "name": clean_name,
-        "city": clean_city,
+        "city": query_city,
         "company": clean_company,
         "urls": stored_urls,
         "type": appt_type,
+        "address": address,
+        "phone": phone,
+        "email": email,
     }
     # Name hits are counted inside finish. A partial failure with no usable
     # name phrase is search_unavailable, and that path does not store a file.
-    preview_named = False
+    # A resident-lookup match still counts, ahead of those web pages.
+    preview_named = lookup_matched(lookup)
     for page in found:
         blob = f"{page.get('title') or ''} {page.get('text') or ''} {page.get('snippet') or ''}"
         if name_as_phrase(blob, clean_name):
@@ -3958,6 +4280,7 @@ def cmd_profile(positional: list[str], opts: dict[str, list[str]]) -> None:
         found=found,
         failed=failed,
         succeeded=succeeded,
+        lookup=lookup,
     )
     save_profile_doc(doc)
     audit("profile", record, {"queries": len(queries), "sources": len(doc.get("sources") or [])}, actor)
@@ -3984,7 +4307,10 @@ def profile_sources_html(sources: list[dict]) -> str:
     for src in sources:
         title = html_escape(src.get("title") or "")
         url = html_escape(src.get("url") or "")
-        rows.append(f"<li>[{src.get('n')}] {title} — {url}</li>")
+        excerpt = ""
+        if src.get("host") == "property-records" and src.get("excerpt"):
+            excerpt = " — " + html_escape(src.get("excerpt") or "")
+        rows.append(f"<li>[{src.get('n')}] {title} — {url}{excerpt}</li>")
     rows.append("</ul>")
     return "".join(rows)
 
@@ -4038,12 +4364,31 @@ def validate_profile_sections(raw: object, source_count: int) -> dict:
     return cleaned
 
 
+def lookup_banner_html(doc: dict) -> str:
+    lookup = doc.get("lookup") if isinstance(doc.get("lookup"), dict) else {}
+    if lookup.get("status") == "match":
+        return ""
+    say = lookup.get("say") if isinstance(lookup.get("say"), str) else ""
+    say = say.strip()
+    if not say:
+        return ""
+    return f'<p class="banner">{html_escape(say)}</p>'
+
+
+def assert_page_hides_secrets(html_out: str, intake: dict) -> None:
+    blob = html_out.casefold()
+    for secret in (intake.get("address"), intake.get("phone"), intake.get("email")):
+        if isinstance(secret, str) and secret.strip() and secret.casefold() in blob:
+            fail("street_in_pdf", "The street address was removed from the page.")
+
+
 def render_profile_document(doc: dict, sections: dict) -> tuple[str, int, bool]:
     folder = profile_folder(str(doc.get("record") or ""))
     template = PROFILE_TEMPLATE_PATH.read_text(encoding="utf-8")
     intake = doc.get("intake") or {}
     banner = doc.get("banner") or profile_banner(doc)
     note = doc.get("left_out_note") or ""
+    lookup_html = lookup_banner_html(doc)
     stated = section_html(sections["client_stated"])
     observations = section_html(sections["observations"])
     hypotheses = section_html(sections["hypotheses"])
@@ -4059,6 +4404,7 @@ def render_profile_document(doc: dict, sections: dict) -> tuple[str, int, bool]:
             "{{H_TYPE}}": html_escape((intake.get("type") or "buyer").capitalize()),
             "{{H_IDENTITY}}": html_escape((doc.get("identity") or {}).get("line") or ""),
             "{{H_BANNER}}": html_escape(banner_text),
+            "{{H_LOOKUP}}": lookup_html,
             "{{H_GUARD}}": html_escape(guardrail_const()),
             "{{H_LEFT}}": html_escape(note_text),
             "{{H_STATED}}": stated,
@@ -4068,6 +4414,7 @@ def render_profile_document(doc: dict, sections: dict) -> tuple[str, int, bool]:
             "{{H_SOURCES}}": sources_html,
         }
         html_out = fill_template(template, mapping)
+        assert_page_hides_secrets(html_out, intake)
         html_path.write_text(html_out, encoding="utf-8")
         if pdf_path.exists():
             pdf_path.unlink()

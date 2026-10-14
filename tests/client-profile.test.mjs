@@ -3979,6 +3979,8 @@ function loadReplay(name) {
   return JSON.parse(readFileSync(join(fixtures, "profile-replay", name), "utf8"));
 }
 
+const EXAMPLE_STREET = "400 Example Ave";
+
 function profileSections() {
   return {
     client_stated: [{ text: "David Marshall writes about listing meetings.", sources: [1] }],
@@ -4017,7 +4019,7 @@ test("profile keeps tonight's David Marshall pages from several sites", async ()
     const ctx = world();
     const exa = { EXA_API_KEY: "exa-test-key", EXA_API_BASE: `http://127.0.0.1:${port}` };
     const profiled = await runAsync(
-      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--type", "buyer", "--company", "AdvisorReach"],
+      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--type", "buyer", "--company", "AdvisorReach", "--address", EXAMPLE_STREET],
       ctx,
       exa,
     );
@@ -4048,7 +4050,7 @@ test("profile keeps tonight's David Marshall pages from several sites", async ()
     assert.doesNotMatch(profiled.stdout, /axios\.com|azleg\.gov|which profile|\bconfirmed\b/i);
     assert.match(profiled.payload.left_out_note, /other pages with this name were left out/);
     const again = await runAsync(
-      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--type", "buyer", "--company", "AdvisorReach"],
+      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--type", "buyer", "--company", "AdvisorReach", "--address", EXAMPLE_STREET],
       ctx,
       exa,
     );
@@ -4079,6 +4081,8 @@ test("an owner url keeps AdvisorReach journal pages and the query names the site
         "AdvisorReach",
         "--url",
         "https://advisorreach.ai/journal/listing-meetings",
+        "--address",
+        EXAMPLE_STREET,
       ],
       ctx,
       { EXA_API_KEY: "exa-test-key", EXA_API_BASE: `http://127.0.0.1:${port}` },
@@ -4102,7 +4106,7 @@ test("the owner's next text resolves 1 against the saved list and writes one pag
   try {
     const ctx = world();
     const first = await runAsync(
-      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--type", "buyer", "--company", "AdvisorReach"],
+      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--type", "buyer", "--company", "AdvisorReach", "--address", EXAMPLE_STREET],
       ctx,
       { EXA_API_KEY: "exa-test-key", EXA_API_BASE: `http://127.0.0.1:${port}` },
     );
@@ -4149,7 +4153,7 @@ test("NONE on the next text resolves against the saved list and does not write a
   try {
     const ctx = world();
     const first = await runAsync(
-      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach"],
+      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach", "--address", EXAMPLE_STREET],
       ctx,
       { EXA_API_KEY: "exa-test-key", EXA_API_BASE: `http://127.0.0.1:${port}` },
     );
@@ -4171,14 +4175,16 @@ test("NONE on the next text resolves against the saved list and does not write a
   }
 });
 
-test("a name without a profession or a city asks one question and does not search", async () => {
+test("a name without a street or a city asks one question and does not search", async () => {
   assert.match(skill, /search right away/);
   assert.match(skill, /one short question/);
   assert.match(skill, /Never ask more than one question up front/);
   assert.match(skill, /never ask for consent/);
-  assert.match(skill, /What does John do, and where does he live\?/);
-  assert.match(skill, /What does John do\?/);
-  assert.match(skill, /Where does John live\?/);
+  assert.match(skill, /What's the street address for John, and what city and state\?/);
+  assert.match(skill, /What's the street address for John\?/);
+  assert.match(skill, /What city and state\?/);
+  assert.match(skill, /What's the full name\?/);
+  assert.doesNotMatch(skill, /What does John do/);
   assert.match(script, /def intake_question/);
   assert.doesNotMatch(skill, /\bconfirmed\b/i);
   const hits = [];
@@ -4199,7 +4205,7 @@ test("a name without a profession or a city asks one question and does not searc
     assert.equal(asked.payload.ok, true, asked.stdout + asked.stderr);
     assert.equal(asked.payload.status, "needs_anchor");
     assert.equal(asked.payload.next, "stop");
-    assert.equal(asked.payload.say, "What does John do, and where does he live?");
+    assert.equal(asked.payload.say, "What's the street address for John, and what city and state?");
     assert.equal((asked.payload.say.match(/\?/g) || []).length, 1);
     assert.equal(asked.payload.query_count, 0);
     assert.equal(hits.length, 0);
@@ -4212,15 +4218,24 @@ test("a name without a profession or a city asks one question and does not searc
       exa,
     );
     assert.equal(cityOnly.payload.status, "needs_anchor", cityOnly.stdout);
-    assert.equal(cityOnly.payload.say, "What does John do?");
+    assert.equal(cityOnly.payload.say, "What's the street address for John?");
     assert.equal(cityOnly.payload.next, "stop");
+
+    const streetOnly = await runAsync(
+      ["profile", "--actor", "owner", "--name", "John Smith", "--address", EXAMPLE_STREET],
+      world(),
+      exa,
+    );
+    assert.equal(streetOnly.payload.say, "What city and state?", streetOnly.stdout);
+    assert.equal(streetOnly.payload.status, "needs_anchor");
+    assert.equal(streetOnly.stdout.includes(EXAMPLE_STREET), false);
 
     const workOnly = await runAsync(
       ["profile", "--actor", "owner", "--name", "John Smith", "--role", "broker"],
       world(),
       exa,
     );
-    assert.equal(workOnly.payload.say, "Where does John live?", workOnly.stdout);
+    assert.equal(workOnly.payload.say, "What's the street address for John, and what city and state?", workOnly.stdout);
     assert.equal(workOnly.payload.status, "needs_anchor");
 
     const linkOnly = await runAsync(
@@ -4228,17 +4243,30 @@ test("a name without a profession or a city asks one question and does not searc
       world(),
       exa,
     );
-    assert.equal(linkOnly.payload.say, "What does John do, and where does he live?");
+    assert.equal(linkOnly.payload.say, "What's the street address for John, and what city and state?");
+
+    const firstOnly = await runAsync(
+      ["profile", "--actor", "owner", "--name", "John", "--address", EXAMPLE_STREET, "--city", "Phoenix"],
+      world(),
+      exa,
+    );
+    assert.equal(firstOnly.payload.say, "What's the full name?", firstOnly.stdout);
+    assert.equal(firstOnly.payload.status, "needs_anchor");
     assert.equal(hits.length, 0);
+    assert.equal(existsSync(join(nameOnly.data, "profiles")), false);
 
     const ready = await runAsync(
-      ["profile", "--actor", "owner", "--name", "John Smith", "--role", "broker", "--city", "Phoenix"],
+      ["profile", "--actor", "owner", "--name", "John Smith", "--address", EXAMPLE_STREET, "--city", "Phoenix"],
       world(),
       exa,
     );
     assert.notEqual(ready.payload.status, "needs_anchor", ready.stdout + ready.stderr);
     assert.ok(hits.length > 0);
     assert.ok(ready.payload.query_count > 0);
+    assert.equal(ready.stdout.includes(EXAMPLE_STREET), false);
+    for (const query of ready.payload.queries || []) {
+      assert.equal(query.includes(EXAMPLE_STREET), false, query);
+    }
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -4250,7 +4278,7 @@ test("a made-up Avery Quindle profile is no_match only when every query succeeds
   try {
     const ctx = world();
     const profiled = await runAsync(
-      ["profile", "--actor", "owner", "--name", "Avery Quindle", "--city", "Flagstaff", "--type", "buyer", "--role", "broker"],
+      ["profile", "--actor", "owner", "--name", "Avery Quindle", "--city", "Flagstaff", "--type", "buyer", "--role", "broker", "--address", EXAMPLE_STREET],
       ctx,
       { EXA_API_KEY: "exa-test-key", EXA_API_BASE: `http://127.0.0.1:${port}` },
     );
@@ -4301,7 +4329,7 @@ test("profile auth and partial failures are search_unavailable, not no_match", a
       await new Promise((resolve) => server.close(resolve));
     }
   }
-  const nameArgs = ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach"];
+  const nameArgs = ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach", "--address", EXAMPLE_STREET];
   const denied = await once((_req, res) => {
     res.writeHead(401, { "Content-Type": "application/json" });
     res.end('{"error":"Unauthorized","results":[]}');
@@ -4336,7 +4364,7 @@ test("profile auth and partial failures are search_unavailable, not no_match", a
     }
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end('{"results":[]}');
-  }, ["profile", "--actor", "owner", "--name", "Avery Quindle", "--city", "Flagstaff", "--role", "broker"]);
+  }, ["profile", "--actor", "owner", "--name", "Avery Quindle", "--city", "Flagstaff", "--role", "broker", "--address", EXAMPLE_STREET]);
   assert.equal(emptyFail.profiled.payload.status, "search_unavailable", emptyFail.profiled.stdout);
   assert.notEqual(emptyFail.profiled.payload.status, "no_match");
   assert.equal(existsSync(join(emptyFail.ctx.data, "profiles")), false);
@@ -4364,7 +4392,7 @@ test("profile name phrase and company spacing stay strict", async () => {
     try {
       const ctx = world();
       return await runAsync(
-        ["profile", "--actor", "owner", "--name", name, "--city", city, "--company", company],
+        ["profile", "--actor", "owner", "--name", name, "--city", city, "--company", company, "--address", EXAMPLE_STREET],
         ctx,
         { EXA_API_KEY: "exa-test-key", EXA_API_BASE: `http://127.0.0.1:${port}` },
       );
@@ -4422,7 +4450,7 @@ test("two LinkedIn profiles ask, and a reply picks one person", async () => {
   try {
     const ctx = world();
     const profiled = await runAsync(
-      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach"],
+      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach", "--address", EXAMPLE_STREET],
       ctx,
       { EXA_API_KEY: "exa-test-key", EXA_API_BASE: `http://127.0.0.1:${port}` },
     );
@@ -4457,7 +4485,7 @@ test("write keeps the four sections, rejects a bad section, and does not search"
     config.exa_base_url = `http://127.0.0.1:${port}`;
     writeFileSync(join(ctx.data, "config.json"), JSON.stringify(config));
     const profiled = await runAsync(
-      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach"],
+      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach", "--address", EXAMPLE_STREET],
       ctx,
       pluginChildEnv("profile", ctx, { key: "exa-test-key", base: `http://127.0.0.1:${port}` }),
     );
@@ -4533,7 +4561,7 @@ test("profile uses the plugin env only for profile, and a config key 401 is unav
   try {
     const ctx = world();
     const ready = await runAsync(
-      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach"],
+      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach", "--address", EXAMPLE_STREET],
       ctx,
       pluginChildEnv("profile", ctx, { key: "exa-test-key", base: `http://127.0.0.1:${port}` }),
     );
@@ -4553,7 +4581,7 @@ test("profile uses the plugin env only for profile, and a config key 401 is unav
     writeFileSync(join(bare.data, "config.json"), JSON.stringify(config));
     try {
       const missed = await runAsync(
-        ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach"],
+        ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach", "--address", EXAMPLE_STREET],
         bare,
         pluginChildEnv("write", bare),
       );
@@ -4566,13 +4594,313 @@ test("profile uses the plugin env only for profile, and a config key 401 is unav
       await new Promise((resolve) => denied.close(resolve));
     }
     const quiet = await runAsync(
-      ["profile", "--actor", "owner", "--name", "Riley Example", "--city", "Austin", "--company", "Example Co"],
+      ["profile", "--actor", "owner", "--name", "Riley Example", "--city", "Austin", "--company", "Example Co", "--address", EXAMPLE_STREET],
       world(),
       pluginChildEnv("write", world()),
     );
     assert.equal(quiet.payload.status, "search_unavailable");
     assert.equal(quiet.payload.reason, "no_key");
     assert.notEqual(quiet.payload.say, "couldn't find");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+const LOOKUP_SAY = "People and property lookup isn't set up yet, so this brief uses public web pages only.";
+const LOOKUP_FIXTURE = join(fixtures, "identity-lookup", "resident-match.json");
+
+function hideStreet(payload, stdout) {
+  const blob = `${stdout}\n${JSON.stringify(payload.queries || [])}\n${JSON.stringify(payload.lookup || {})}`;
+  assert.equal(blob.includes(EXAMPLE_STREET), false, blob);
+  assert.doesNotMatch(blob, /\bconfirmed\b/i);
+}
+
+test("a resident lookup with no key says so and still searches", async () => {
+  assert.match(skill, /provider_unavailable/);
+  assert.match(skill, new RegExp(LOOKUP_SAY.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(script, /leadconnector|followupboss|peopledatalabs|fullcontact/i);
+  const pages = [
+    {
+      url: "https://news.example.com/dana-phoenix",
+      title: "Dana Whitfield",
+      text: "Dana Whitfield writes in Phoenix.",
+    },
+  ];
+  const { server } = replayServer(pages);
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const phone = "555-010-0199";
+    const email = "dana.whitfield@example.com";
+    const profiled = await runAsync(
+      [
+        "profile",
+        "--actor",
+        "owner",
+        "--name",
+        "Dana Whitfield",
+        "--address",
+        EXAMPLE_STREET,
+        "--city",
+        `${EXAMPLE_STREET}, Phoenix`,
+        "--phone",
+        phone,
+        "--email",
+        email,
+      ],
+      ctx,
+      { EXA_API_KEY: "exa-test-key", EXA_API_BASE: `http://127.0.0.1:${port}` },
+    );
+    assert.equal(profiled.payload.status, "ready", profiled.stdout + profiled.stderr);
+    assert.equal(profiled.payload.lookup.status, "provider_unavailable");
+    assert.equal(profiled.payload.lookup.reason, "no_key");
+    assert.equal(profiled.payload.lookup.say, LOOKUP_SAY);
+    assert.equal(profiled.payload.lookup.source, undefined);
+    assert.ok(profiled.payload.query_count > 0);
+    hideStreet(profiled.payload, profiled.stdout);
+    assert.equal(profiled.stdout.includes(phone), false);
+    assert.equal(profiled.stdout.includes(email), false);
+    for (const query of profiled.payload.queries) {
+      assert.match(query, /Phoenix/);
+      assert.equal(query.includes(EXAMPLE_STREET), false, query);
+    }
+    const stored = JSON.parse(readFileSync(join(ctx.data, "profiles", profiled.payload.record, "profile.json"), "utf8"));
+    assert.equal(stored.intake.address, EXAMPLE_STREET);
+    assert.equal(stored.intake.phone, phone);
+    assert.equal(stored.intake.email, email);
+    assert.equal(stored.intake.city.includes(EXAMPLE_STREET), false);
+    const sectionsPath = join(ctx.dir, "sections.json");
+    writeFileSync(
+      sectionsPath,
+      JSON.stringify({
+        client_stated: [{ text: "Nothing public in his own words.", sources: [] }],
+        observations: [{ text: "He writes in Phoenix.", sources: [1] }],
+        hypotheses: [{ text: "He wants a short meeting.", sources: [1] }],
+        recommendations: [{ text: "Open with one question about the week.", sources: [1] }],
+      }),
+    );
+    const bin = existsSync("/tmp/weasyprint") ? "/tmp/weasyprint" : weasyBin();
+    assert.ok(bin, "weasyprint is required for the one-page check");
+    const wrote = run(
+      ["write", profiled.payload.record, "--sections", sectionsPath, "--actor", "owner"],
+      ctx,
+      weasyEnv(bin),
+    );
+    assert.equal(wrote.payload.ok, true, wrote.stdout + wrote.stderr);
+    assert.equal(wrote.payload.pages, 1);
+    const html = readFileSync(join(ctx.data, "profiles", profiled.payload.record, "profile.html"), "utf8");
+    assert.match(html, /People and property lookup isn't set up yet/);
+    assert.equal(html.includes(EXAMPLE_STREET), false);
+    assert.equal(html.includes(phone), false);
+    assert.equal(html.includes(email), false);
+    assert.doesNotMatch(html, /\bconfirmed\b/i);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("a fixture resident lookup anchors the city ahead of the company", async () => {
+  const pages = [
+    {
+      url: "https://news.example.com/dana-scottsdale",
+      title: "Dana Whitfield",
+      text: "Dana Whitfield writes about kitchens in Scottsdale.",
+    },
+    {
+      url: "https://news.example.com/dana-dallas",
+      title: "Dana Whitfield",
+      text: "Dana Whitfield teaches in Dallas for Other Co.",
+    },
+  ];
+  const { server } = replayServer(pages);
+  const port = await listen(server);
+  const env = {
+    EXA_API_KEY: "exa-test-key",
+    EXA_API_BASE: `http://127.0.0.1:${port}`,
+    IDENTITY_LOOKUP_KEY: "lookup-test-key",
+    IDENTITY_LOOKUP_FIXTURE: LOOKUP_FIXTURE,
+  };
+  try {
+    const ctx = world();
+    const profiled = await runAsync(
+      [
+        "profile",
+        "--actor",
+        "owner",
+        "--name",
+        "Dana Whitfield",
+        "--address",
+        EXAMPLE_STREET,
+        "--city",
+        "Scottsdale",
+        "--company",
+        "Other Co",
+      ],
+      ctx,
+      env,
+    );
+    assert.equal(profiled.payload.status, "ready", profiled.stdout + profiled.stderr);
+    assert.equal(profiled.payload.lookup.status, "match");
+    assert.equal(profiled.payload.sources[0].n, 1);
+    assert.equal(profiled.payload.sources[0].title, "Example Property Records");
+    assert.equal(profiled.payload.sources[0].host, "property-records");
+    const excerpt = profiled.payload.lookup.source.excerpt;
+    assert.match(excerpt, /Resident Dana Whitfield/);
+    assert.match(excerpt, /Occupancy owner/);
+    assert.match(excerpt, /Tenure 6 years/);
+    assert.match(excerpt, /Household size 2/);
+    assert.match(excerpt, /Purchase date 2019-04-01/);
+    assert.match(excerpt, /North Scottsdale/);
+    assert.equal(excerpt.includes(EXAMPLE_STREET), false);
+    const urls = profiled.payload.sources.map((item) => item.url);
+    assert.equal(urls.includes("https://news.example.com/dana-scottsdale"), true, JSON.stringify(urls));
+    assert.equal(urls.includes("https://news.example.com/dana-dallas"), false, JSON.stringify(urls));
+    assert.equal(profiled.payload.identity.level, "High");
+    assert.equal(profiled.payload.identity.line, "High.");
+    hideStreet(profiled.payload, profiled.stdout);
+    assert.match(profiled.payload.evidence, /Example Property Records/);
+    const sectionsPath = join(ctx.dir, "sections.json");
+    writeFileSync(
+      sectionsPath,
+      JSON.stringify({
+        client_stated: [{ text: "Nothing public in his own words.", sources: [] }],
+        observations: [{ text: "She writes about kitchens in Scottsdale.", sources: [2] }],
+        hypotheses: [{ text: "She has been in that city for years.", sources: [1] }],
+        recommendations: [{ text: "Open with the kitchen work.", sources: [2] }],
+      }),
+    );
+    const bin = existsSync("/tmp/weasyprint") ? "/tmp/weasyprint" : weasyBin();
+    assert.ok(bin, "weasyprint is required for the one-page check");
+    const wrote = run(["write", profiled.payload.record, "--sections", sectionsPath, "--actor", "owner"], ctx, weasyEnv(bin));
+    assert.equal(wrote.payload.ok, true, wrote.stdout + wrote.stderr);
+    assert.equal(wrote.payload.pages, 1);
+    const html = readFileSync(join(ctx.data, "profiles", profiled.payload.record, "profile.html"), "utf8");
+    assert.match(html, /Example Property Records/);
+    assert.match(html, /North Scottsdale/);
+    assert.match(html, /Tenure 6 years/);
+    assert.equal(html.includes(EXAMPLE_STREET), false);
+    assert.doesNotMatch(html, /\bconfirmed\b/i);
+
+    const only = await runAsync(
+      [
+        "profile",
+        "--actor",
+        "owner",
+        "--name",
+        "Dana Whitfield",
+        "--address",
+        EXAMPLE_STREET,
+        "--city",
+        "Scottsdale",
+        "--company",
+        "Other Co",
+      ],
+      world(),
+      { ...env, EXA_API_BASE: `http://127.0.0.1:${port}` },
+    );
+    const quiet = createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end('{"results":[]}');
+    });
+    const quietPort = await listen(quiet);
+    try {
+      const missed = await runAsync(
+        [
+          "profile",
+          "--actor",
+          "owner",
+          "--name",
+          "Dana Whitfield",
+          "--address",
+          EXAMPLE_STREET,
+          "--city",
+          "Scottsdale",
+          "--company",
+          "Other Co",
+        ],
+        world(),
+        { ...env, EXA_API_BASE: `http://127.0.0.1:${quietPort}` },
+      );
+      assert.equal(missed.payload.status, "ready", missed.stdout + missed.stderr);
+      assert.equal(missed.payload.sources.length, 1);
+      assert.equal(missed.payload.identity.level, "Medium");
+      assert.match(missed.payload.lookup.source.excerpt, /Occupancy owner/);
+      assert.notEqual(missed.payload.say, "couldn't find");
+      const other = await runAsync(
+        [
+          "profile",
+          "--actor",
+          "owner",
+          "--name",
+          "Casey Example",
+          "--address",
+          EXAMPLE_STREET,
+          "--city",
+          "Scottsdale",
+          "--company",
+          "Other Co",
+        ],
+        world(),
+        { ...env, EXA_API_BASE: `http://127.0.0.1:${quietPort}` },
+      );
+      assert.equal(other.payload.lookup.status, "no_match", other.stdout);
+      assert.equal(other.payload.status, "no_match");
+      assert.equal(other.payload.say, "couldn't find");
+      assert.equal(other.payload.lookup.source, undefined);
+      assert.equal(other.stdout.includes("Dana Whitfield"), false);
+      assert.equal(other.stdout.includes("Example Property Records"), false);
+      assert.equal(other.stdout.includes("Occupancy owner"), false);
+    } finally {
+      await new Promise((resolve) => quiet.close(resolve));
+    }
+    assert.equal(only.payload.record, profiled.payload.record);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("a lookup key with no provider does not invent a resident", async () => {
+  const pages = [
+    {
+      url: "https://news.example.com/dana-co",
+      title: "Dana Whitfield",
+      text: "Dana Whitfield leads Example Co in Scottsdale.",
+    },
+  ];
+  const { server } = replayServer(pages);
+  const port = await listen(server);
+  try {
+    const profiled = await runAsync(
+      [
+        "profile",
+        "--actor",
+        "owner",
+        "--name",
+        "Dana Whitfield",
+        "--address",
+        EXAMPLE_STREET,
+        "--city",
+        "Scottsdale",
+        "--company",
+        "Example Co",
+      ],
+      world(),
+      {
+        EXA_API_KEY: "exa-test-key",
+        EXA_API_BASE: `http://127.0.0.1:${port}`,
+        IDENTITY_LOOKUP_KEY: "lookup-test-key",
+      },
+    );
+    assert.equal(profiled.payload.status, "ready", profiled.stdout + profiled.stderr);
+    assert.equal(profiled.payload.lookup.status, "provider_unavailable");
+    assert.equal(profiled.payload.lookup.reason, "no_provider");
+    assert.equal(profiled.payload.lookup.say, LOOKUP_SAY);
+    assert.equal(profiled.payload.lookup.source, undefined);
+    assert.equal(profiled.stdout.includes("Example Property Records"), false);
+    assert.equal(profiled.stdout.includes("Occupancy owner"), false);
+    assert.equal(profiled.stdout.includes("Household size"), false);
+    hideStreet(profiled.payload, profiled.stdout);
+    assert.equal(profiled.payload.sources[0].host, "news.example.com");
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

@@ -5,7 +5,7 @@ description: "Use when the owner asks to profile, brief, or prep for a buyer/lis
 
 # Client profile (appointment brief)
 
-Build a one-page cited communication brief for one named person the owner is about to meet. Every new person starts with a fresh intake. The inputs are the name, a profession or company, the city, and a link if the owner has one. Use whatever the owner texts. If the name, a profession or company, and the city are all there, search right away. If something is missing, ask one short question for just that missing piece, then stop. Never ask more than one question up front, and never ask for consent. The brief is a working hypothesis. Verify it before use.
+Build a one-page cited communication brief for one named person the owner is about to meet. Every new person starts with a fresh intake. The required inputs are the full name, the street address, and the city or state. Optional: a profession or company, social links, a phone, an email, and buyer or listing. Use whatever the owner texts. If the full name, the street, and the city are all there, search right away. If something required is missing, ask one short question for just the missing parts, then stop. Never ask more than one question up front, never ask for an optional piece, and never ask for consent. The brief is a working hypothesis. Verify it before use.
 
 The flow is profile, then any question to the owner, then write. The record key comes from the name. Code runs the search and the identity decision. You write four sections, then call write.
 
@@ -26,7 +26,6 @@ Stop, in one sentence, and do not call `cp.py` except `status` when you are unsu
 - The subject appears to be a minor. Stop. Do not research and do not write a brief.
 - Human Design, birth date, birthday, "look up her birthday for HD", or any `cp.py hd` style request. There is no HD command. Refuse.
 - CRM save or remove, GHL write, or FUB write. Do not call those tools from this skill.
-- A street address. Never ask for one. Never put one in a query.
 - The skill is off: `/opt/data/client-profile/config.json` is missing or `"enabled"` is false. Tell the owner the skill is off. The flag is that file, not an environment variable.
 
 ## Enable flag and install
@@ -47,7 +46,7 @@ The terminal and execute_code are refused on texts. Run the two calls below with
 
 | Step | render_file call |
 |---|---|
-| Profile | `op: profile`, `cp: {name, city?, type?, company?, role?, urls?, reply?}`. Pass every piece the owner already sent. |
+| Profile | `op: profile`, `cp: {name, address?, city?, type?, company?, role?, urls?, phone?, email?, reply?}`. Pass every piece the owner already sent. |
 | Reply | `op: profile`, `cp: {reply: "1"}` or `{reply: "NONE"}`. No client id. The saved list is on the record. |
 | Write | `op: write`, `cp: {record, sections}` |
 
@@ -61,21 +60,22 @@ After write, reply to the owner with exactly `sms_text` (it already contains the
 
 Run `python3 /opt/data/skills/client-profile/scripts/cp.py`. Every command prints one JSON object `{"ok": true|false, ...}`.
 
-Never reuse a prior client record unless the owner explicitly names that same client. A new person is a new `cp.py profile --name`. The same name, city, and company reuse a stored search for 24 hours so a reply does not search again. A matching `--name` is that person. A later message that names a different person is a new profile.
+Never reuse a prior client record unless the owner explicitly names that same client. A new person is a new `cp.py profile --name`. The same name, street, city, and company reuse a stored search for 24 hours so a reply does not search again. The street is hashed into the record key and is not written out. A matching `--name` is that person. A later message that names a different person is a new profile.
 
-1. **Profile.** `cp.py profile --name "..." --city "..." --type buyer|listing|other`  
-   Pass `--company` or `--role` for the profession or company the owner gave, and repeat `--url` for every link the owner gave. Use whatever they texted. Do not drop a piece, and do not ask for a piece they already gave. There is no `--address` flag. Do not pass a street, ZIP, phone, email, or birth date.  
-   Name, plus a profession or company, plus a city, is enough. Call profile in that same turn and search right away. Do not ask a question first.  
-   The key is `EXA_API_KEY`, then `exa_api_key` in config.json. The API root is `EXA_API_BASE`, then `EXA_BASE_URL`, then `exa_base_url` in config.json, then `https://api.exa.ai`.  
+1. **Profile.** `cp.py profile --name "..." --address "..." --city "..." --type buyer|listing|other`  
+   Required: full name, street (`--address`), and city or state (`--city`). Optional: `--company` or `--role`, repeat `--url` for every link, `--phone`, and `--email`. Use whatever they texted. Do not drop a piece, and do not ask for a piece they already gave. Do not ask for an optional piece. Do not pass a ZIP or a birth date.  
+   Full name, street, and city are enough. Call profile in that same turn and search right away. Do not ask a question first.  
+   The resident lookup runs before the web anchors. It is provider-neutral. No vendor is chosen and no lookup key is configured. When no lookup key is set, `lookup.status` is `provider_unavailable` and the brief says `People and property lookup isn't set up yet, so this brief uses public web pages only.` The web search still runs. Never invent a resident, an owner, a tenure, a household, or a purchase date. Cite every lookup fact by its source number. Neighborhood, city, and tenure may appear. Never put the street address in a web query or in the PDF.  
+   The search key is `EXA_API_KEY`, then `exa_api_key` in config.json. The API root is `EXA_API_BASE`, then `EXA_BASE_URL`, then `exa_base_url` in config.json, then `https://api.exa.ai`.  
    Profile returns exactly one status:
-   - `ready`. No `say`. The identity line is High or Medium. Call write. One LinkedIn profile is already selected. The pending prompt is saved on the record (`Found 1 <name> in <city>: 1) …. Reply 1 or NONE.`). You may write now. If the owner later replies, call profile with that reply and no client id.
+   - `ready`. No `say`. The identity line is High or Medium. Call write. One LinkedIn profile is already selected. The pending prompt is saved on the record (`Found 1 <name> in <city>: 1) …. Reply 1 or NONE.`). You may write now. If the owner later replies, call profile with that reply and no client id. A lookup match is source 1 when it returned a resident.
    - `needs_disambiguation`. Send `say` verbatim and stop. Example shape: `I found 2 <name>s: 1) … 2) … Reply 1, 2 or NONE.` The next text calls `cp.py profile --reply 1` (or the number, or `NONE`). Do not ask which profile the number means.
    - `needs_anchor`. Send `say` and stop. That sentence is the only question. Do not add a second question, and never ask for consent. Do not write.  
-     Before a search, `say` asks for the missing piece only. `John Smith` with nothing else returns `What does John do, and where does he live?` A name and a city returns `What does John do?` A name and a profession or company returns `Where does John live?` A link does not replace the missing piece. The owner's next text fills it. Call profile again with the name plus what they just sent.  
-     After a search, identity confidence is Low. `say` means the pages do not tie to that profession, company, or city. It asks for a profile link, a LinkedIn or company site. Send that sentence.
-   - `no_match`. Tell the owner exactly `couldn't find` and stop. That sentence is only when every query succeeded and no page has the full name as a phrase. A failed search is never `couldn't find`.
+     Before a search, `say` asks for the missing required parts only. `John Smith` with nothing else returns `What's the street address for John, and what city and state?` A name and a city returns `What's the street address for John?` A name and a street returns `What city and state?` A single name returns `What's the full name?` A profession, a company, or a link does not replace the street or the city. The owner's next text fills the missing part. Call profile again with the full name, the street, and the city.  
+     After a search, identity confidence is Low. `say` means the pages do not tie to that company or city. It asks for a profile link, a LinkedIn or company site. Send that sentence.
+   - `no_match`. Tell the owner exactly `couldn't find` and stop. That sentence is only when every query succeeded and no page has the full name as a phrase, and the resident lookup did not return this person. A failed search is never `couldn't find`.
    - `search_unavailable`. Say `Search isn't working on my side right now, so I didn't build the profile.` The `reason` is `no_key`, `auth`, `unreachable`, `timeout`, or `rate_limited`. Do not write. A failed search is not stored.
-   A page is kept only when the full name appears as a phrase, and one anchor matches: a link the owner gave, the company name ignoring case and spacing, or the city when no company was given. One LinkedIn profile is one person, including posts from that same handle. Two LinkedIn profiles ask the owner. Pages that match the name and fail the anchor are only counted: `N other pages with this name were left out.` Do not name those other pages.
+   A page is kept only when the full name appears as a phrase, and one anchor matches. A resident-lookup match anchors a page in that city or neighborhood ahead of the company. Otherwise the anchor is a link the owner gave, the company name ignoring case and spacing, or the city when no company was given. A namesake in another city stays out. One LinkedIn profile is one person, including posts from that same handle. Two LinkedIn profiles ask the owner. Pages that match the name and fail the anchor are only counted: `N other pages with this name were left out.` Do not name those other pages.
 2. **Reply.** `cp.py profile --reply 1` or `cp.py profile --reply NONE` or `cp.py profile 1`. No client id when one list is waiting. `1` sets the identity line to Owner-picked and returns `next: write`. Then write the one-page PDF in that same turn. `NONE` returns `next: stop`. Do not write.
 3. **Write.** `cp.py write <record> --sections sections.json`  
    The file has only `client_stated`, `observations`, `hypotheses`, and `recommendations`. Each is 1 to 3 items of `{text, sources: [n]}` where `n` is a source number from profile. `client_stated` may be the exact sentence `Nothing public in his own words.` with an empty sources list. Do not write the header, the identity line, the banner, the guardrail, or the source list. Code writes those. The one-page trim never cuts the four sections.  
@@ -137,8 +137,8 @@ Purge, `wrong-identity`, and `delete` still run when `enabled` is false, so unin
 
 Do not write client facts, excerpts, or brief text to `MEMORY.md` or `USER.md`. The client directory under the client-profile root is the only store.
 
-Do not call GHL or FUB write tools. Do not call people-data vendors. Do not add an API key.
+Do not call GHL or FUB write tools. Do not call a people-data vendor yourself, and do not add a lookup key. The script's resident lookup is the only one, and it stays unwired until a provider is chosen.
 
 ## Audit
 
-The script appends `{ts, action, client_id, counts, actor}` to the audit log. Do not copy names, addresses, or excerpts into chat logs you invent, and do not echo an address the owner pasted.
+The script appends `{ts, action, client_id, counts, actor}` to the audit log. Do not copy names, addresses, or excerpts into chat logs you invent, and do not echo a street address the owner pasted. Neighborhood, city, and tenure are fine. The street stays out of the PDF and out of every web query.

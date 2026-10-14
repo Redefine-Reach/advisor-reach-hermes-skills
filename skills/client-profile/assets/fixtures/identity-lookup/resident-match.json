@@ -1,0 +1,14 @@
+{
+  "status": "match",
+  "source": {"name": "Example Property Records", "id": "fixture-resident-1"},
+  "resident": {"name": "Dana Whitfield", "match": "resident"},
+  "occupancy": "owner",
+  "tenure_years": 6,
+  "household": 2,
+  "property": {
+    "purchase_date": "2019-04-01",
+    "tenure": "6 years",
+    "neighborhood": "North Scottsdale",
+    "city": "Scottsdale, AZ"
+  }
+}
