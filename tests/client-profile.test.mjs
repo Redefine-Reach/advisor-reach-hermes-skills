@@ -629,10 +629,10 @@ test("case 3 thin evidence keeps disc at low", () => {
     evidence: [
       {
         url: "https://example.com/none",
-        title: "No public profile",
-        excerpt: "No professional profile, interview, or company page matched this name in the city.",
-        origin: "manual",
-        query: "manual",
+        title: "Dana Whitfield",
+        excerpt: "Dana Whitfield has no professional profile, interview, or company page in this city.",
+        origin: "web",
+        query: '"Dana Whitfield" "Scottsdale"',
         candidate: 1,
       },
     ],
@@ -1471,7 +1471,10 @@ test("end-to-end fixture covers intake, identity, cited brief, pdf, summary, pur
   assert.equal(stored.type, input.type);
   const early = run(["identity", "candidates", id], ctx);
   assert.equal(early.payload.ok, true, early.stdout);
+  assert.equal(early.payload.status, "couldnt_find");
+  assert.equal(early.payload.message, "couldn't find");
   assert.deepEqual(early.payload.candidates, []);
+  assert.notDeepEqual(early.payload, { ok: true, candidates: [] });
   const unconfirmed = run(
     ["identity", "confirm", id, "--actor", "owner", "--candidate", String(input.candidate)],
     ctx,
@@ -1575,13 +1578,14 @@ test("owner paste after NONE drops web candidates and becomes candidate 1", () =
   const manual = run(["evidence", "add", id, "--url", "https://example.com/avery-example-bio", "--title", "Bio", "--excerpt", "Project engineer who likes the full set of numbers.", "--origin", "manual", "--query", "owner paste", "--candidate", "4"], ctx).payload;
   assert.equal(manual.ok, true, JSON.stringify(manual));
   assert.equal(manual.candidate, 1);
-  const cands = run(["identity", "candidates", id], ctx).payload.candidates;
-  assert.equal(cands.length, 1, JSON.stringify(cands));
-  assert.equal(cands[0].n, 1);
-  assert.equal(run(["identity", "confirm", id, "--candidate", "1"], ctx).payload.ok, true);
+  const listed = run(["identity", "candidates", id], ctx).payload;
+  assert.equal(listed.status, "couldnt_find");
+  assert.equal(listed.message, "couldn't find");
+  assert.deepEqual(listed.candidates, []);
+  assert.notDeepEqual(listed, { ok: true, candidates: [] });
 });
 
-test("NONE then pasted notes are candidate 1, and reply 1 renders the brief pdf", () => {
+test("NONE then pasted notes stay candidate 1 and do not render a brief", () => {
   const ctx = world();
   const intake = run(["intake", "--name", "Avery Example", "--city", "Flagstaff", "--type", "buyer"], ctx);
   assert.equal(intake.payload.ok, true, intake.stdout);
@@ -1626,9 +1630,10 @@ test("NONE then pasted notes are candidate 1, and reply 1 renders the brief pdf"
   ).payload;
   assert.equal(manual.ok, true, JSON.stringify(manual));
   assert.equal(manual.candidate, 1);
-  const cands = run(["identity", "candidates", id], ctx).payload.candidates;
-  assert.equal(cands.length, 1, JSON.stringify(cands));
-  assert.equal(cands[0].n, 1);
+  const listed = run(["identity", "candidates", id], ctx).payload;
+  assert.equal(listed.status, "couldnt_find");
+  assert.equal(listed.message, "couldn't find");
+  assert.deepEqual(listed.candidates, []);
   const stale = run(["identity", "confirm", id, "--candidate", "2"], ctx);
   assert.equal(stale.payload.ok, false, stale.stdout);
   assert.equal(stale.payload.error, "unknown_candidate");
@@ -1638,22 +1643,13 @@ test("NONE then pasted notes are candidate 1, and reply 1 renders the brief pdf"
   assert.deepEqual(confirmed.payload.evidence_ids, [manual.evidence_id]);
   const brief = loadGood([manual.evidence_id]);
   const checked = validate(ctx, id, brief);
-  assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
-  const converter = join(ctx.dir, "weasyprint");
-  writeFileSync(
-    converter,
-    "#!/usr/bin/env python3\nimport pathlib, sys\nhtml = pathlib.Path(sys.argv[1]).read_bytes()\npathlib.Path(sys.argv[2]).write_bytes(b'%PDF-1.4\\n' + html + b'\\n%%EOF\\n')\n",
-  );
-  chmodSync(converter, 0o755);
-  const rendered = run(["brief", "render", id, "--actor", "owner"], ctx, { WEASYPRINT_BIN: converter });
-  assert.equal(rendered.payload.ok, true, rendered.stdout + rendered.stderr);
-  assert.equal(rendered.payload.pdf, true, JSON.stringify(rendered.payload));
-  const pdf = readFileSync(join(ctx.data, id, "brief.pdf"));
-  assert.equal(pdf.subarray(0, 5).toString(), "%PDF-");
-  const pdfText = pdf.toString("utf8");
-  assert.equal(pdfText.includes(manual.evidence_id), true);
-  assert.equal(pdfText.includes("Avery Example"), true);
-  assert.equal(pdfText.includes("Flagstaff"), true);
+  assert.equal(checked.payload.ok, false, JSON.stringify(checked.payload));
+  assert.ok(codes(checked.payload).includes("notes_only"));
+  assert.match(JSON.stringify(checked.payload), /cannot replace a search/);
+  assert.equal(existsSync(join(ctx.data, id, "brief.json")), false);
+  const rendered = run(["brief", "render", id, "--actor", "owner"], ctx);
+  assert.equal(rendered.payload.ok, false, rendered.stdout);
+  assert.equal(existsSync(join(ctx.data, id, "brief.pdf")), false);
 });
 
 test("owner paste never joins a web candidate", () => {
@@ -2649,5 +2645,256 @@ test("a dense brief renders as one PDF page with the four sections and sources",
   } else {
     assert.equal(rendered.payload.pdf, false);
     assert.equal(rendered.payload.pdf_skipped, "weasyprint_unavailable");
+  }
+});
+
+test("a new profile request starts a fresh intake and does not reuse another client", () => {
+  assert.match(skill, /fresh intake/);
+  assert.match(skill, /Never reuse a prior client record unless the owner explicitly names that same client/);
+  assert.match(skill, /intake, then search, then identity, then render/);
+  assert.match(skill, /never replace a search/);
+  assert.match(skill, /There is no consent step/);
+  const ctx = world();
+  const first = run(
+    ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer", "--company", "Compass"],
+    ctx,
+  ).payload;
+  const second = run(
+    [
+      "intake",
+      "--actor",
+      "owner",
+      "--name",
+      "Riley Example",
+      "--city",
+      "Austin",
+      "--type",
+      "buyer",
+      "--company",
+      "AdvisorReach",
+      "--url",
+      "https://example.com/riley-example",
+    ],
+    ctx,
+  ).payload;
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.notEqual(first.client_id, second.client_id);
+  const older = JSON.parse(readFileSync(join(ctx.data, first.client_id, "intake.json"), "utf8"));
+  const newer = JSON.parse(readFileSync(join(ctx.data, second.client_id, "intake.json"), "utf8"));
+  assert.equal(older.name, "Dana Whitfield");
+  assert.equal(older.company, "Compass");
+  assert.equal(newer.name, "Riley Example");
+  assert.equal(newer.company, "AdvisorReach");
+  assert.deepEqual(newer.urls, ["https://example.com/riley-example"]);
+});
+
+test("identity with no search results is couldnt_find, not an empty success", () => {
+  const ctx = world();
+  const id = run(
+    ["intake", "--actor", "owner", "--name", "Riley Example", "--city", "Austin", "--type", "buyer"],
+    ctx,
+  ).payload.client_id;
+  const early = run(["identity", "candidates", id], ctx).payload;
+  assert.equal(early.ok, true);
+  assert.equal(early.status, "couldnt_find");
+  assert.equal(early.message, "couldn't find");
+  assert.deepEqual(early.candidates, []);
+  assert.notDeepEqual(early, { ok: true, candidates: [] });
+  const searched = run(["search", id, "--actor", "owner"], ctx).payload;
+  assert.equal(searched.ok, false);
+  assert.equal(searched.error, "search_unavailable");
+  const after = run(["identity", "candidates", id], ctx).payload;
+  assert.equal(after.status, "couldnt_find");
+  assert.equal(after.message, "couldn't find");
+  assert.deepEqual(after.candidates, []);
+  assert.notDeepEqual(after, { ok: true, candidates: [] });
+});
+
+test("a refused search does not render a brief from owner notes", () => {
+  const ctx = world();
+  const id = run(
+    ["intake", "--actor", "owner", "--name", "Riley Example", "--city", "Austin", "--type", "buyer", "--company", "AdvisorReach"],
+    ctx,
+  ).payload.client_id;
+  const searched = run(["search", id, "--actor", "owner"], ctx);
+  assert.equal(searched.payload.error, "search_unavailable");
+  assert.equal(
+    searched.payload.message,
+    "Search is unavailable. No Exa key is set, so this brief was not filled from a multi-source search.",
+  );
+  const noteId = addEvidence(ctx, id, {
+    url: "https://example.com/riley-notes",
+    title: "Owner notes",
+    excerpt: "Riley Example prefers a short agenda.",
+    origin: "manual",
+    query: "owner paste",
+    candidate: 1,
+  });
+  confirm(ctx, id, 1);
+  const brief = loadGood([noteId], (next) => {
+    next.snapshot = "Search is unavailable. No Exa key is set, so this brief was not filled from a multi-source search.";
+  });
+  const checked = validate(ctx, id, brief);
+  assert.equal(checked.payload.ok, false, JSON.stringify(checked.payload));
+  assert.ok(codes(checked.payload).includes("search_unavailable"));
+  assert.match(JSON.stringify(checked.payload), /Search is unavailable\. No Exa key is set/);
+  assert.equal(existsSync(join(ctx.data, id, "brief.json")), false);
+  const rendered = run(["brief", "render", id, "--actor", "owner"], ctx);
+  assert.equal(rendered.payload.ok, false, rendered.stdout);
+  assert.equal(existsSync(join(ctx.data, id, "brief.pdf")), false);
+});
+
+test("a search error or zero results does not render a brief from owner notes", async () => {
+  const refused = createServer((req, res) => {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end('{"error":"down"}');
+  });
+  const empty = createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end('{"results":[]}');
+  });
+  const errorPort = await listen(refused);
+  const emptyPort = await listen(empty);
+  try {
+    for (const port of [errorPort, emptyPort]) {
+      const ctx = world();
+      const id = run(
+        ["intake", "--actor", "owner", "--name", "Riley Example", "--city", "Austin", "--type", "buyer"],
+        ctx,
+      ).payload.client_id;
+      const searched = await runAsync(["search", id, "--actor", "owner"], ctx, {
+        EXA_API_KEY: "exa-test-key",
+        EXA_API_BASE: `http://127.0.0.1:${port}`,
+      });
+      assert.equal(searched.payload.ok, false, searched.stdout + searched.stderr);
+      assert.equal(searched.payload.error, "couldnt_find");
+      assert.equal(searched.payload.status, "couldnt_find");
+      assert.equal(searched.payload.message, "couldn't find");
+      assert.equal(searched.payload.source_count, 0);
+      const noteId = addEvidence(ctx, id, {
+        url: "https://example.com/riley-notes",
+        title: "Owner notes",
+        excerpt: "Riley Example prefers a short agenda.",
+        origin: "manual",
+        query: "owner paste",
+        candidate: 1,
+      });
+      confirm(ctx, id, 1);
+      const checked = validate(ctx, id, loadGood([noteId]));
+      assert.equal(checked.payload.ok, false, JSON.stringify(checked.payload));
+      assert.ok(codes(checked.payload).includes("couldnt_find"));
+      assert.match(JSON.stringify(checked.payload), /couldn't find/);
+      assert.equal(existsSync(join(ctx.data, id, "brief.json")), false);
+    }
+  } finally {
+    await new Promise((resolve) => refused.close(resolve));
+    await new Promise((resolve) => empty.close(resolve));
+  }
+});
+
+test("owner notes can add beside public sources and cannot stand alone", () => {
+  const ctx = world();
+  const made = seed(ctx);
+  const noteId = addEvidence(ctx, made.id, {
+    url: "https://example.com/owner-notes",
+    title: "Owner notes",
+    excerpt: "Dana Whitfield likes a short agenda.",
+    origin: "manual",
+    query: "owner paste",
+    candidate: 2,
+  });
+  confirm(ctx, made.id, 1);
+  const listed = run(["identity", "candidates", made.id], ctx);
+  assert.deepEqual(listed.payload.candidates.map((item) => item.n).sort(), [1, 2]);
+  const withPublic = validate(ctx, made.id, loadGood(made.evidenceIds));
+  assert.equal(withPublic.payload.ok, true, JSON.stringify(withPublic.payload));
+  confirm(ctx, made.id, 2);
+  const notes = validate(ctx, made.id, loadGood([noteId]));
+  assert.equal(notes.payload.ok, false, JSON.stringify(notes.payload));
+  assert.ok(codes(notes.payload).includes("notes_only"));
+  const rendered = run(["brief", "render", made.id, "--actor", "owner"], ctx);
+  assert.equal(rendered.payload.ok, false, rendered.stdout);
+});
+
+test("intake company and urls feed the search queries and the disambiguation anchors", async () => {
+  const profile = "https://example.com/riley-example";
+  const decoy = "https://www.linkedin.com/in/riley-example-other";
+  const server = createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+      const domains = body.includeDomains || [];
+      const query = body.query || "";
+      let results = [];
+      if (req.url === "/contents") {
+        results = [];
+      } else if (domains.includes("linkedin.com")) {
+        results = [{ url: decoy, title: "Riley Example", text: "Riley Example cooks in Dallas." }];
+      } else if (query.includes("company site") || query.includes(profile)) {
+        results = [{
+          url: profile,
+          title: "Riley Example",
+          text: "Riley Example leads AdvisorReach in Austin.",
+        }];
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results }));
+    });
+  });
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const id = run(
+      [
+        "intake",
+        "--actor",
+        "owner",
+        "--name",
+        "Riley Example",
+        "--city",
+        "Austin",
+        "--type",
+        "buyer",
+        "--company",
+        "AdvisorReach",
+        "--url",
+        profile,
+      ],
+      ctx,
+    ).payload.client_id;
+    const queries = run(["queries", id], ctx).payload;
+    assert.equal(queries.ok, true, JSON.stringify(queries));
+    assert.equal(queries.queries.length, 7);
+    for (const item of queries.queries.slice(0, 6)) {
+      assert.match(item.q, /"Riley Example"/);
+      assert.match(item.q, /"Austin"/);
+      assert.match(item.q, /"AdvisorReach"/);
+    }
+    assert.deepEqual(
+      queries.queries.slice(0, 6).map((item) => item.target),
+      ["linkedin", "x", "company", "news", "podcast", "general"],
+    );
+    assert.match(queries.queries[6].q, /AdvisorReach/);
+    assert.match(queries.queries[6].q, /https:\/\/example\.com\/riley-example/);
+    const searched = await runAsync(["search", id, "--actor", "owner"], ctx, {
+      EXA_API_KEY: "exa-test-key",
+      EXA_API_BASE: `http://127.0.0.1:${port}`,
+    });
+    assert.equal(searched.payload.ok, true, searched.stdout + searched.stderr);
+    const stored = JSON.parse(readFileSync(join(ctx.data, id, "search.json"), "utf8"));
+    assert.ok(stored.queries.every((item) => item.includes("AdvisorReach")), JSON.stringify(stored.queries));
+    assert.ok(stored.queries.some((item) => item.includes(profile)));
+    const urls = searched.payload.sources.map((item) => item.url);
+    assert.equal(urls.includes(profile), true, JSON.stringify(urls));
+    assert.equal(urls.includes(decoy), false, JSON.stringify(urls));
+    assert.equal(searched.payload.excluded_people, 1);
+    assert.equal(searched.payload.excluded_note, "1 other person with this name was excluded.");
+    const evidence = readFileSync(join(ctx.data, id, "evidence.jsonl"), "utf8");
+    assert.equal(evidence.includes(decoy), false);
+    assert.equal(evidence.includes("AdvisorReach"), true);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
   }
 });
