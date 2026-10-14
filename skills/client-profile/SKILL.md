@@ -51,7 +51,8 @@ from intake (use `new` for intake). Each call returns the same JSON the cp.py co
 | Queries | `op: queries` lists the searches. It does not run them. |
 | Search | `op: search` runs every query through Exa, fetches the top pages, dedupes them, and stores evidence |
 | Evidence | `op: evidence_add`, `cp: {url, title, excerpt, origin: web|manual, query?, candidate}` |
-| Candidates | `op: identity_candidates` |
+| Candidates | `op: identity_candidates`. This saves the pending candidate list on the record |
+| Pick | `op: pick`, `cp: {reply: "1"}` or `cp: {reply: "NONE"}`. No client id. Use this for the owner's next text |
 | Confirm | `op: identity_confirm`, `cp: {candidate: N}` or `cp: {none: true}` |
 | Evidence for synthesis | `op: evidence_render` |
 | Validate brief | `op: brief`, `cp: {brief: <brief JSON object>}` |
@@ -87,10 +88,11 @@ Every new profile request starts a fresh intake with the name, the city, the com
    If `status` is `couldnt_find`, stop. Tell the owner exactly `couldn't find`. Do not brief and do not guess another person who shares only a first name.
    If `status` is `need_anchor`, identity confidence is Low. Ask for a profile link or company. Do not brief the same-name hits.
    If `status` is `need_profile_link`, ask the advisor for a profile link. Add that link with `evidence add` (`--origin web`). The link is saved on the intake and unblocks the name. A page search found on its own does not. Do not guess.
-   Otherwise text the owner: `Found N <name> in <city>: 1) … 2) … Reply 1, 2 or NONE`
-5. **Confirm.** On `1` or `2`: `cp.py identity confirm <client_id> --candidate N`  
-   On `NONE`: `cp.py identity confirm <client_id> --none` and stop. No brief without a selected candidate.
-   If confirm returns `couldnt_find` or `need_profile_link`, stop and say that message. Do not write a brief.
+   Otherwise text the owner the `prompt` from that command: `Found N <name> in <city>: 1) … 2) … Reply 1, 2 or NONE`. The same list is saved on the record as `pending.json`.
+5. **Pick.** On the owner's next text, call `op: pick` with that reply. `cp.py pick 1`, `cp.py pick <number>`, or `cp.py pick NONE`. Do not ask which profile the number means. The pending candidate list is already on the record, and pick resolves `1`, a number, or `NONE` against it. Do not pass a client id and do not start a new search.
+   If pick returns `next: "write"`, write the brief from the returned evidence and render the one-page PDF in this same turn.
+   If the reply is `NONE`, pick returns `next: "stop"`. Stop. Do not write a PDF.
+   If pick returns `couldnt_find` or `need_profile_link`, stop and say that message. Do not write a brief.
 6. **Synthesize.** Run `cp.py evidence render <client_id>`. `evidence block` prints the same text. Put the returned `text` in the prompt as the only evidence. It is already wrapped in the untrusted markers below. Literal delimiter strings inside an excerpt are stripped. Do not add other snippets and do not rebuild the markers around text you fetched yourself. Write brief JSON that matches `assets/brief.schema.json`. Then `cp.py brief validate <client_id> <brief.json>`. Validate refuses unless this client finished search and identity in its own intake. After a later intake for a different person, pass `--name` with this client's intake name.
 7. On validate failure, regenerate **once** from the errors. Never render a failing brief.
 8. **Render.** `cp.py brief render <client_id>` writes `brief.html` and, when WeasyPrint is available, `brief.pdf`. Render refuses unless this client finished search and identity in its own intake. After a later intake for a different person, pass `--name` with this client's intake name or render refuses. A name that does not match this client is refused. `pages` is the page count pdfinfo would report for that PDF. When WeasyPrint is not available, `pages` is only an estimate. The template `assets/template.html` is locked. Do not hand-edit it. Layout stays on one Letter page: compact type and margins first, then a bullet is removed only if the PDF is still longer than one page. The page shows Snapshot, Personality / DISC read, How to talk to them, Appointment playbook, and Sources.
@@ -134,7 +136,7 @@ Use DISC as a loose communication lens — working hypotheses only, never a diag
 If the evidence is thin, set disc_hypothesis to "insufficient evidence" and confidence to "low". Do not force a style.
 Every claim cites evidence IDs that cp.py has marked selected. Omit unsupported claims.
 Confidence: high = two or more distinct selected items; medium = one solid item; low = weak signal.
-Identity on the brief reads Owner-picked, then High, Medium, or Low, from the evidence rules. Never write the word confirmed in the brief, the SMS, or any sentence the owner reads.
+Identity on the brief reads Owner-picked, then High, Medium, or Low, from the evidence rules. Do not use a stronger label than High, Medium, or Low in the brief, the SMS, or any sentence the owner reads.
 High is allowed only when two or more distinct sources contain the full first and last name and fewer than three candidates match. One source is medium at most. Three or more candidate matches are medium at most, and low when the picked person has only one source.
 decision_speed, yes_to_hear, and likely_objections are required. decision_speed is how fast they decide. yes_to_hear is what they need to hear to say yes. likely_objections is one to three likely objections. Cite each one. If the sources do not show it, say that in the section. Do not invent it.
 Low-confidence items go in appendix.low_confidence only, not in the main sections.
