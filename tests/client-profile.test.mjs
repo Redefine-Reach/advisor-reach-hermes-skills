@@ -51,8 +51,7 @@ function world(opts = {}) {
       tz: "America/Phoenix",
       box: "test",
     };
-    if (opts.consentRequired === false) config.consent_required = false;
-    if (opts.agentName) config.agent_name = opts.agentName;
+    if (opts.consentRequired !== undefined) config.consent_required = opts.consentRequired;
     writeFileSync(join(data, "config.json"), JSON.stringify(config));
   }
   return { dir, data, artifact };
@@ -113,15 +112,6 @@ function loadCaseBrief(name, evidenceIds) {
   return brief;
 }
 
-function recordConsent(ctx, id) {
-  const res = run(
-    ["consent", "record", id, "--method", "text", "--by", "owner", "--actor", "owner"],
-    ctx,
-  );
-  assert.equal(res.payload && res.payload.ok, true, res.stdout + res.stderr);
-  return res;
-}
-
 function addEvidence(ctx, id, item) {
   const res = run(
     [
@@ -165,7 +155,6 @@ function seed(ctx, input = { name: "Dana Whitfield", city: "Scottsdale", type: "
   const intake = run(args, ctx);
   assert.equal(intake.payload && intake.payload.ok, true, intake.stdout + intake.stderr);
   const id = intake.payload.client_id;
-  recordConsent(ctx, id);
   const evidence = input.evidence
     ? Array.isArray(input.evidence)
       ? input.evidence
@@ -338,7 +327,6 @@ test("case 4 strips address tokens from intake and queries", () => {
   for (const banned of expected.banned) {
     assert.equal(JSON.stringify(stored).includes(banned), false);
   }
-  recordConsent(ctx, intake.payload.client_id);
   const queries = run(["queries", intake.payload.client_id], ctx);
   assert.equal(queries.payload.ok, true, queries.stdout);
   for (const banned of expected.banned) assert.doesNotMatch(queries.stdout, new RegExp(banned));
@@ -351,7 +339,6 @@ test("case 4 strips address tokens from intake and queries", () => {
   const body = JSON.parse(readFileSync(intakePath, "utf8"));
   body.name = "Dana Whitfield 123 Main St";
   writeFileSync(intakePath, JSON.stringify(body));
-  recordConsent(hand, made.payload.client_id);
   const again = run(["queries", made.payload.client_id], hand);
   assert.equal(again.payload.ok, true, again.stdout);
   for (const banned of expected.banned) assert.doesNotMatch(again.stdout, new RegExp(banned));
@@ -378,7 +365,6 @@ test("query escaping and phone email dob stripping", () => {
   );
   assert.equal(intake.payload.ok, true, intake.stdout + intake.stderr);
   assert.doesNotMatch(intake.stdout, /dana@example.com|555-0199|01\/02\/1980|85251/);
-  recordConsent(ctx, intake.payload.client_id);
   const queries = run(["queries", intake.payload.client_id], ctx);
   const blob = queries.stdout;
   assert.doesNotMatch(blob, /dana@example.com|555-0199|01\/02\/1980|85251/);
@@ -393,7 +379,6 @@ test("queries cap at 6 and keep the known url", () => {
   for (let i = 0; i < 8; i += 1) args.push("--url", `https://example.com/p/${i}`);
   const intake = run(args, ctx);
   assert.equal(intake.payload.ok, true, intake.stdout);
-  recordConsent(ctx, intake.payload.client_id);
   const queries = run(["queries", intake.payload.client_id], ctx);
   assert.equal(queries.payload.queries.length, 6);
   assert.match(queries.payload.queries[2].q, /https:\/\/example\.com\/p\/0/);
@@ -411,7 +396,6 @@ test("case 21 private instagram is not fetched", () => {
   assert.equal(intake.payload.ok, true, intake.stdout);
   assert.equal(intake.payload.inaccessible[0].reason, input.reason);
   assert.equal(intake.payload.inaccessible[0].fetched, false);
-  recordConsent(ctx, intake.payload.client_id);
   const queries = run(["queries", intake.payload.client_id], ctx);
   assert.equal(queries.payload.ok, true, queries.stdout);
   for (const query of queries.payload.queries) {
@@ -1034,7 +1018,7 @@ test("install uninstall on and off are files-only", () => {
   assert.equal(installed.payload.block_present, true);
   assert.equal(installed.payload.skill_present, true);
   assert.equal(installed.payload.config.enabled, true);
-  assert.equal(installed.payload.config.consent_required, true);
+  assert.equal("consent_required" in installed.payload.config, false);
   assert.equal(installed.payload.config.box, "joe-gilmour");
   assert.equal(installed.payload.config.owner_number, "***0100");
   assert.equal(JSON.stringify(installed.payload).includes("14805550100"), false);
@@ -1042,17 +1026,21 @@ test("install uninstall on and off are files-only", () => {
   assert.equal(installed.payload.selftest.ok, true);
   assert.notEqual(installed.payload.soul_sha_before, installed.payload.soul_sha_after);
   const soul = readFileSync(join(box, "SOUL.md"), "utf8");
-  assert.equal(soul.split("<!-- BEGIN client-profile v1 -->").length - 1, 1);
+  assert.equal(soul.split("<!-- BEGIN client-profile v2 -->").length - 1, 1);
+  assert.match(soul, /Use only public information\. Never text or contact the client\./);
+  assert.doesNotMatch(soul, /consent text/);
   assert.match(soul, /hello from soul/);
   assert.ok(readdirSync(box).some((name) => name.startsWith("SOUL.md.bak-client-profile-")));
   const configPath = join(box, "client-profile", "config.json");
   const turnedOff = JSON.parse(readFileSync(configPath, "utf8"));
-  turnedOff.consent_required = false;
+  turnedOff.consent_required = true;
   writeFileSync(configPath, JSON.stringify(turnedOff));
   const again = exec(["install", "joe-gilmour"]);
   assert.equal(again.payload.ok, true, JSON.stringify(again.payload));
-  assert.equal(again.payload.config.consent_required, false);
-  assert.equal(readFileSync(join(box, "SOUL.md"), "utf8").split("<!-- BEGIN client-profile v1 -->").length - 1, 1);
+  assert.equal(again.payload.config.consent_required, true);
+  const rewritten = readFileSync(join(box, "SOUL.md"), "utf8");
+  assert.equal(rewritten.split("<!-- BEGIN client-profile v2 -->").length - 1, 1);
+  assert.equal(rewritten.includes("<!-- BEGIN client-profile v1 -->"), false);
   const data = join(box, "client-profile");
   const profileEnv = {
     ...env,
@@ -1075,7 +1063,7 @@ test("install uninstall on and off are files-only", () => {
   assert.equal(removed.payload.enabled, false);
   assert.equal(removed.payload.data_kept, true);
   assert.match(removed.payload.message, /Client data was kept/);
-  assert.match(removed.payload.message, /Run purge or revoke if you want it gone/);
+  assert.match(removed.payload.message, /Run purge or delete if you want it gone/);
   assert.equal(JSON.stringify(removed.payload).includes("14805550100"), false);
   assert.match(readFileSync(join(box, "SOUL.md"), "utf8"), /hello from soul/);
   assert.equal(existsSync(join(data, keptPayload.client_id, "intake.json")), true);
@@ -1125,7 +1113,7 @@ test("install in place keeps the skill tree and writes SOUL after the copy", () 
   assert.equal(existsSync(join(box, "skills", "client-profile", "scripts", "cp.py")), true);
   const soul = readFileSync(soulPath, "utf8");
   assert.match(soul, /hello from soul/);
-  assert.equal(soul.split("<!-- BEGIN client-profile v1 -->").length - 1, 1);
+  assert.equal(soul.split("<!-- BEGIN client-profile v2 -->").length - 1, 1);
   assert.equal(again.stdout.includes("14805550199"), false);
   assert.equal(existsSync(join(box, "skills", "client-profile.tmp")), false);
   assert.equal(existsSync(join(box, "skills", "client-profile.old")), false);
@@ -1194,15 +1182,16 @@ test("evidence render wraps only confirmed evidence", () => {
   assert.match(skill, /evidence block/);
   assert.match(skill, /web_search/);
   assert.match(skill, /web_extract/);
-  assert.match(skill, /consent status/);
+  assert.match(skill, /Research uses only publicly available information\. Never contact the client or lead\./);
   assert.match(skill, /client data was kept/i);
   const ctx = world();
   const intake = run(
     ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"],
     ctx,
   );
-  const refused = run(["evidence", "render", intake.payload.client_id], ctx);
-  assert.equal(refused.payload.error, "consent_required");
+  const empty = run(["evidence", "render", intake.payload.client_id], ctx);
+  assert.equal(empty.payload.ok, true, empty.stdout);
+  assert.equal(empty.payload.count, 0);
   const made = seed(ctx, {
     name: "Dana Whitfield",
     city: "Scottsdale",
@@ -1247,159 +1236,62 @@ test("evidence render wraps only confirmed evidence", () => {
   assert.equal(alias.payload.text, block.payload.text);
 });
 
-test("consent request stays within 300 characters and names the agent", () => {
-  assert.match(skill, /consent request/);
-  assert.match(skill, /own phone/);
-  assert.match(skill, /ARIN never texts the client/);
-  assert.match(skill, /consent_required/);
-  const ctx = world({ agentName: "Ada Agent" });
-  const intake = run(
-    ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"],
-    ctx,
-  );
-  assert.equal(intake.payload.ok, true, intake.stdout);
-  const requested = run(["consent", "request", intake.payload.client_id, "--actor", "owner"], ctx);
-  assert.equal(requested.payload.ok, true, requested.stdout);
-  assert.equal(Object.keys(requested.payload).sort().join(","), "ok,text");
-  assert.ok(requested.payload.text.length <= 300);
-  assert.match(requested.payload.text, /Ada Agent/);
-  assert.match(requested.payload.text, /public information/i);
-  assert.match(requested.payload.text, /YES/);
-  assert.doesNotMatch(requested.payload.text, /Dana|Whitfield|Scottsdale/);
-  const named = run(
-    ["consent", "request", intake.payload.client_id, "--actor", "owner", "--agent", "Ada Agent"],
-    ctx,
-  );
-  assert.match(named.payload.text, /Ada Agent/);
-  assert.ok(named.payload.text.length <= 300);
-  const long = run(
-    ["consent", "request", intake.payload.client_id, "--actor", "owner", "--agent", "A".repeat(400)],
-    ctx,
-  );
-  assert.equal(long.payload.ok, true, long.stdout);
-  assert.ok(long.payload.text.length <= 300);
-  assert.match(long.payload.text, /YES/);
-  assert.match(long.payload.text, /public information/i);
-});
-
-test("queries evidence validate render and deliver refuse until consent is recorded", () => {
-  const ctx = world();
+test("public research ignores a stored consent_required key", () => {
+  assert.match(skill, /Research uses only publicly available information\. Never contact the client or lead\./);
+  assert.doesNotMatch(skill, /consent request/);
+  assert.doesNotMatch(skill, /consent status/);
+  assert.doesNotMatch(skill, /own phone/);
+  assert.doesNotMatch(script, /def consent_text/);
+  assert.doesNotMatch(script, /def cmd_consent_request/);
+  assert.doesNotMatch(script, /def cmd_consent_record/);
+  const ctx = world({ consentRequired: true });
+  const code = [
+    "import importlib.util",
+    `spec = importlib.util.spec_from_file_location("cp", ${JSON.stringify(scriptPath)})`,
+    "cp = importlib.util.module_from_spec(spec); spec.loader.exec_module(cp)",
+    "raise SystemExit(0 if cp.is_consent_required() is False else 1)",
+  ].join("\n");
+  const probe = spawnSync("python3", ["-c", code], {
+    env: { PATH: process.env.PATH, CLIENT_PROFILE_ROOT: ctx.data, PYTHONDONTWRITEBYTECODE: "1" },
+    encoding: "utf8",
+  });
+  assert.equal(probe.status, 0, probe.stdout + probe.stderr);
   const intake = run(
     ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"],
     ctx,
   );
   assert.equal(intake.payload.ok, true, intake.stdout);
   const id = intake.payload.client_id;
-  const standing = run(["consent", "status", id], ctx);
-  assert.equal(standing.payload.ok, true);
-  assert.equal(standing.payload.status, "missing");
-  assert.equal(standing.payload.required, true);
-  const file = join(ctx.dir, "brief.json");
-  writeFileSync(file, "{}");
-  const refused = [
-    run(["queries", id], ctx),
-    run(
-      [
-        "evidence",
-        "add",
-        id,
-        "--actor",
-        "owner",
-        "--url",
-        "https://example.com/dana",
-        "--title",
-        "Dana Whitfield",
-        "--excerpt",
-        "Dana Whitfield is a broker in Scottsdale.",
-        "--origin",
-        "web",
-        "--query",
-        "profile",
-        "--candidate",
-        "1",
-      ],
-      ctx,
-    ),
-    run(["brief", "validate", id, file, "--actor", "owner"], ctx),
-    run(["brief", "render", id, "--actor", "owner"], ctx),
-    run(["deliver", id, "--actor", "owner"], ctx),
-    run(["identity", "candidates", id], ctx),
-    run(["identity", "confirm", id, "--actor", "owner", "--candidate", "1"], ctx),
-    run(["evidence", "block", id], ctx),
-    run(["evidence", "render", id], ctx),
-  ];
-  for (const res of refused) {
-    assert.equal(res.payload.ok, false, res.stdout);
-    assert.equal(res.payload.error, "consent_required");
-    assert.doesNotMatch(res.stdout, /Dana|Whitfield|Scottsdale/);
-  }
-});
-
-test("consent record writes consent.json and an audit line without personal details", () => {
-  const ctx = world();
-  const intake = run(
-    ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"],
-    ctx,
-  );
-  const id = intake.payload.client_id;
-  const named = run(
-    ["consent", "record", id, "--method", "text", "--by", "Dana Whitfield", "--actor", "owner"],
-    ctx,
-  );
-  assert.equal(named.payload.ok, false);
-  assert.equal(named.payload.error, "owner_only");
-  assert.doesNotMatch(named.stdout, /Whitfield|Scottsdale/);
-  const bad = run(["consent", "record", id, "--method", "sms", "--by", "owner", "--actor", "owner"], ctx);
-  assert.equal(bad.payload.error, "bad_method");
-  const note = "Dana Whitfield of Scottsdale said porch-yes-token at 123 Main St";
-  const recorded = run(
-    ["consent", "record", id, "--method", "text", "--by", "owner", "--actor", "owner", "--note", note],
-    ctx,
-  );
-  assert.equal(recorded.payload.ok, true, recorded.stdout);
-  assert.equal(recorded.payload.status, "recorded");
-  assert.equal(recorded.payload.method, "text");
-  assert.ok(recorded.payload.recorded_at);
-  assert.doesNotMatch(recorded.stdout, /Dana|Whitfield|Scottsdale|porch-yes-token|123 Main/);
-  const stored = JSON.parse(readFileSync(join(ctx.data, id, "consent.json"), "utf8"));
-  assert.equal(stored.status, "recorded");
-  assert.equal(stored.method, "text");
-  assert.equal(stored.by, "owner");
-  assert.equal(stored.actor, "owner");
-  assert.equal(stored.recorded_at, recorded.payload.recorded_at);
-  assert.doesNotMatch(stored.note || "", /123 Main/);
-  const line = auditLines(ctx).find((item) => item.action === "consent_record");
-  assert.ok(line);
-  assert.deepEqual(Object.keys(line).sort(), ["action", "actor", "client_id", "counts", "ts"]);
-  assert.equal(line.actor, "owner");
-  assert.equal(line.counts.consents, 1);
-  const blob = JSON.stringify(line);
-  assert.equal(blob.includes("Dana"), false);
-  assert.equal(blob.includes("Whitfield"), false);
-  assert.equal(blob.includes("Scottsdale"), false);
-  assert.equal(blob.includes("porch-yes-token"), false);
-  assert.equal(blob.includes("123 Main"), false);
+  const request = run(["consent", "request", id, "--actor", "owner"], ctx);
+  assert.equal(request.payload.ok, false);
+  assert.equal(request.payload.error, "usage");
+  assert.doesNotMatch(request.stdout, /YES|Dana|Whitfield/);
+  const record = run(["consent", "record", id, "--method", "text", "--by", "owner", "--actor", "owner"], ctx);
+  assert.equal(record.payload.error, "usage");
   const queries = run(["queries", id], ctx);
   assert.equal(queries.payload.ok, true, queries.stdout);
-  const standing = run(["consent", "status", id], ctx);
-  assert.equal(standing.payload.status, "recorded");
-  assert.equal(standing.payload.method, "text");
-  assert.equal(standing.payload.by, "owner");
-  assert.equal(standing.payload.actor, "owner");
-  assert.doesNotMatch(standing.stdout, /porch-yes-token|Dana/);
+  const file = join(ctx.dir, "brief.json");
+  writeFileSync(file, "{}");
+  const checked = run(["brief", "validate", id, file, "--actor", "owner"], ctx);
+  assert.notEqual(checked.payload.error, "consent_required");
+  const rendered = run(["evidence", "render", id], ctx);
+  assert.equal(rendered.payload.ok, true, rendered.stdout);
+  const self = run(["selftest"], ctx);
+  const gate = self.payload.checks.find((item) => item.name === "public_research");
+  assert.equal(gate && gate.ok, true);
 });
 
-test("consent revoke deletes the client and the artifact", () => {
-  const ctx = world();
+test("delete removes this client and consent revoke is the same delete", () => {
+  const ctx = world({ consentRequired: true });
   const ready = deliverReady(ctx);
   const artifact = join(ctx.artifact, ready.delivered.url.split("/").at(-1));
   assert.equal(existsSync(artifact), true);
-  const revoked = run(["consent", "revoke", ready.id, "--actor", "owner"], ctx);
-  assert.equal(revoked.payload.ok, true, revoked.stdout);
-  assert.equal(revoked.payload.deleted, true);
+  const deleted = run(["delete", ready.id, "--actor", "owner"], ctx);
+  assert.equal(deleted.payload.ok, true, deleted.stdout);
+  assert.equal(deleted.payload.deleted, true);
   assert.equal(existsSync(join(ctx.data, ready.id)), false);
   assert.equal(existsSync(artifact), false);
-  const line = auditLines(ctx).find((item) => item.action === "consent_revoke");
+  const line = auditLines(ctx).find((item) => item.action === "delete");
   assert.ok(line);
   assert.deepEqual(Object.keys(line).sort(), ["action", "actor", "client_id", "counts", "ts"]);
   const blob = JSON.stringify(line);
@@ -1408,33 +1300,89 @@ test("consent revoke deletes the client and the artifact", () => {
   assert.equal(blob.includes("Scottsdale"), false);
   assert.equal(line.counts.profiles, 1);
   assert.equal(line.counts.artifacts, 1);
-  const standing = run(["consent", "status", ready.id], ctx);
-  assert.equal(standing.payload.error, "unknown_client");
+  const gone = run(["queries", ready.id], ctx);
+  assert.equal(gone.payload.error, "unknown_client");
+
+  const alias = deliverReady(ctx);
+  const aliasArtifact = join(ctx.artifact, alias.delivered.url.split("/").at(-1));
+  const revoked = run(["consent", "revoke", alias.id, "--actor", "owner"], ctx);
+  assert.equal(revoked.payload.ok, true, revoked.stdout);
+  assert.equal(revoked.payload.deleted, true);
+  assert.equal(existsSync(join(ctx.data, alias.id)), false);
+  assert.equal(existsSync(aliasArtifact), false);
+  const revokeLine = auditLines(ctx).find((item) => item.action === "consent_revoke");
+  assert.ok(revokeLine);
+  assert.equal(revokeLine.counts.profiles, 1);
+  assert.equal(revokeLine.counts.artifacts, 1);
+
+  const forgotten = seed(ctx);
+  const forgot = run(["forget", forgotten.id, "--actor", "owner"], ctx);
+  assert.equal(forgot.payload.deleted, true);
+  assert.equal(existsSync(join(ctx.data, forgotten.id)), false);
 });
 
-test("consent revoke still runs when the skill is off", () => {
+test("delete still runs when the skill is off", () => {
   const ctx = world();
   const made = seed(ctx);
+  const other = seed(ctx);
   writeFileSync(
     join(ctx.data, "config.json"),
-    JSON.stringify({ enabled: false, schema_version: 1, tz: "America/Phoenix", box: "test" }),
+    JSON.stringify({
+      enabled: false,
+      schema_version: 1,
+      tz: "America/Phoenix",
+      box: "test",
+      consent_required: true,
+    }),
   );
-  const revoked = run(["consent", "revoke", made.id, "--actor", "owner"], ctx);
-  assert.equal(revoked.payload.ok, true, revoked.stdout);
+  const deleted = run(["delete", made.id, "--actor", "owner"], ctx);
+  assert.equal(deleted.payload.ok, true, deleted.stdout);
   assert.equal(existsSync(join(ctx.data, made.id)), false);
+  const revoked = run(["consent", "revoke", other.id, "--actor", "owner"], ctx);
+  assert.equal(revoked.payload.ok, true, revoked.stdout);
+  assert.equal(existsSync(join(ctx.data, other.id)), false);
+  const intake = run(["intake", "--name", "Pat Example", "--city", "Mesa", "--type", "other"], ctx);
+  assert.equal(intake.payload.error, "disabled");
 });
 
-test("consent_required false allows research without a record", () => {
-  const ctx = world({ consentRequired: false });
-  const intake = run(
-    ["intake", "--actor", "owner", "--name", "Dana Whitfield", "--city", "Scottsdale", "--type", "buyer"],
-    ctx,
+test("install replaces a v1 consent soul block", () => {
+  const ctx = world({ config: false });
+  const box = join(ctx.dir, "box");
+  mkdirSync(box, { recursive: true });
+  writeFileSync(
+    join(box, "SOUL.md"),
+    [
+      "hello from soul",
+      "",
+      "<!-- BEGIN client-profile v1 -->",
+      "After intake, give the owner the consent text to send from their own phone and wait until they record that the client said yes. Do not text the client.",
+      "<!-- END client-profile v1 -->",
+      "",
+    ].join("\n"),
   );
-  const standing = run(["consent", "status", intake.payload.client_id], ctx);
-  assert.equal(standing.payload.status, "missing");
-  assert.equal(standing.payload.required, false);
-  const queries = run(["queries", intake.payload.client_id], ctx);
-  assert.equal(queries.payload.ok, true, queries.stdout);
+  const env = {
+    PATH: process.env.PATH,
+    HOME: ctx.dir,
+    LANG: "C.UTF-8",
+    PYTHONDONTWRITEBYTECODE: "1",
+    CLIENT_PROFILE_INSTALL_ROOT: box,
+  };
+  const proc = spawnSync("python3", [installPath, "install", "joe-gilmour"], { env, encoding: "utf8" });
+  const payload = JSON.parse(proc.stdout);
+  assert.equal(payload.ok, true, proc.stdout + proc.stderr);
+  assert.equal("consent_required" in payload.config, false);
+  const soul = readFileSync(join(box, "SOUL.md"), "utf8");
+  assert.match(soul, /hello from soul/);
+  assert.equal(soul.split("<!-- BEGIN client-profile v2 -->").length - 1, 1);
+  assert.equal(soul.includes("<!-- BEGIN client-profile v1 -->"), false);
+  assert.equal(soul.includes("<!-- END client-profile v1 -->"), false);
+  assert.doesNotMatch(soul, /consent text/);
+  assert.match(soul, /Use only public information\. Never text or contact the client\./);
+  const removed = spawnSync("python3", [installPath, "uninstall"], { env, encoding: "utf8" });
+  assert.equal(JSON.parse(removed.stdout).block_present, false, removed.stdout);
+  const after = readFileSync(join(box, "SOUL.md"), "utf8");
+  assert.equal(after.includes("client-profile v"), false);
+  assert.match(after, /hello from soul/);
 });
 
 test("fixtures cover cases 1 through 25", () => {
@@ -1444,52 +1392,26 @@ test("fixtures cover cases 1 through 25", () => {
   }
 });
 
-test("evidence added_at must be later than consent.recorded_at", () => {
-  const ctx = world();
+test("brief validate does not reject evidence for a missing consent timestamp", () => {
+  const ctx = world({ consentRequired: true });
   const made = seed(ctx);
   confirm(ctx, made.id, 1);
-  const brief = loadGood(made.evidenceIds);
-  assert.equal(validate(ctx, made.id, brief).payload.ok, true);
   const evidencePath = join(ctx.data, made.id, "evidence.jsonl");
-  const consent = JSON.parse(readFileSync(join(ctx.data, made.id, "consent.json"), "utf8"));
   const rows = readFileSync(evidencePath, "utf8")
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line));
-  const writeRows = (addedAt) => {
-    rows[0].added_at = addedAt;
-    writeFileSync(evidencePath, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
-  };
-  writeRows(consent.recorded_at);
-  const equal = validate(ctx, made.id, brief);
-  assert.equal(equal.payload.ok, false, equal.stdout);
-  assert.ok(codes(equal.payload).includes("evidence_before_consent"));
+  rows[0].added_at = "2000-01-01T00:00:00+00:00";
+  writeFileSync(evidencePath, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+  const checked = validate(ctx, made.id, loadGood(made.evidenceIds));
+  assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
+  assert.equal(codes(checked.payload).includes("evidence_before_consent"), false);
   const fenced = run(["evidence", "render", made.id], ctx);
-  assert.equal(fenced.payload.ok, false, fenced.stdout);
-  assert.ok(fenced.payload.errors.some((err) => err.code === "evidence_before_consent"));
-  writeRows(new Date(Date.parse(consent.recorded_at) - 1000).toISOString());
-  const earlier = validate(ctx, made.id, brief);
-  assert.ok(codes(earlier.payload).includes("evidence_before_consent"));
-  writeRows(new Date(Date.parse(consent.recorded_at) + 1000).toISOString());
-  const later = validate(ctx, made.id, brief);
-  assert.equal(later.payload.ok, true, JSON.stringify(later.payload));
-
-  const open = world({ consentRequired: false });
-  const skipped = seed(open);
-  confirm(open, skipped.id, 1);
-  const skippedConsent = JSON.parse(readFileSync(join(open.data, skipped.id, "consent.json"), "utf8"));
-  const skippedPath = join(open.data, skipped.id, "evidence.jsonl");
-  const skippedRows = readFileSync(skippedPath, "utf8")
-    .trim()
-    .split("\n")
-    .map((line) => JSON.parse(line));
-  skippedRows[0].added_at = new Date(Date.parse(skippedConsent.recorded_at) - 86400000).toISOString();
-  writeFileSync(skippedPath, `${skippedRows.map((row) => JSON.stringify(row)).join("\n")}\n`);
-  const allowed = validate(open, skipped.id, loadGood(skipped.evidenceIds));
-  assert.equal(allowed.payload.ok, true, JSON.stringify(allowed.payload));
+  assert.equal(fenced.payload.ok, true, fenced.stdout);
+  assert.match(fenced.payload.text, /<<<UNTRUSTED_EVIDENCE/);
 });
 
-test("end-to-end fixture covers intake, consent, identity, cited brief, pdf, summary, purge, and link expiry", () => {
+test("end-to-end fixture covers intake, identity, cited brief, pdf, summary, purge, and link expiry", () => {
   const input = JSON.parse(readFileSync(join(fixtures, "e2e", "input.json"), "utf8"));
   const expected = JSON.parse(readFileSync(join(fixtures, "e2e", "expected.json"), "utf8"));
   const ctx = world();
@@ -1503,17 +1425,14 @@ test("end-to-end fixture covers intake, consent, identity, cited brief, pdf, sum
   assert.equal(stored.name, input.name);
   assert.equal(stored.city, input.city);
   assert.equal(stored.type, input.type);
-  for (const args of [
-    ["identity", "candidates", id],
+  const early = run(["identity", "candidates", id], ctx);
+  assert.equal(early.payload.ok, true, early.stdout);
+  assert.deepEqual(early.payload.candidates, []);
+  const unconfirmed = run(
     ["identity", "confirm", id, "--actor", "owner", "--candidate", String(input.candidate)],
-  ]) {
-    const refused = run(args, ctx);
-    assert.equal(refused.payload.error, "consent_required", refused.stdout);
-  }
-  recordConsent(ctx, id);
-  const standing = run(["consent", "status", id], ctx);
-  assert.equal(standing.payload.status, "recorded");
-  assert.ok(standing.payload.recorded_at);
+    ctx,
+  );
+  assert.equal(unconfirmed.payload.error, "unknown_candidate");
   const evidenceId = addEvidence(ctx, id, { ...input.evidence, candidate: input.candidate });
   const candidates = run(["identity", "candidates", id], ctx);
   assert.equal(candidates.payload.ok, true, candidates.stdout);
@@ -1599,14 +1518,13 @@ test("sms-summary refuses the artifacts.local placeholder link", () => {
   writeFileSync(join(client, "delivery.json"), JSON.stringify({ url: "https://artifacts.local/x.pdf" }));
   const { payload } = run(["sms-summary", id], ctx);
   assert.equal(payload.ok, false);
-  assert.ok(["bad_url", "consent_required", "not_found", "unknown_client"].includes(payload.error), JSON.stringify(payload));
+  assert.equal(payload.error, "bad_url");
 });
 
 test("owner paste after NONE drops web candidates and becomes candidate 1", () => {
   const ctx = world();
   const intake = run(["intake", "--name", "Avery Example", "--city", "Flagstaff", "--type", "buyer"], ctx).payload;
   const id = intake.client_id;
-  run(["consent", "record", id, "--method", "text", "--by", "owner"], ctx);
   const web = run(["evidence", "add", id, "--url", "https://example.org/stranger", "--title", "Avery Stranger", "--excerpt", "A different person with the same first name in town.", "--origin", "web", "--query", "q", "--candidate", "1"], ctx).payload;
   assert.equal(web.ok, true, JSON.stringify(web));
   assert.equal(run(["identity", "confirm", id, "--none"], ctx).payload.status, "none");
@@ -1624,7 +1542,6 @@ test("NONE then pasted notes are candidate 1, and reply 1 renders the brief pdf"
   const intake = run(["intake", "--name", "Avery Example", "--city", "Flagstaff", "--type", "buyer"], ctx);
   assert.equal(intake.payload.ok, true, intake.stdout);
   const id = intake.payload.client_id;
-  recordConsent(ctx, id);
   addEvidence(ctx, id, {
     url: "https://example.org/avery-one",
     title: "Avery Public One",
@@ -1698,7 +1615,6 @@ test("NONE then pasted notes are candidate 1, and reply 1 renders the brief pdf"
 test("owner paste never joins a web candidate", () => {
   const ctx = world();
   const id = run(["intake", "--name", "Avery Example", "--city", "Flagstaff", "--type", "buyer"], ctx).payload.client_id;
-  run(["consent", "record", id, "--method", "text", "--by", "owner"], ctx);
   run(["evidence", "add", id, "--url", "https://example.org/stranger", "--title", "Avery Stranger", "--excerpt", "A different person with the same first name in town.", "--origin", "web", "--query", "q", "--candidate", "1"], ctx);
   const manual = run(["evidence", "add", id, "--url", "https://example.com/bio", "--title", "Bio", "--excerpt", "Project engineer who likes the full set of numbers.", "--origin", "manual", "--query", "owner paste", "--candidate", "1"], ctx).payload;
   assert.equal(manual.candidate, 2);

@@ -73,8 +73,7 @@ Intake is name, city, and appointment type. `scripts/cp.py` builds name-and-city
 evidence, requires an identity pick, and validates a cited DISC-lens brief (fair-housing screen
 in code, non-empty unknowns). Render uses the locked `assets/template.html` and WeasyPrint when
 the box has it. Delivery is an opaque file in `ARTIFACT_DIR` with a 7-day expiry. Research
-waits until the owner records that client's consent (`consent_required` defaults to true); the
-owner sends the consent text from their own phone. The enable
+uses only publicly available information. Never contact the client or lead. The enable
 flag is `/opt/data/client-profile/config.json`, not an environment variable. Install is
 files-only (`install/cp_install.py`). No CRM write, Human Design, people-data vendor, or street
 address. Contract: `tests/client-profile.test.mjs`. Merging here does not reach boxes until
