@@ -1297,8 +1297,8 @@ test("status output masks the owner number", () => {
 });
 
 test("evidence render wraps only confirmed evidence", () => {
-  assert.match(skill, /evidence render/);
-  assert.match(skill, /evidence block/);
+  assert.match(skill, /op: profile/);
+  assert.match(skill, /op: write/);
   assert.match(skill, /web_search/);
   assert.match(skill, /web_extract/);
   assert.match(skill, /Research uses only publicly available information\. Never contact the client or lead\./);
@@ -1742,7 +1742,7 @@ test("a made-up Avery in Flagstaff returns couldn't find", () => {
   assert.match(skill, /couldn't find/);
   assert.match(skill, /profile link/);
   assert.match(skill, /one-page/i);
-  assert.match(skill, /decision_speed/);
+  assert.match(skill, /client_stated/);
   assert.match(skill, /There is no consent step/);
   assert.match(skill, /Do not text the lead/);
   const ctx = world();
@@ -2453,7 +2453,7 @@ function sameNameServer(includeMatch) {
 }
 
 test("same-name search drops three decoy profiles and does not cite them", async () => {
-  assert.match(skill, /other people with this name were excluded/);
+  assert.match(skill, /other pages with this name were left out/);
   assert.match(script, /source_matches_anchors/);
   const server = sameNameServer(true);
   const port = await listen(server);
@@ -2540,7 +2540,7 @@ test("same-name search drops three decoy profiles and does not cite them", async
 });
 
 test("same-name search with no anchor match asks for a link or company", async () => {
-  assert.match(skill, /need_anchor/);
+  assert.match(skill, /needs_anchor/);
   assert.match(skill, /identity confidence is Low/i);
   const server = sameNameServer(false);
   const port = await listen(server);
@@ -2599,8 +2599,8 @@ test("same-name search with no anchor match asks for a link or company", async (
 test("a dense brief renders as one PDF page with the four sections and sources", () => {
   assert.match(script, /pdfinfo/);
   assert.match(script, /def _pdf_inflated/);
-  assert.match(skill, /Personality \/ DISC read/);
-  assert.match(skill, /How to talk to them/);
+  assert.match(skill, /Client stated/);
+  assert.match(skill, /Observations/);
   assert.match(skill, /Owner-picked/);
   assert.match(skill, /There is no consent step/);
   const bin = weasyBin();
@@ -2818,10 +2818,10 @@ test("a new profile request starts a fresh intake and does not reuse another cli
   assert.match(skill, /fresh intake/);
   assert.match(skill, /Never reuse a prior client record unless the owner explicitly names that same client/);
   assert.match(skill, /--name/);
-  assert.match(skill, /finished search and identity in its own intake/);
+  assert.match(skill, /The record key comes from the name/);
   assert.match(script, /own_intake_required/);
   assert.match(script, /reuse_name/);
-  assert.match(skill, /intake, then search, then identity, then render/);
+  assert.match(skill, /profile, then any question to the owner, then write/);
   assert.match(skill, /never replace a search/);
   assert.match(skill, /There is no consent step/);
   const ctx = world();
@@ -3206,8 +3206,8 @@ test("intake company and urls feed the search queries and the disambiguation anc
 });
 
 test("a skipped search is search_required, not couldn't find", () => {
-  assert.match(skill, /error: "search_required"/);
-  assert.match(skill, /Run search first/);
+  assert.match(skill, /op: profile/);
+  assert.match(skill, /Search isn't working on my side right now/);
   assert.match(script, /SEARCH_REQUIRED = "Run search first."/);
   const ctx = world();
   const id = run(
@@ -3614,8 +3614,8 @@ test("replayed David Marshall search keeps other source kinds and still drops na
 });
 
 test("an Exa error is search_unavailable, and a skipped search asks to run search", async () => {
-  assert.match(skill, /web search is unavailable/);
-  assert.match(skill, /op: search/);
+  assert.match(skill, /Search isn't working on my side right now/);
+  assert.match(skill, /op: profile/);
   assert.match(script, /WEB_SEARCH_UNAVAILABLE = "Web search is unavailable."/);
   const unauthorized = createServer((req, res) => {
     res.writeHead(401, { "Content-Type": "application/json" });
@@ -3970,6 +3970,536 @@ test("company-anchored dkmarshall LinkedIn pages stay, and city-only namesakes s
     assert.deepEqual(slugged.payload.sources.map((item) => item.url), [post.url, sibling.url]);
     assert.equal(slugged.payload.sources.some((item) => item.url === legislator.url), false);
     await new Promise((resolve) => slugOnly.server.close(resolve));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+function loadReplay(name) {
+  return JSON.parse(readFileSync(join(fixtures, "profile-replay", name), "utf8"));
+}
+
+function profileSections() {
+  return {
+    client_stated: [{ text: "David Marshall writes about listing meetings.", sources: [1] }],
+    observations: [{ text: "He posts about the work in Phoenix.", sources: [2] }],
+    hypotheses: [{ text: "He wants a steady listing conversation.", sources: [3] }],
+    recommendations: [{ text: "Open with the listing meeting and ask what a good week looks like.", sources: [1] }],
+  };
+}
+
+function pluginChildEnv(op, ctx, exa = {}) {
+  const env = {
+    PATH: process.env.PATH,
+    HOME: ctx.dir,
+    LANG: "C.UTF-8",
+    PYTHONDONTWRITEBYTECODE: "1",
+    CLIENT_PROFILE_ROOT: ctx.data,
+    ARTIFACT_DIR: ctx.artifact,
+    ARTIFACT_BASE_URL: "https://files.example.test",
+  };
+  if (op === "profile") {
+    if (exa.key) env.EXA_API_KEY = exa.key;
+    if (exa.base) env.EXA_API_BASE = exa.base;
+    if (exa.baseUrl) env.EXA_BASE_URL = exa.baseUrl;
+  }
+  return env;
+}
+
+test("profile keeps tonight's David Marshall pages from several sites", async () => {
+  assert.doesNotMatch(skill, /\bconfirmed\b/i);
+  assert.match(skill, /Do not ask which profile/);
+  assert.match(skill, /LinkedIn or company site/);
+  const fixture = loadReplay("david-marshall-advisorreach.json");
+  const { server, hits } = replayServer(fixture.results);
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const exa = { EXA_API_KEY: "exa-test-key", EXA_API_BASE: `http://127.0.0.1:${port}` };
+    const profiled = await runAsync(
+      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--type", "buyer", "--company", "AdvisorReach"],
+      ctx,
+      exa,
+    );
+    assert.equal(profiled.payload.status, "ready", profiled.stdout + profiled.stderr);
+    assert.equal(profiled.payload.next, "write");
+    assert.equal(profiled.payload.say, undefined);
+    assert.equal(profiled.payload.identity.level, "High");
+    assert.equal(profiled.payload.identity.line, "High.");
+    assert.match(profiled.payload.pending.prompt, /Found 1 David Marshall in Phoenix/);
+    assert.match(profiled.payload.pending.prompt, /Reply 1 or NONE/);
+    const urls = profiled.payload.sources.map((item) => item.url);
+    const hosts = new Set(profiled.payload.sources.map((item) => item.host));
+    assert.ok(hosts.has("advisorreach.ai"));
+    assert.ok(hosts.has("linkedin.com"));
+    assert.ok(hosts.has("news.example.com"));
+    assert.ok(hosts.has("podcast.example.com"));
+    assert.ok(hosts.has("x.com"));
+    assert.ok(hosts.size >= 4);
+    assert.ok(profiled.payload.sources.length >= 5);
+    for (const url of [
+      "https://www.linkedin.com/in/dkmarshall",
+      "https://www.linkedin.com/posts/dkmarshall_advisorreach-activity-1",
+      "https://www.linkedin.com/posts/dkmarshall_showing-activity-2",
+    ]) {
+      assert.equal(urls.includes(url), true, url);
+    }
+    assert.equal(urls.some((url) => url.includes("axios.com") || url.includes("azleg.gov")), false);
+    assert.doesNotMatch(profiled.stdout, /axios\.com|azleg\.gov|which profile|\bconfirmed\b/i);
+    assert.match(profiled.payload.left_out_note, /other pages with this name were left out/);
+    const again = await runAsync(
+      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--type", "buyer", "--company", "AdvisorReach"],
+      ctx,
+      exa,
+    );
+    assert.equal(again.payload.record, profiled.payload.record);
+    assert.equal(again.payload.status, "ready");
+    assert.equal(hits.filter((hit) => hit.path === "/search").length, profiled.payload.query_count);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("an owner url keeps AdvisorReach journal pages and the query names the site", async () => {
+  const fixture = loadReplay("david-marshall-advisorreach-site.json");
+  const { server, hits } = replayServer(fixture.results);
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const profiled = await runAsync(
+      [
+        "profile",
+        "--actor",
+        "owner",
+        "--name",
+        "David Marshall",
+        "--city",
+        "Phoenix",
+        "--company",
+        "AdvisorReach",
+        "--url",
+        "https://advisorreach.ai/journal/listing-meetings",
+      ],
+      ctx,
+      { EXA_API_KEY: "exa-test-key", EXA_API_BASE: `http://127.0.0.1:${port}` },
+    );
+    assert.equal(profiled.payload.status, "ready", profiled.stdout + profiled.stderr);
+    const urls = profiled.payload.sources.map((item) => item.url);
+    assert.equal(urls.includes("https://advisorreach.ai/journal/buyers"), true, JSON.stringify(urls));
+    assert.equal(urls.includes("https://advisorreach.ai/journal/sellers"), true);
+    assert.ok(profiled.payload.queries.some((query) => query.includes("advisorreach.ai")));
+    assert.ok(hits.some((hit) => (hit.body.includeDomains || []).includes("advisorreach.ai")));
+    assert.equal(urls.some((url) => url.includes("axios.com")), false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("the owner's next text resolves 1 against the saved list and writes one page", async () => {
+  const fixture = loadReplay("david-marshall-advisorreach.json");
+  const { server, hits } = replayServer(fixture.results);
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const first = await runAsync(
+      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--type", "buyer", "--company", "AdvisorReach"],
+      ctx,
+      { EXA_API_KEY: "exa-test-key", EXA_API_BASE: `http://127.0.0.1:${port}` },
+    );
+    assert.equal(first.payload.status, "ready", first.stdout + first.stderr);
+    const before = hits.length;
+    const second = await runAsync(["profile", "--reply", "1", "--actor", "owner"], ctx);
+    assert.equal(hits.length, before);
+    assert.equal(second.payload.record, first.payload.record);
+    assert.equal(second.payload.reply, undefined);
+    assert.equal(second.payload.next, "write");
+    assert.equal(second.payload.identity.line, "Owner-picked. High.");
+    assert.doesNotMatch(second.stdout, /\bconfirmed\b|which profile/i);
+    const sectionsPath = join(ctx.dir, "sections.json");
+    writeFileSync(sectionsPath, JSON.stringify(profileSections()));
+    const bin = existsSync("/tmp/weasyprint") ? "/tmp/weasyprint" : weasyBin();
+    assert.ok(bin, "weasyprint is required for the one-page check");
+    const wrote = run(
+      ["write", first.payload.record, "--sections", sectionsPath, "--actor", "owner"],
+      ctx,
+      weasyEnv(bin),
+    );
+    assert.equal(wrote.payload.ok, true, wrote.stdout + wrote.stderr);
+    assert.equal(wrote.payload.pdf, true, wrote.stdout + wrote.stderr);
+    assert.equal(wrote.payload.pages, 1);
+    assert.match(wrote.payload.sms_text, /Verify before use\. David Marshall\. Identity: Owner-picked\. High\./);
+    assert.doesNotMatch(wrote.payload.sms_text, /\.\./);
+    assert.doesNotMatch(wrote.stdout, /\bconfirmed\b|which profile/i);
+    const html = readFileSync(join(ctx.data, "profiles", first.payload.record, "profile.html"), "utf8");
+    assert.match(html, /David Marshall/);
+    assert.match(html, /Owner-picked\. High\./);
+    assert.match(html, /Client stated/);
+    assert.match(html, /advisorreach\.ai/);
+    assert.equal(html.includes("axios.com"), false);
+    assert.equal(hits.length, before);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("NONE on the next text resolves against the saved list and does not write a pdf", async () => {
+  const fixture = loadReplay("david-marshall-advisorreach.json");
+  const { server } = replayServer(fixture.results);
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const first = await runAsync(
+      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach"],
+      ctx,
+      { EXA_API_KEY: "exa-test-key", EXA_API_BASE: `http://127.0.0.1:${port}` },
+    );
+    assert.equal(first.payload.status, "ready", first.stdout);
+    const second = await runAsync(["profile", "NONE", "--actor", "owner"], ctx);
+    assert.equal(second.payload.status, "none", second.stdout + second.stderr);
+    assert.equal(second.payload.next, "stop");
+    assert.equal(second.payload.reply, "NONE");
+    assert.doesNotMatch(second.stdout, /\bconfirmed\b|which profile/i);
+    const sectionsPath = join(ctx.dir, "sections.json");
+    writeFileSync(sectionsPath, JSON.stringify(profileSections()));
+    const wrote = run(["write", first.payload.record, "--sections", sectionsPath, "--actor", "owner"], ctx);
+    assert.equal(wrote.payload.ok, false);
+    assert.equal(wrote.payload.status, "none");
+    assert.equal(existsSync(join(ctx.data, "profiles", first.payload.record, "profile.pdf")), false);
+    assert.doesNotMatch(wrote.stdout, /\bconfirmed\b/i);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("a made-up Avery Quindle profile is no_match only when every query succeeds", async () => {
+  const { server } = replayServer(loadReplay("avery-quindle-empty.json").results);
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const profiled = await runAsync(
+      ["profile", "--actor", "owner", "--name", "Avery Quindle", "--city", "Flagstaff", "--type", "buyer"],
+      ctx,
+      { EXA_API_KEY: "exa-test-key", EXA_API_BASE: `http://127.0.0.1:${port}` },
+    );
+    assert.equal(profiled.payload.status, "no_match", profiled.stdout + profiled.stderr);
+    assert.equal(profiled.payload.say, "couldn't find");
+    assert.equal(profiled.payload.queries_succeeded, profiled.payload.query_count);
+    assert.ok(profiled.payload.query_count > 0);
+    const record = profiled.payload.record;
+    const stored = JSON.parse(readFileSync(join(ctx.data, "profiles", record, "profile.json"), "utf8"));
+    assert.equal(stored.status, "no_match");
+    assert.equal(existsSync(join(ctx.data, "profiles", record, "profile.pdf")), false);
+    const sectionsPath = join(ctx.dir, "sections.json");
+    writeFileSync(sectionsPath, JSON.stringify(profileSections()));
+    const wrote = run(["write", record, "--sections", sectionsPath, "--actor", "owner"], ctx);
+    assert.equal(wrote.payload.ok, false);
+    assert.equal(existsSync(join(ctx.data, "profiles", record, "profile.pdf")), false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("profile auth and partial failures are search_unavailable, not no_match", async () => {
+  async function once(setup, args) {
+    const hits = [];
+    const server = createServer((req, res) => {
+      const chunks = [];
+      req.on("data", (chunk) => chunks.push(chunk));
+      req.on("end", () => {
+        let body = {};
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+        } catch {
+          body = {};
+        }
+        hits.push(body);
+        setup(req, res, body);
+      });
+    });
+    const port = await listen(server);
+    try {
+      const ctx = world();
+      const profiled = await runAsync(args, ctx, {
+        EXA_API_KEY: "exa-test-key",
+        EXA_API_BASE: `http://127.0.0.1:${port}`,
+      });
+      return { profiled, ctx };
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  }
+  const nameArgs = ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach"];
+  const denied = await once((_req, res) => {
+    res.writeHead(401, { "Content-Type": "application/json" });
+    res.end('{"error":"Unauthorized","results":[]}');
+  }, nameArgs);
+  assert.equal(denied.profiled.payload.status, "search_unavailable", denied.profiled.stdout);
+  assert.equal(denied.profiled.payload.reason, "auth");
+  assert.equal(denied.profiled.payload.say, "Search isn't working on my side right now, so I didn't build the profile.");
+  assert.notEqual(denied.profiled.payload.status, "no_match");
+  assert.equal(existsSync(join(denied.ctx.data, "profiles")), false);
+
+  const body = await once((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end('{"error":"Unauthorized","results":[]}');
+  }, nameArgs);
+  assert.equal(body.profiled.payload.status, "search_unavailable");
+  assert.equal(body.profiled.payload.reason, "auth");
+  assert.equal(existsSync(join(body.ctx.data, "profiles")), false);
+
+  const limited = await once((_req, res) => {
+    res.writeHead(429, { "Content-Type": "application/json" });
+    res.end('{"error":"rate limited","results":[]}');
+  }, nameArgs);
+  assert.equal(limited.profiled.payload.reason, "rate_limited");
+  assert.equal(limited.profiled.payload.status, "search_unavailable");
+
+  const emptyFail = await once((_req, res, request) => {
+    const query = request.query || "";
+    if (query.includes("podcast")) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end('{"error":"unavailable"}');
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end('{"results":[]}');
+  }, ["profile", "--actor", "owner", "--name", "Avery Quindle", "--city", "Flagstaff"]);
+  assert.equal(emptyFail.profiled.payload.status, "search_unavailable", emptyFail.profiled.stdout);
+  assert.notEqual(emptyFail.profiled.payload.status, "no_match");
+  assert.equal(existsSync(join(emptyFail.ctx.data, "profiles")), false);
+
+  const fixture = loadReplay("david-marshall-advisorreach.json");
+  const partial = await once((_req, res, request) => {
+    const query = request.query || "";
+    if (query.includes("podcast")) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end('{"error":"unavailable"}');
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ results: fixture.results }));
+  }, nameArgs);
+  assert.equal(partial.profiled.payload.status, "ready", partial.profiled.stdout + partial.profiled.stderr);
+  assert.ok(partial.profiled.payload.searches_failed >= 1);
+  assert.match(partial.profiled.payload.banner, /of \d+ searches ran and kept/);
+});
+
+test("profile name phrase and company spacing stay strict", async () => {
+  async function searchPages(name, city, company, pages) {
+    const { server } = replayServer(pages);
+    const port = await listen(server);
+    try {
+      const ctx = world();
+      return await runAsync(
+        ["profile", "--actor", "owner", "--name", name, "--city", city, "--company", company],
+        ctx,
+        { EXA_API_KEY: "exa-test-key", EXA_API_BASE: `http://127.0.0.1:${port}` },
+      );
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  }
+  const spaced = await searchPages("David Marshall", "Phoenix", "AdvisorReach", [
+    {
+      url: "https://news.example.com/advisor-reach",
+      title: "David Marshall",
+      text: "David Marshall leads Advisor Reach in Phoenix.",
+    },
+  ]);
+  assert.equal(spaced.payload.status, "ready", spaced.stdout + spaced.stderr);
+  assert.equal(spaced.payload.sources.length, 1);
+
+  const scattered = await searchPages("David Marshall", "Phoenix", "AdvisorReach", [
+    {
+      url: "https://news.example.com/scattered",
+      title: "Two people",
+      text: "David works in Phoenix. Marshall leads AdvisorReach.",
+    },
+  ]);
+  assert.equal(scattered.payload.status, "no_match", scattered.stdout + scattered.stderr);
+  assert.equal(scattered.payload.queries_succeeded, scattered.payload.query_count);
+
+  const crossed = await searchPages("Riley Example", "Austin", "Example Co", [
+    {
+      url: "https://news.example.com/riley",
+      title: "A panel",
+      text: "Riley Smith and Ann Example spoke in Austin about Example Co.",
+    },
+  ]);
+  assert.equal(crossed.payload.status, "no_match", crossed.stdout + crossed.stderr);
+});
+
+test("two LinkedIn profiles ask, and a reply picks one person", async () => {
+  const pages = [
+    {
+      url: "https://www.linkedin.com/in/dkmarshall",
+      title: "David Marshall",
+      text: "David Marshall in Phoenix.",
+      highlights: ["AdvisorReach"],
+    },
+    {
+      url: "https://www.linkedin.com/in/davidmarshallaz",
+      title: "David Marshall",
+      text: "David Marshall in Phoenix.",
+      highlights: ["AdvisorReach"],
+    },
+  ];
+  const { server } = replayServer(pages);
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const profiled = await runAsync(
+      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach"],
+      ctx,
+      { EXA_API_KEY: "exa-test-key", EXA_API_BASE: `http://127.0.0.1:${port}` },
+    );
+    assert.equal(profiled.payload.status, "needs_disambiguation", profiled.stdout + profiled.stderr);
+    assert.match(profiled.payload.say, /I found 2 David Marshalls/);
+    assert.match(profiled.payload.say, /Reply 1, 2 or NONE/);
+    assert.doesNotMatch(profiled.stdout, /which profile|\bconfirmed\b/i);
+    const sectionsPath = join(ctx.dir, "sections.json");
+    writeFileSync(sectionsPath, JSON.stringify(profileSections()));
+    const blocked = run(["write", profiled.payload.record, "--sections", sectionsPath, "--actor", "owner"], ctx);
+    assert.equal(blocked.payload.ok, false);
+    assert.equal(blocked.payload.status, "needs_disambiguation");
+    assert.equal(existsSync(join(ctx.data, "profiles", profiled.payload.record, "profile.pdf")), false);
+    const picked = await runAsync(["profile", "--reply", "2", "--actor", "owner"], ctx);
+    assert.equal(picked.payload.status, "ready", picked.stdout + picked.stderr);
+    assert.equal(picked.payload.identity.line, "Owner-picked. Medium.");
+    assert.deepEqual(picked.payload.sources.map((item) => item.url), ["https://www.linkedin.com/in/davidmarshallaz"]);
+    assert.doesNotMatch(picked.stdout, /which profile|\bconfirmed\b/i);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("write keeps the four sections, rejects a bad section, and does not search", async () => {
+  const fixture = loadReplay("david-marshall-advisorreach.json");
+  const { server, hits } = replayServer(fixture.results);
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const config = JSON.parse(readFileSync(join(ctx.data, "config.json"), "utf8"));
+    config.exa_api_key = "config-key";
+    config.exa_base_url = `http://127.0.0.1:${port}`;
+    writeFileSync(join(ctx.data, "config.json"), JSON.stringify(config));
+    const profiled = await runAsync(
+      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach"],
+      ctx,
+      pluginChildEnv("profile", ctx, { key: "exa-test-key", base: `http://127.0.0.1:${port}` }),
+    );
+    assert.equal(profiled.payload.status, "ready", profiled.stdout + profiled.stderr);
+    const before = hits.length;
+    const token = `LONGSECTIONMARKER ${"alpha ".repeat(60)}`;
+    const sections = profileSections();
+    sections.observations = [{ text: token, sources: [2] }];
+    sections.client_stated = [{ text: "Nothing public in his own words.", sources: [] }];
+    const sectionsPath = join(ctx.dir, "sections.json");
+    writeFileSync(sectionsPath, JSON.stringify(sections));
+    const wrote = run(
+      ["write", profiled.payload.record, "--sections", sectionsPath, "--actor", "owner"],
+      ctx,
+      pluginChildEnv("write", ctx),
+    );
+    assert.equal(wrote.payload.ok, true, wrote.stdout + wrote.stderr);
+    assert.equal(hits.length, before);
+    const html = readFileSync(join(ctx.data, "profiles", profiled.payload.record, "profile.html"), "utf8");
+    assert.ok(html.includes(token));
+    assert.match(html, /Nothing public in his own words/);
+    const badPath = join(ctx.dir, "bad.json");
+    writeFileSync(
+      badPath,
+      JSON.stringify({
+        client_stated: [{ text: "The church on Main is his anchor.", sources: [1] }],
+        observations: [{ text: "He posts.", sources: [2] }],
+        hypotheses: [{ text: "He decides slowly.", sources: [3] }],
+        recommendations: [{ text: "Ask one question.", sources: [1] }],
+        extra: true,
+      }),
+    );
+    const extra = run(["write", profiled.payload.record, "--sections", badPath, "--actor", "owner"], ctx);
+    assert.equal(extra.payload.ok, false);
+    const fairPath = join(ctx.dir, "fair.json");
+    writeFileSync(
+      fairPath,
+      JSON.stringify({
+        client_stated: [{ text: "The church on Main is his anchor.", sources: [1] }],
+        observations: [{ text: "He posts.", sources: [2] }],
+        hypotheses: [{ text: "He decides slowly.", sources: [3] }],
+        recommendations: [{ text: "Ask one question.", sources: [1] }],
+      }),
+    );
+    const fair = run(["write", profiled.payload.record, "--sections", fairPath, "--actor", "owner"], ctx);
+    assert.equal(fair.payload.ok, false, fair.stdout);
+    assert.equal(fair.payload.error, "rejected");
+    assert.doesNotMatch(fair.stdout, /church on Main|\bconfirmed\b/i);
+    const claimedPath = join(ctx.dir, "claimed.json");
+    writeFileSync(
+      claimedPath,
+      JSON.stringify({
+        client_stated: [{ text: "This identity was confirmed by the office.", sources: [1] }],
+        observations: [{ text: "He posts.", sources: [2] }],
+        hypotheses: [{ text: "He decides slowly.", sources: [3] }],
+        recommendations: [{ text: "Ask one question.", sources: [1] }],
+      }),
+    );
+    const claimed = run(["write", profiled.payload.record, "--sections", claimedPath, "--actor", "owner"], ctx);
+    assert.equal(claimed.payload.ok, false);
+    assert.equal(claimed.payload.errors[0].message, "Rate identity confidence High, Medium, or Low.");
+    assert.doesNotMatch(claimed.stdout, /\bconfirmed\b/i);
+    assert.equal(hits.length, before);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("profile uses the plugin env only for profile, and a config key 401 is unavailable", async () => {
+  const fixture = loadReplay("david-marshall-advisorreach.json");
+  const { server, hits } = replayServer(fixture.results);
+  const port = await listen(server);
+  try {
+    const ctx = world();
+    const ready = await runAsync(
+      ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach"],
+      ctx,
+      pluginChildEnv("profile", ctx, { key: "exa-test-key", base: `http://127.0.0.1:${port}` }),
+    );
+    assert.equal(ready.payload.status, "ready", ready.stdout + ready.stderr);
+    assert.ok(hits.length > 0);
+    const bare = world();
+    const config = JSON.parse(readFileSync(join(bare.data, "config.json"), "utf8"));
+    config.exa_api_key = "stale-config-key";
+    config.exa_base_url = `http://127.0.0.1:${port}`;
+    writeFileSync(join(bare.data, "config.json"), JSON.stringify(config));
+    const denied = createServer((_req, res) => {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end('{"error":"Unauthorized","results":[]}');
+    });
+    const deniedPort = await listen(denied);
+    config.exa_base_url = `http://127.0.0.1:${deniedPort}`;
+    writeFileSync(join(bare.data, "config.json"), JSON.stringify(config));
+    try {
+      const missed = await runAsync(
+        ["profile", "--actor", "owner", "--name", "David Marshall", "--city", "Phoenix", "--company", "AdvisorReach"],
+        bare,
+        pluginChildEnv("write", bare),
+      );
+      assert.equal(missed.payload.status, "search_unavailable", missed.stdout + missed.stderr);
+      assert.equal(missed.payload.reason, "auth");
+      assert.notEqual(missed.payload.status, "no_match");
+      assert.equal(missed.payload.say, "Search isn't working on my side right now, so I didn't build the profile.");
+      assert.equal(existsSync(join(bare.data, "profiles")), false);
+    } finally {
+      await new Promise((resolve) => denied.close(resolve));
+    }
+    const quiet = await runAsync(
+      ["profile", "--actor", "owner", "--name", "Riley Example", "--city", "Austin"],
+      world(),
+      pluginChildEnv("write", world()),
+    );
+    assert.equal(quiet.payload.status, "search_unavailable");
+    assert.equal(quiet.payload.reason, "no_key");
+    assert.notEqual(quiet.payload.say, "couldn't find");
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

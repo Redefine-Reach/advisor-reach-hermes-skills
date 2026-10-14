@@ -1,0 +1,54 @@
+{
+  "note": "October 14, 2026 smoke pages for David Marshall / Phoenix / AdvisorReach, shaped as Exa search results. This is not a raw Exa HTTP body. The journal, the dkmarshall LinkedIn profile and posts, news, a podcast, and X all name him. The recorder and legislator pages are other people.",
+  "results": [
+    {
+      "url": "https://advisorreach.ai/journal/listing-meetings",
+      "title": "David Marshall on listing meetings",
+      "text": "David Marshall writes for AdvisorReach in Phoenix."
+    },
+    {
+      "url": "https://www.linkedin.com/in/dkmarshall",
+      "title": "David Marshall",
+      "text": "David Marshall. Phoenix.",
+      "highlights": [{ "text": "AdvisorReach · Phoenix" }]
+    },
+    {
+      "url": "https://www.linkedin.com/posts/dkmarshall_advisorreach-activity-1",
+      "title": "David Marshall",
+      "text": "David Marshall posted an update."
+    },
+    {
+      "url": "https://www.linkedin.com/posts/dkmarshall_showing-activity-2",
+      "title": "David Marshall",
+      "text": "David Marshall posted about a showing."
+    },
+    {
+      "url": "https://news.example.com/marshall-buyers",
+      "title": "David Marshall interview",
+      "text": "David Marshall spoke in Phoenix about buyer meetings.",
+      "highlights": ["AdvisorReach founder David Marshall"]
+    },
+    {
+      "url": "https://podcast.example.com/marshall",
+      "title": "David Marshall on the show",
+      "text": "David Marshall joins the podcast from Phoenix.",
+      "highlights": ["his firm AdvisorReach"]
+    },
+    {
+      "url": "https://x.com/dkmarshall",
+      "title": "David Marshall",
+      "text": "David Marshall in Phoenix.",
+      "highlights": ["AdvisorReach"]
+    },
+    {
+      "url": "https://www.axios.com/local/phoenix/david-marshall-recorder",
+      "title": "David Marshall, Navajo County recorder",
+      "text": "David Marshall is the Navajo County recorder in Phoenix."
+    },
+    {
+      "url": "https://www.azleg.gov/members/david-marshall",
+      "title": "David Marshall, Arizona legislator",
+      "text": "David Marshall is an Arizona legislator from Phoenix."
+    }
+  ]
+}

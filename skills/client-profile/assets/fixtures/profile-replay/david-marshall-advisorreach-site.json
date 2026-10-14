@@ -1,0 +1,42 @@
+{
+  "note": "October 14, 2026 smoke pages plus the AdvisorReach journal URLs the owner can hand in. Shaped as Exa results, not a raw HTTP body. Buyers and sellers pages name David Marshall and sit on advisorreach.ai. They do not repeat the company word in the sentence.",
+  "results": [
+    {
+      "url": "https://advisorreach.ai/journal/listing-meetings",
+      "title": "David Marshall on listing meetings",
+      "text": "David Marshall writes for AdvisorReach in Phoenix."
+    },
+    {
+      "url": "https://advisorreach.ai/journal/buyers",
+      "title": "David Marshall journal",
+      "text": "David Marshall writes about Phoenix buyers."
+    },
+    {
+      "url": "https://advisorreach.ai/journal/sellers",
+      "title": "David Marshall notes",
+      "text": "David Marshall covers Phoenix listings."
+    },
+    {
+      "url": "https://www.linkedin.com/in/dkmarshall",
+      "title": "David Marshall",
+      "text": "David Marshall. Phoenix.",
+      "highlights": [{ "text": "AdvisorReach · Phoenix" }]
+    },
+    {
+      "url": "https://www.linkedin.com/posts/dkmarshall_advisorreach-activity-1",
+      "title": "David Marshall",
+      "text": "David Marshall posted an update."
+    },
+    {
+      "url": "https://news.example.com/marshall-buyers",
+      "title": "David Marshall interview",
+      "text": "David Marshall spoke in Phoenix about buyer meetings.",
+      "highlights": ["AdvisorReach founder David Marshall"]
+    },
+    {
+      "url": "https://www.axios.com/local/phoenix/david-marshall-recorder",
+      "title": "David Marshall, Navajo County recorder",
+      "text": "David Marshall is the Navajo County recorder in Phoenix."
+    }
+  ]
+}
