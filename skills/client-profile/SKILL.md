@@ -5,7 +5,7 @@ description: "Use when the owner asks to profile, brief, or prep for a buyer/lis
 
 # Client profile (appointment brief)
 
-Build a one-page cited communication brief for one named person the owner is about to meet. Intake is name, city, and appointment type, plus optional URLs. The brief is a working hypothesis. Verify it before use.
+Build a one-page cited communication brief for one named person the owner is about to meet. Every new person starts with a fresh intake: name, city, appointment type, company, and any URLs. The brief is a working hypothesis. Verify it before use.
 
 Research uses only publicly available information. Never contact the client or lead. There is no consent step. Do not text the lead, and do not ask the owner to text the lead for permission.
 
@@ -47,7 +47,7 @@ from intake (use `new` for intake). Each call returns the same JSON the cp.py co
 
 | Step | render_file call |
 |---|---|
-| Intake | `op: intake`, `slug: new`, `cp: {name, city, type, appt_at?, urls?}` |
+| Intake | `op: intake`, `slug: new`, `cp: {name, city, type, company?, urls?, appt_at?}` |
 | Queries | `op: queries` lists the searches. It does not run them. |
 | Search | `op: search` runs every query through Exa, fetches the top pages, dedupes them, and stores evidence |
 | Evidence | `op: evidence_add`, `cp: {url, title, excerpt, origin: web|manual, query?, candidate}` |
@@ -58,28 +58,30 @@ from intake (use `new` for intake). Each call returns the same JSON the cp.py co
 | Render + deliver | `op: render` returns `link`, `pages`, `expires_at` and `sms_text` |
 | Forget | `op: forget` |
 
-When the owner pastes a bio or notes, add them with `origin: manual`, the URL they gave, and a NEW `candidate` number that no web result uses (one higher than the highest so far). Never put owner-pasted text under a web result's candidate. If the owner already replied NONE, the script drops those public matches and renumbers whoever is left from 1. The pasted notes come back as `candidate` 1 when they are the only one left. Offer only that candidate: `Found 1 <name> in <city>: 1) <one-line summary of the pasted bio> Reply 1 or NONE`, and confirm with `--candidate 1`. Never offer the old public number, and never confirm a web result the owner did not pick by its number. After
+When the owner pastes a bio or notes, add them with `origin: manual`, the URL they gave, and a NEW `candidate` number that no web result uses (one higher than the highest so far). Never put owner-pasted text under a web result's candidate. Owner notes may only add to a brief that already has public sources. They never replace a search. If the owner already replied NONE, the script drops those public matches. Do not render a brief from the notes that remain. After
 `op: render`, reply to the owner with exactly `sms_text` (it already contains the link). Do not run
 present-file. If render_file is refused or fails, tell the owner exactly "I can't make that file over
 text right now." and never guess a cause. When the owner says to forget or delete a client's profile, run only `op: forget` (do not use donotkeep for this; it is a deletion, not a do-not-keep rule) and reply "Deleted <name>'s profile and link."
 
 ## Tool sequence (cp.py reference)
 
-Run, in order, with `python3 /opt/data/skills/client-profile/scripts/cp.py`. Every command prints one JSON object `{"ok": true|false, ...}`.
+The required order is intake, then search, then identity, then render. Run those steps with `python3 /opt/data/skills/client-profile/scripts/cp.py`. Every command prints one JSON object `{"ok": true|false, ...}`.
+
+Every new profile request starts a fresh intake with the name, the city, the company, and any urls. Never reuse a prior client record unless the owner explicitly names that same client. A later message that names a different person is a new intake. Do not re-render the previous client's brief or notes.
 
 1. **Intake.** `cp.py intake --name "..." --city "..." --type buyer|listing|other`  
-   Optional `--company` (or brokerage), optional `--role`, optional repeatable `--url`, optional `--appt-at` (ISO), optional `--tz` (IANA). There is no `--address` flag. Do not pass a street, ZIP, phone, email, or birth date.
+   Pass `--company` (or brokerage) when the owner gave one, optional `--role`, repeatable `--url` for every link the owner gave, optional `--appt-at` (ISO), optional `--tz` (IANA). Company and those urls are stored on the intake. They feed the search queries and the disambiguation anchors. There is no `--address` flag. Do not pass a street, ZIP, phone, email, or birth date.
 2. **Search.** `cp.py search <client_id>`  
    This runs every returned query through Exa (`EXA_API_KEY`, or `exa_api_key` in config.json). It fetches the top pages, drops duplicate URLs, and stores one evidence row per kept page. Do not call `web_search` or `web_extract` for this skill. Do not stop after the first hit. `cp.py queries` only lists the strings; it does not search.
-   If search returns `search_unavailable`, say that message to the owner and do not write a research brief. A brief with web evidence is refused until search can run.
-   If search returns `couldnt_find`, tell the owner exactly `couldn't find` and do not write a brief. Zero sources is that outcome, not an empty list.
+   If search is refused (`search_unavailable`), say that message to the owner and stop. Do not write a research brief, and do not render one from owner notes.
+   If search errors or returns `couldnt_find`, tell the owner exactly `couldn't find` and stop. Zero sources is that outcome. Do not render a brief from notes.
    If search returns `need_anchor`, identity confidence is Low. Tell the owner no source matches this city, company, role, or link, and ask for a profile link or company. Do not write a brief.
    A same-name page that does not match the city, the company or brokerage, the role, or a link the owner gave is a different person. Leave it out of the facts and out of the citations. Say at most one line, `N other people with this name were excluded.` Do not name those other people. Never blend them into the person being briefed.
-3. **Evidence.** Pages from `search` are already stored. Add a manual paste only when the owner supplies one:  
+3. **Evidence.** Pages from `search` are already stored. Add a manual paste only when the owner supplies one and a public search already kept sources:  
    `cp.py evidence add <client_id> --url ... --title ... --excerpt ... --origin manual --query "owner paste" --candidate N`  
-   Do not put owner-pasted text on a web result's candidate. Cite every URL in `search.json` `sources` from `appendix.sources`.
+   Do not put owner-pasted text on a web result's candidate. Owner notes may only add to a brief that already has public sources. They never replace a search. Cite every URL in `search.json` `sources` from `appendix.sources`.
 4. **Candidates.** `cp.py identity candidates <client_id>`  
-   Add the search results first. An empty list before any evidence means you have not searched yet.
+   Run search first. Identity with no public search results returns `status` `couldnt_find` and an empty `candidates` list. That is not `{ok: true, candidates: []}` with no status, and it is not a cue to brief from notes or to reuse an older client.
    If `status` is `couldnt_find`, stop. Tell the owner exactly `couldn't find`. Do not brief and do not guess another person who shares only a first name.
    If `status` is `need_anchor`, identity confidence is Low. Ask for a profile link or company. Do not brief the same-name hits.
    If `status` is `need_profile_link`, ask the advisor for a profile link. Add that link with `evidence add` (`--origin web`). The link is saved on the intake and unblocks the name. A page search found on its own does not. Do not guess.
@@ -102,17 +104,19 @@ Delete this client: `cp.py delete <client_id>` removes that client directory and
 Approved shapes (the script builds these):
 
 ```
-"<name>" "<city>" LinkedIn          (linkedin.com)
-"<name>" "<city>" X                 (x.com and twitter.com)
-"<name>" "<city>" company site
-"<name>" "<city>" news
-"<name>" "<city>" podcast
-"<name>" "<city>"                   (keyword search, Google-style)
-"<name>" <knownUrl>
+"<name>" "<city>" "<company>" LinkedIn          (linkedin.com)
+"<name>" "<city>" "<company>" X                 (x.com and twitter.com)
+"<name>" "<city>" "<company>" company site
+"<name>" "<city>" "<company>" news
+"<name>" "<city>" "<company>" podcast
+"<name>" "<city>" "<company>"                   (keyword search, Google-style)
+"<name>" "<company>" <knownUrl>
 ```
 
+When the intake has no company, the script omits the company quotes. The city, company, role, and owner-supplied urls are the disambiguation anchors.
+
 - `cp.py search` runs all of these. The cap is 8, which keeps every target above and up to two profile URLs the advisor already supplied. Results are merged and deduped by URL. A hit is kept only when it matches the city, company or brokerage, role, or a link the owner gave. Cite every kept URL in `appendix.sources`. Do not cite a same-name hit that failed that match.
-- There is no web_search fallback. If `EXA_API_KEY` is missing, search stops and the brief must say search is unavailable instead of using one thin source.
+- There is no web_search fallback. If `EXA_API_KEY` is missing, search stops. Say that search is unavailable. Do not fill the brief from one thin source or from owner notes.
 - Escape quotes in the name. The script does this.
 - Never include a street, ZIP, phone, email, or date of birth. If the owner pasted one into the name or city, the script strips it and returns a warning code. Do not add it back.
 - Login-walled or private Instagram: do not attempt login. If the script marks the URL inaccessible, do not fetch it. A manual paste is the only way that content enters evidence.

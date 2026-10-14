@@ -196,6 +196,9 @@ QUERY_TARGETS = (
 SEARCH_UNAVAILABLE = (
     "Search is unavailable. No Exa key is set, so this brief was not filled from a multi-source search."
 )
+NOTES_ONLY = (
+    "Owner notes can add to a brief that already has public sources. They cannot replace a search."
+)
 NEED_ANCHOR = (
     "Identity confidence is Low. No source matches this city, company, role, or link. "
     "Send a profile link or company."
@@ -661,21 +664,19 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
     schema_validate(brief, schema, "", schema, errors)
     if errors:
         return {"ok": False, "errors": errors, "warnings": warnings, "brief": None}
-    if search_missed(path) and not any(
-        row.get("identity_status") == "confirmed" for row in load_evidence(path)
-    ):
-        return {
-            "ok": False,
-            "errors": [{"code": "couldnt_find", "message": "couldn't find"}],
-            "warnings": warnings,
-            "brief": None,
-        }
-    if search_needs_anchor(path) and not any(
-        row.get("identity_status") == "confirmed" for row in load_evidence(path)
-    ):
+    # A refused search, a missed search, or a search that kept nothing cannot
+    # be replaced by owner notes. Stop before a brief is stored.
+    if search_needs_anchor(path):
         return {
             "ok": False,
             "errors": [{"code": "need_anchor", "message": NEED_ANCHOR}],
+            "warnings": warnings,
+            "brief": None,
+        }
+    if search_missed(path):
+        return {
+            "ok": False,
+            "errors": [{"code": "couldnt_find", "message": "couldn't find"}],
             "warnings": warnings,
             "brief": None,
         }
@@ -723,11 +724,15 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
                 "message": "Do not say confirmed. Rate identity confidence high, medium, or low.",
             })
     search_doc = load_search(path)
+    public_confirmed = any(
+        row.get("identity_status") == "confirmed" and row.get("origin") == "web" for row in rows
+    )
     if search_doc and search_doc.get("status") == "unavailable":
+        errors.append({"code": "search_unavailable", "message": SEARCH_UNAVAILABLE})
         if any(row.get("origin") == "web" for row in rows):
             errors.append({"code": "thin_without_search", "message": SEARCH_UNAVAILABLE})
-        if "Search is unavailable" not in (brief.get("snapshot") or ""):
-            errors.append({"code": "search_unavailable", "message": SEARCH_UNAVAILABLE})
+    elif not public_confirmed:
+        errors.append({"code": "notes_only", "message": NOTES_ONLY})
     elif search_doc and search_doc.get("status") == "done":
         cited_urls = set()
         for source in (brief.get("appendix") or {}).get("sources") or []:
@@ -1232,23 +1237,31 @@ def trim_one_bullet(brief: dict) -> bool:
     return False
 
 
-def build_queries(name: str, city: str, urls: list[str]) -> tuple[list[dict], list[dict], list[str]]:
+def build_queries(name: str, city: str, urls: list[str], company: str = "") -> tuple[list[dict], list[dict], list[str]]:
     codes: list[str] = []
     clean_name, name_codes = redact(name)
     clean_city, city_codes = redact(city)
+    clean_company, company_codes = redact(company) if company else ("", [])
     codes.extend(name_codes)
     codes.extend(city_codes)
-    if contains_blocked_token(clean_name) or contains_blocked_token(clean_city):
+    codes.extend(company_codes)
+    if (
+        contains_blocked_token(clean_name)
+        or contains_blocked_token(clean_city)
+        or contains_blocked_token(clean_company)
+    ):
         fail("address_token_in_query", "A query would have contained a blocked token.")
     queries: list[dict] = []
     quoted_name = escape_quotes(clean_name)
     quoted_city = escape_quotes(clean_city)
+    quoted_company = escape_quotes(clean_company)
+    company_bit = f' "{quoted_company}"' if clean_company else ""
     for spec in QUERY_TARGETS:
         stem = spec["stem"]
         if clean_name and clean_city:
-            text = f'"{quoted_name}" "{quoted_city}"' + (f" {stem}" if stem else "")
+            text = f'"{quoted_name}" "{quoted_city}"{company_bit}' + (f" {stem}" if stem else "")
         elif clean_name:
-            text = f'"{quoted_name}"' + (f" {stem}" if stem else "")
+            text = f'"{quoted_name}"{company_bit}' + (f" {stem}" if stem else "")
         else:
             continue
         item = {"q": text, "target": spec["target"]}
@@ -1275,7 +1288,10 @@ def build_queries(name: str, city: str, urls: list[str]) -> tuple[list[dict], li
             continue
         if len(queries) >= QUERY_CAP:
             break
-        queries.append({"q": f'"{quoted_name}" {url}', "target": "url"})
+        if clean_company:
+            queries.append({"q": f'"{quoted_name}" "{quoted_company}" {url}', "target": "url"})
+        else:
+            queries.append({"q": f'"{quoted_name}" {url}', "target": "url"})
     safe = []
     for item in queries[:QUERY_CAP]:
         text = item["q"]
@@ -1424,7 +1440,12 @@ def cmd_queries(client_id: str, opts: dict[str, list[str]]) -> None:
     for item in intake.get("inaccessible_urls") or []:
         if isinstance(item, dict) and item.get("url"):
             urls.append(item["url"])
-    queries, inaccessible, codes = build_queries(intake.get("name") or "", intake.get("city") or "", urls)
+    queries, inaccessible, codes = build_queries(
+        intake.get("name") or "",
+        intake.get("city") or "",
+        urls,
+        intake.get("company") or "",
+    )
     if not queries:
         fail("no_queries", "No safe name-and-city query could be built.")
     result: dict = {"ok": True, "queries": queries}
@@ -1478,6 +1499,10 @@ def canon_url(url: str) -> str:
     return f"{host}{path}"
 
 
+class ExaError(Exception):
+    """Exa refused the call or returned a body this skill cannot use."""
+
+
 def exa_post(path: str, payload: dict, key: str) -> dict:
     req = urllib.request.Request(
         exa_url(path),
@@ -1494,15 +1519,15 @@ def exa_post(path: str, payload: dict, key: str) -> dict:
         with urllib.request.urlopen(req, timeout=25) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
-        fail("search_failed", f"Exa returned HTTP {exc.code}.")
-    except (urllib.error.URLError, TimeoutError, OSError):
-        fail("search_failed", "Exa could not be reached.")
+        raise ExaError(f"Exa returned HTTP {exc.code}.") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise ExaError("Exa could not be reached.") from exc
     try:
         parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        fail("search_failed", "Exa returned a non-JSON response.")
+    except json.JSONDecodeError as exc:
+        raise ExaError("Exa returned a non-JSON response.") from exc
     if not isinstance(parsed, dict):
-        fail("search_failed", "Exa returned an unexpected response.")
+        raise ExaError("Exa returned an unexpected response.")
     return parsed
 
 
@@ -1628,6 +1653,40 @@ def excluded_people_note(count: int) -> str:
     return f"{count} other people with this name were excluded."
 
 
+def write_couldnt_find(
+    path: Path,
+    client_id: str,
+    actor: str | None,
+    queries: list[dict],
+    inaccessible: list[dict],
+    codes: list[str],
+) -> None:
+    write_json(path / "search.json", {
+        "status": "couldnt_find",
+        "message": "couldn't find",
+        "query_count": len(queries),
+        "queries": [query["q"] for query in queries],
+        "targets": [query.get("target") for query in queries],
+        "source_count": 0,
+        "sources": [],
+        "profile_count": 0,
+    })
+    audit("search", client_id, {"queries": len(queries), "sources": 0}, actor)
+    missed = {
+        "ok": False,
+        "error": "couldnt_find",
+        "status": "couldnt_find",
+        "message": "couldn't find",
+        "query_count": len(queries),
+        "source_count": 0,
+    }
+    if inaccessible:
+        missed["inaccessible"] = inaccessible
+    if codes:
+        missed["warnings"] = [warning(code) for code in codes]
+    emit(missed, 1)
+
+
 def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
     actor = gate(actor_of(opts), mutate=True)
     path = require_client(client_id)
@@ -1636,7 +1695,12 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
     for item in intake.get("inaccessible_urls") or []:
         if isinstance(item, dict) and item.get("url"):
             urls.append(item["url"])
-    queries, inaccessible, codes = build_queries(intake.get("name") or "", intake.get("city") or "", urls)
+    queries, inaccessible, codes = build_queries(
+        intake.get("name") or "",
+        intake.get("city") or "",
+        urls,
+        intake.get("company") or "",
+    )
     if not queries:
         fail("no_queries", "No safe name-and-city query could be built.")
     key = exa_key()
@@ -1664,39 +1728,43 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
     found: list[dict] = []
     seen: set[str] = set()
     need_text: list[str] = []
-    for query in queries:
-        payload = exa_post("/search", exa_search_body(query), key)
-        for raw in payload.get("results") or []:
-            if not isinstance(raw, dict):
-                continue
-            url = raw.get("url") if isinstance(raw.get("url"), str) else ""
-            if not is_http_url(url) or dangerous_url(url) or is_instagram(url):
-                continue
-            key_url = canon_url(url)
-            if not key_url or key_url in seen:
-                continue
-            seen.add(key_url)
-            title = raw.get("title") if isinstance(raw.get("title"), str) else ""
-            text = result_text(raw)
-            item = {"url": url, "title": title, "text": text, "query": query["q"], "target": query.get("target") or ""}
-            found.append(item)
-            if not text.strip():
-                need_text.append(url)
-    if need_text:
-        filled = exa_post("/contents", {"urls": need_text, "text": {"maxCharacters": EXA_TEXT_CHARS}}, key)
-        by_url = {}
-        for raw in filled.get("results") or []:
-            if isinstance(raw, dict) and isinstance(raw.get("url"), str):
-                by_url[canon_url(raw["url"])] = raw
-        for item in found:
-            if item["text"].strip():
-                continue
-            raw = by_url.get(canon_url(item["url"]))
-            if not raw:
-                continue
-            item["text"] = result_text(raw)
-            if not item["title"] and isinstance(raw.get("title"), str):
-                item["title"] = raw["title"]
+    try:
+        for query in queries:
+            payload = exa_post("/search", exa_search_body(query), key)
+            for raw in payload.get("results") or []:
+                if not isinstance(raw, dict):
+                    continue
+                url = raw.get("url") if isinstance(raw.get("url"), str) else ""
+                if not is_http_url(url) or dangerous_url(url) or is_instagram(url):
+                    continue
+                key_url = canon_url(url)
+                if not key_url or key_url in seen:
+                    continue
+                seen.add(key_url)
+                title = raw.get("title") if isinstance(raw.get("title"), str) else ""
+                text = result_text(raw)
+                item = {"url": url, "title": title, "text": text, "query": query["q"], "target": query.get("target") or ""}
+                found.append(item)
+                if not text.strip():
+                    need_text.append(url)
+        if need_text:
+            filled = exa_post("/contents", {"urls": need_text, "text": {"maxCharacters": EXA_TEXT_CHARS}}, key)
+            by_url = {}
+            for raw in filled.get("results") or []:
+                if isinstance(raw, dict) and isinstance(raw.get("url"), str):
+                    by_url[canon_url(raw["url"])] = raw
+            for item in found:
+                if item["text"].strip():
+                    continue
+                raw = by_url.get(canon_url(item["url"]))
+                if not raw:
+                    continue
+                item["text"] = result_text(raw)
+                if not item["title"] and isinstance(raw.get("title"), str):
+                    item["title"] = raw["title"]
+    except ExaError:
+        save_evidence(path, rows)
+        write_couldnt_find(path, client_id, actor, queries, inaccessible, codes)
     kept: list[dict] = []
     for item in found:
         blob = f"{item['title']} {item['text']}"
@@ -1717,30 +1785,7 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
         })
     if not kept:
         save_evidence(path, rows)
-        write_json(path / "search.json", {
-            "status": "couldnt_find",
-            "message": "couldn't find",
-            "query_count": len(queries),
-            "queries": [query["q"] for query in queries],
-            "targets": [query.get("target") for query in queries],
-            "source_count": 0,
-            "sources": [],
-            "profile_count": 0,
-        })
-        audit("search", client_id, {"queries": len(queries), "sources": 0}, actor)
-        missed = {
-            "ok": False,
-            "error": "couldnt_find",
-            "status": "couldnt_find",
-            "message": "couldn't find",
-            "query_count": len(queries),
-            "source_count": 0,
-        }
-        if inaccessible:
-            missed["inaccessible"] = inaccessible
-        if codes:
-            missed["warnings"] = [warning(code) for code in codes]
-        emit(missed, 1)
+        write_couldnt_find(path, client_id, actor, queries, inaccessible, codes)
     # Same-name pages that do not match city, company, role, or a given link
     # are a different person. They are not facts and they are not cited.
     matched: list[dict] = []
@@ -2000,8 +2045,10 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
     intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
     rows = load_evidence(path)
     usable = [row for row in rows if row.get("identity_status") != "inaccessible"]
+    public = [row for row in usable if row.get("origin") == "web"]
     parts = split_name(intake.get("name") or "")
-    if not usable:
+    # No public search results is couldnt_find. Owner notes do not count as a person.
+    if not public:
         if search_needs_anchor(path):
             doc = load_search(path) or {}
             message = doc.get("message") or NEED_ANCHOR
@@ -2009,10 +2056,7 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
             if isinstance(note, str) and note and note not in message:
                 message = message + " " + note
             stop_identity(path, "need_anchor", message)
-        if search_missed(path):
-            stop_identity(path, "couldnt_find", "couldn't find")
-        write_json(path / "candidates.json", {"candidates": []})
-        emit({"ok": True, "candidates": []})
+        stop_identity(path, "couldnt_find", "couldn't find")
     if not parts:
         stop_identity(path, "couldnt_find", "couldn't find")
     first, last = parts
