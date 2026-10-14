@@ -1900,6 +1900,21 @@ test("two full-name sources can be high, and the fixture brief is one page", () 
   assert.match(html, /size:\s*Letter/);
 });
 
+test("a brief that spills onto a second page is not reported as one page", () => {
+  const ctx = world();
+  const made = seed(ctx);
+  confirm(ctx, made.id, 1);
+  const filler = "The sources do not say which neighborhood, price, or timing this appointment should use.";
+  const brief = loadGood(made.evidenceIds, (next) => {
+    next.what_we_dont_know = next.what_we_dont_know.concat(Array.from({ length: 8 }, () => filler));
+  });
+  const checked = validate(ctx, made.id, brief);
+  assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
+  const rendered = run(["brief", "render", made.id, "--actor", "owner"], ctx);
+  assert.equal(rendered.payload.ok, true, rendered.stdout);
+  assert.ok(rendered.payload.pages > 1, JSON.stringify(rendered.payload));
+});
+
 function listen(server) {
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => resolve(server.address().port));

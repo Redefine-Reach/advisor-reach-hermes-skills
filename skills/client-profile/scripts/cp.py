@@ -1077,14 +1077,18 @@ def show_level(level: str) -> str:
     return {"high": "High", "medium": "Medium", "low": "Low"}.get((level or "").lower(), "Low")
 
 
+# Visible characters, after the stylesheet is ignored. WeasyPrint puts a second
+# Letter page on this template once copy passes about 2,400 characters. The old
+# 3,800 cap, measured with the stylesheet removed, called that second page one page.
+PAGE_CHARS = 2400
+
+
 def estimate_pages(html: str) -> int:
-    # Stylesheet text is not copy. Counting it made a one-page brief look like two.
     visible = re.sub(r"<style\b[^>]*>.*?</style>", " ", html or "", flags=re.IGNORECASE | re.DOTALL)
     visible = re.sub(r"<script\b[^>]*>.*?</script>", " ", visible, flags=re.IGNORECASE | re.DOTALL)
     plain = re.sub(r"<[^>]+>", " ", visible)
     plain = re.sub(r"\s+", " ", plain).strip()
-    # 9pt Letter copy with these margins holds about this much before a second page.
-    return 1 if len(plain) <= 3800 else (1 + (len(plain) - 1) // 3800)
+    return 1 if len(plain) <= PAGE_CHARS else (1 + (len(plain) - 1) // PAGE_CHARS)
 
 
 def build_queries(name: str, city: str, urls: list[str]) -> tuple[list[dict], list[dict], list[str]]:
