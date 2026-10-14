@@ -4390,3 +4390,68 @@ test("two candidates use identity confirm, and NONE does not write a pdf", () =>
   assert.equal(rendered.payload.ok, true, rendered.stdout + rendered.stderr);
   if (bin) assert.equal(rendered.payload.pages, 1);
 });
+
+test("a brief missing one confirmed source passes and the source is added", () => {
+  const ctx = world();
+  const made = seed(ctx, {
+    name: "Dana Whitfield",
+    city: "Scottsdale",
+    type: "buyer",
+    evidence: [
+      {
+        url: "https://example.com/dana-whitfield",
+        title: "Dana Whitfield, broker",
+        excerpt: "Dana Whitfield is a broker working in Scottsdale.",
+        origin: "web",
+        query: '"Dana Whitfield" "Scottsdale" professional profile company',
+        candidate: 1,
+      },
+      {
+        url: "https://example.com/dana-whitfield-notes",
+        title: "Dana Whitfield notes",
+        excerpt: "Dana Whitfield is a broker working in Scottsdale.",
+        origin: "web",
+        query: '"Dana Whitfield" "Scottsdale" notes',
+        candidate: 1,
+      },
+    ],
+  });
+  confirm(ctx, made.id, 1);
+  const brief = loadGood([made.evidenceIds[0]]);
+  brief.appendix.sources = [
+    {
+      evidence_id: made.evidenceIds[0],
+      url: "https://example.com/dana-whitfield",
+      title: "Dana Whitfield, broker",
+    },
+  ];
+  delete brief.hypotheses;
+  delete brief.verify_before_use;
+  brief.tool = "client-profile";
+  brief.tool_name = "brief";
+  const checked = validate(ctx, made.id, brief);
+  assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
+  assert.equal(codes(checked.payload).includes("uncited_source"), false);
+  const stored = JSON.parse(readFileSync(join(ctx.data, made.id, "brief.json"), "utf8"));
+  assert.deepEqual(
+    stored.appendix.sources.map((item) => item.evidence_id),
+    made.evidenceIds,
+  );
+  assert.equal(stored.appendix.sources[1].url, "https://example.com/dana-whitfield-notes");
+  assert.deepEqual(stored.hypotheses, []);
+  assert.equal(stored.verify_before_use, true);
+  assert.equal(stored.tool, undefined);
+  assert.equal(stored.tool_name, undefined);
+  const bad = loadGood([made.evidenceIds[0]]);
+  bad.appendix.sources = [
+    {
+      evidence_id: "ev_not_kept",
+      url: "https://example.com/not-kept",
+      title: "Not kept",
+    },
+  ];
+  const rejected = validate(ctx, made.id, bad);
+  assert.equal(rejected.payload.ok, false, JSON.stringify(rejected.payload));
+  assert.ok(codes(rejected.payload).includes("unconfirmed_evidence"));
+  assert.equal(codes(rejected.payload).includes("uncited_source"), false);
+});
