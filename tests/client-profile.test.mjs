@@ -720,6 +720,9 @@ test("confirm none blocks a later brief", () => {
   const checked = validate(ctx, made.id, loadGood(made.evidenceIds));
   assert.equal(checked.payload.ok, false);
   assert.ok(codes(checked.payload).includes("identity_not_confirmed"));
+  const identityError = checked.payload.errors.find((item) => item.code === "identity_not_confirmed");
+  assert.equal(identityError.message, "No brief until the owner picks a candidate.");
+  assert.doesNotMatch(identityError.message, /\bconfirmed\b/i);
 });
 
 function screen(number) {
@@ -1853,6 +1856,8 @@ test("one full-name source cannot be rated confirmed or high", () => {
   const rejected = validate(ctx, made.id, over);
   assert.equal(rejected.payload.ok, false, JSON.stringify(rejected.payload));
   assert.ok(codes(rejected.payload).includes("identity_overclaim"));
+  assert.doesNotMatch(JSON.stringify(rejected.payload.errors), /\bconfirmed\b/i);
+  assert.match(JSON.stringify(rejected.payload.errors), /High, Medium, or Low/);
   const high = loadGood(made.evidenceIds, (next) => {
     next.identity_match.level = "high";
   });
@@ -1889,6 +1894,7 @@ test("three candidate matches cannot be rated confirmed or high", () => {
   const rejected = validate(ctx, made.id, claimed);
   assert.equal(rejected.payload.ok, false, JSON.stringify(rejected.payload));
   assert.ok(codes(rejected.payload).includes("identity_overclaim"));
+  assert.doesNotMatch(JSON.stringify(rejected.payload.errors), /\bconfirmed\b/i);
   const modest = loadGood([made.evidenceIds[0]], (next) => {
     next.identity_match.level = "high";
   });
@@ -1924,6 +1930,17 @@ test("two full-name sources can be high, and the fixture brief is one page", () 
     ],
   });
   confirm(ctx, made.id, 1);
+  const banned = loadGood(made.evidenceIds, (next) => {
+    next.identity_match.level = "high";
+    next.identity_match.basis = "Two public sources use this full name.";
+    next.verified_facts[0].evidence_ids = made.evidenceIds;
+    next.verified_facts[0].confidence = "high";
+    next.recommendations[0].text = "This match is confirmed by the pages.";
+  });
+  const refused = validate(ctx, made.id, banned);
+  assert.equal(refused.payload.ok, false, JSON.stringify(refused.payload));
+  assert.ok(codes(refused.payload).includes("identity_overclaim"));
+  assert.doesNotMatch(JSON.stringify(refused.payload.errors), /\bconfirmed\b/i);
   const brief = loadGood(made.evidenceIds, (next) => {
     next.identity_match.level = "high";
     next.identity_match.basis = "Two public sources use this full name.";
@@ -1939,6 +1956,12 @@ test("two full-name sources can be high, and the fixture brief is one page", () 
   assert.equal(rendered.payload.pages, 1);
   const html = readFileSync(join(ctx.data, made.id, "brief.html"), "utf8");
   assert.match(html, /Identity confidence/);
+  assert.match(html, /Owner-picked\. High\./);
+  assert.match(html, /Snapshot/);
+  assert.match(html, /Personality \/ DISC read/);
+  assert.match(html, /How to talk to them/);
+  assert.match(html, /Appointment playbook/);
+  assert.match(html, /Sources/);
   assert.match(html, /High/);
   assert.match(html, /Decision speed/);
   assert.match(html, /What they need to hear/);
@@ -2300,6 +2323,16 @@ function weasyEnv(bin) {
 }
 
 function pdfPageCount(file) {
+  const info = spawnSync("pdfinfo", [file], { encoding: "utf8" });
+  if (info.status === 0) {
+    const line = String(info.stdout || "")
+      .split("\n")
+      .find((row) => row.startsWith("Pages:"));
+    if (line) {
+      const pages = Number(line.split(":").pop().trim());
+      if (pages > 0) return pages;
+    }
+  }
   const proc = spawnSync(
     "python3",
     [
@@ -2531,6 +2564,12 @@ test("same-name search with no anchor match asks for a link or company", async (
 });
 
 test("a dense brief renders as one PDF page with the four sections and sources", () => {
+  assert.match(script, /pdfinfo/);
+  assert.match(script, /def _pdf_inflated/);
+  assert.match(skill, /Personality \/ DISC read/);
+  assert.match(skill, /How to talk to them/);
+  assert.match(skill, /Owner-picked/);
+  assert.match(skill, /There is no consent step/);
   const bin = weasyBin();
   const ctx = world();
   const sources = [
@@ -2658,6 +2697,11 @@ test("a dense brief renders as one PDF page with the four sections and sources",
       "Whether they have a second agent is not in the sources.",
       "The bottom of the range they will accept is not in the sources.",
     ];
+    for (let n = 0; n < 12; n += 1) {
+      next.what_we_dont_know.push(
+        `Open question ${n}: the public pages do not say how they will react if the net range moves after the first meeting.`,
+      );
+    }
     next.appendix.low_confidence = [];
     next.appendix.sources = sources.map((item, index) => ({
       evidence_id: ids[index],
@@ -2667,15 +2711,34 @@ test("a dense brief renders as one PDF page with the four sections and sources",
   });
   const checked = validate(ctx, made.id, brief);
   assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
-  const rendered = run(["brief", "render", made.id, "--actor", "owner"], ctx, weasyEnv(bin));
+  let renderEnv = weasyEnv(bin);
+  if (bin) {
+    const wrapper = join(ctx.dir, "wp-bin");
+    writeFileSync(wrapper, "#!/bin/sh\nexec \"$WP_REAL\" \"$@\"\n");
+    chmodSync(wrapper, 0o755);
+    assert.equal(readFileSync(wrapper, "utf8").toLowerCase().includes("weasyprint"), false);
+    renderEnv = { ...renderEnv, WEASYPRINT_BIN: wrapper, WP_REAL: bin };
+  }
+  const rendered = run(["brief", "render", made.id, "--actor", "owner"], ctx, renderEnv);
   assert.equal(rendered.payload.ok, true, rendered.stdout + rendered.stderr);
   const html = readFileSync(join(ctx.data, made.id, "brief.html"), "utf8");
-  assert.match(html, /font:\s*9\.5pt/);
-  assert.match(html, /font:\s*700 10pt/);
-  assert.match(html, /margin:\s*0\.3in/);
-  for (const heading of ["Client stated", "Observations", "Hypotheses", "Recommendations", "Sources"]) {
-    assert.match(html, new RegExp(heading));
+  assert.match(html, /font:\s*8pt\/1\.05/);
+  assert.match(html, /font:\s*700 8\.5pt/);
+  assert.match(html, /margin:\s*0\.22in/);
+  for (const heading of [
+    "Snapshot",
+    "Personality / DISC read",
+    "How to talk to them",
+    "Appointment playbook",
+    "Client stated",
+    "Observations",
+    "Hypotheses",
+    "Recommendations",
+    "Sources",
+  ]) {
+    assert.ok(html.includes(heading), heading);
   }
+  assert.match(html, /Owner-picked\. /);
   assert.match(html, /Client stated the appointment is to review the listing plan/);
   assert.match(html, /Observation: the public pages use short, concrete sentences/);
   assert.match(html, /Hypothesis: a written agenda will help this conversation/);
@@ -2686,18 +2749,31 @@ test("a dense brief renders as one PDF page with the four sections and sources",
   assert.doesNotMatch(html, /Reply YES/i);
   if (bin) {
     assert.equal(rendered.payload.pdf, true, JSON.stringify(rendered.payload));
-    assert.equal(rendered.payload.pages, 1, JSON.stringify(rendered.payload));
     const pdfPath = join(ctx.data, made.id, "brief.pdf");
-    assert.equal(pdfPageCount(pdfPath), 1);
+    const pages = pdfPageCount(pdfPath);
+    assert.equal(pages, 1, JSON.stringify(rendered.payload));
+    assert.equal(rendered.payload.pages, pages);
     const text = spawnSync(
       "python3",
       ["-c", "import sys,fitz\ndoc=fitz.open(sys.argv[1])\nprint('\\n'.join(page.get_text() for page in doc))\n", pdfPath],
       { encoding: "utf8" },
     );
     assert.equal(text.status, 0, text.stderr);
-    for (const heading of ["Client stated", "Observations", "Hypotheses", "Recommendations"]) {
-      assert.match(text.stdout, new RegExp(heading));
+    for (const heading of [
+      "Snapshot",
+      "Personality / DISC read",
+      "How to talk to them",
+      "Appointment playbook",
+      "Client stated",
+      "Observations",
+      "Hypotheses",
+      "Recommendations",
+      "Sources",
+    ]) {
+      assert.ok(text.stdout.includes(heading), heading + "\n" + text.stdout);
     }
+    assert.match(text.stdout, /Owner-picked/);
+    assert.doesNotMatch(text.stdout, /\bconfirmed\b/i);
     assert.ok(sources.filter((item) => text.stdout.includes(item.url)).length >= 3);
   } else {
     assert.equal(rendered.payload.pdf, false);
