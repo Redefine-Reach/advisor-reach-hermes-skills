@@ -1,0 +1,60 @@
+{
+  "note": "Regression rows for the 75d3e99 ARIN live run. The box dump bp-75d3e99-raw.json was not on disk, so these rows follow that run's keep/drop split: dkmarshall posts and davidmarshall.ai stay even when the employer is not AdvisorReach; Samsung, Fayad Auto, eXp Maine, CFP Rochester, and ARA Houston stay out. The mailbox local-part is synthetic. The domain is the personal-domain signal.",
+  "results": [
+    {
+      "url": "https://advisorreach.ai/team/",
+      "title": "Founding team | AdvisorReach",
+      "text": "David Marshall. AdvisorReach in Phoenix. https://www.linkedin.com/in/dkmarshall"
+    },
+    {
+      "url": "https://www.linkedin.com/posts/dkmarshall_intentbuilding-activity-7428524872433065984-fAui",
+      "title": "I pulled federal data this week to test a hunch. | David Marshall",
+      "text": "David Marshall. Principal Product Manager at Amazon. Phoenix, Arizona. Nine years as a U.S. Marine Corps Ground Intelligence Officer."
+    },
+    {
+      "url": "https://www.linkedin.com/posts/dkmarshall_vibecoding-activity-7416116688519139329-ldbT",
+      "title": "You learn while you build. | David Marshall",
+      "text": "David Marshall. Principal Product Manager at Amazon."
+    },
+    {
+      "url": "https://davidmarshall.ai/work/production-systems",
+      "title": "Work | David Marshall",
+      "text": "David Marshall. Phoenix AZ. Write ada@davidmarshall.ai."
+    },
+    {
+      "url": "https://davidmarshall.ai/notes",
+      "title": "Notes | David Marshall",
+      "text": "David Marshall writes short notes on production systems."
+    },
+    {
+      "url": "https://www.linkedin.com/in/david-marshall-284923126",
+      "title": "David Marshall | Samsung",
+      "text": "David Marshall at Samsung Electronics in Austin."
+    },
+    {
+      "url": "https://fayad-auto.example/david-marshall",
+      "title": "David Marshall | Fayad Auto",
+      "text": "David Marshall at Fayad Auto in Detroit."
+    },
+    {
+      "url": "https://exp-maine.example/david-marshall",
+      "title": "David Marshall | eXp Maine",
+      "text": "David Marshall at eXp Realty in Portland."
+    },
+    {
+      "url": "https://www.linkedin.com/in/david-marshall-cfp",
+      "title": "David Marshall, CFP",
+      "text": "David Marshall, CFP, based in Rochester."
+    },
+    {
+      "url": "https://ara-houston.example/david-marshall",
+      "title": "David Marshall | ARA Houston",
+      "text": "David Marshall at ARA in Houston."
+    },
+    {
+      "url": "https://example.com/james-marshall",
+      "title": "David James Marshall",
+      "text": "David James Marshall is an attorney in Phoenix."
+    }
+  ]
+}
