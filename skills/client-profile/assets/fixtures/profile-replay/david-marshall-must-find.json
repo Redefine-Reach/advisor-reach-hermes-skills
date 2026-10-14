@@ -1,0 +1,83 @@
+{
+  "note": "Synthetic replay fixture for a name+company intake. Not a raw Exa HTTP body. Exercises people category, LinkedIn /in/ search, personal site, and contents on personal and company hosts without fetching linkedin.com.",
+  "search": [
+    {
+      "url": "https://advisorreach.ai/journal/daily-brief-priorities/",
+      "title": "AI Daily Brief for Real Estate Advisors | AdvisorReach Journal",
+      "text": "Daily operating discipline By David Marshall October 15, 2026. AdvisorReach in Phoenix.",
+      "highlights": ["By David Marshall"]
+    },
+    {
+      "url": "https://advisorreach.ai/team/",
+      "title": "Founding team | AdvisorReach",
+      "text": "David Marshall. A non-technical AI builder and Fortune 500 operator who has led enterprise adoption and shipped practical real estate, automation, and visibility systems.",
+      "highlights": ["David Marshall. A non-technical AI builder."]
+    },
+    {
+      "url": "https://www.linkedin.com/posts/dkmarshall_intentbuilding-buildinpublic-aibuilders-activity-7428524872433065984-fAui",
+      "title": "I pulled federal data this week to test a hunch. | David Marshall",
+      "text": "David Marshall. Principal Product Manager at Amazon. Phoenix, Arizona, United States.",
+      "highlights": ["Principal Product Manager at Amazon."]
+    },
+    {
+      "url": "https://www.linkedin.com/posts/dkmarshall_vibecoding-buildinpublic-aibuilders-activity-7416116688519139329-ldbT",
+      "title": "You don't just use AI to build. You learn while you build. | David Marshall",
+      "text": "David Marshall. Based in Phoenix, Arizona, United States.",
+      "highlights": ["Based in Phoenix, Arizona."]
+    },
+    {
+      "url": "https://www.axios.com/local/phoenix/david-marshall-recorder",
+      "title": "David Marshall, Navajo County recorder",
+      "text": "David Marshall is the Navajo County recorder in Phoenix.",
+      "highlights": ["Navajo County recorder"]
+    },
+    {
+      "url": "https://www.azleg.gov/members/david-marshall",
+      "title": "David Marshall, Arizona legislator",
+      "text": "David Marshall is an Arizona legislator from Phoenix.",
+      "highlights": ["Arizona House"]
+    },
+    {
+      "url": "https://davidmarshalllaw.com/",
+      "title": "David Marshall | Attorney at Law",
+      "text": "David Marshall serves clients in Phoenix, Arizona.",
+      "highlights": ["David Marshall"],
+      "extras": {
+        "links": ["https://www.linkedin.com/in/dkmarshall/"]
+      }
+    }
+  ],
+  "name_work": [
+    {
+      "url": "https://davidmarshall.ai/",
+      "title": "David Marshall | Domain Expertise + AI Tools",
+      "text": "David Marshall builds AdvisorReach in Phoenix, Arizona. Domain expertise is the new engineering degree.",
+      "highlights": ["David Marshall"]
+    }
+  ],
+  "linkedin_profile": [
+    {
+      "url": "https://www.linkedin.com/in/dkmarshall",
+      "title": "David Marshall - Amazon | LinkedIn",
+      "text": "David Marshall. Phoenix, Arizona, United States. Principal Product Manager at Amazon. Nine years as a U.S. Marine Corps Ground Intelligence Officer.",
+      "highlights": ["Amazon", "U.S. Marine Corps"]
+    }
+  ],
+  "contents": [
+    {
+      "url": "https://advisorreach.ai/journal/daily-brief-priorities/",
+      "title": "AI Daily Brief for Real Estate Advisors | AdvisorReach Journal",
+      "text": "Daily operating discipline By David Marshall. AdvisorReach in Phoenix.",
+      "highlights": ["AdvisorReach"]
+    },
+    {
+      "url": "https://davidmarshall.ai/about",
+      "title": "About | David Marshall",
+      "text": "From Intelligence Officer to AI Builder. David Marshall co-founded AdvisorReach in Phoenix, Arizona. Production AI for real estate advisors.",
+      "highlights": ["AdvisorReach", "Phoenix, Arizona"],
+      "extras": {
+        "links": ["https://www.linkedin.com/in/dkmarshall/"]
+      }
+    }
+  ]
+}
