@@ -4,27 +4,27 @@
 <meta charset="utf-8">
 <title>Appointment brief</title>
 <style>
-  /* One Letter page. Margins and 9.5–10pt type first; cut a bullet only if it still overflows. */
-  @page { size: Letter; margin: 0.3in; }
+  /* One Letter page. Compact type first; cut a bullet only if pdfinfo still says 2. */
+  @page { size: Letter; margin: 0.22in; }
   html, body { margin: 0; padding: 0; }
-  body { font: 9.5pt/1.12 Georgia, "Times New Roman", serif; color: #1a1a1a; }
-  header { border-bottom: 1.5px solid #1b2a4a; padding-bottom: 2pt; margin-bottom: 3pt; }
-  .eyebrow { font: 700 7.5pt Helvetica, Arial, sans-serif; letter-spacing: 0.06em; text-transform: uppercase; color: #1b2a4a; margin: 0; }
-  h1 { font-size: 13pt; line-height: 1.05; margin: 0; }
-  .meta { font: 8pt/1.1 Helvetica, Arial, sans-serif; color: #333; margin: 0; }
-  .banner { background: #f4f1ea; border: 1px solid #d9d3c6; padding: 2pt 4pt; margin: 0 0 3pt 0; font: 8pt/1.15 Helvetica, Arial, sans-serif; }
-  h2 { font: 700 10pt Georgia, serif; color: #1b2a4a; margin: 3pt 0 0 0; page-break-after: avoid; }
-  p { margin: 0 0 1pt 0; }
-  ul { margin: 0 0 1pt 11pt; padding: 0; }
+  body { font: 8pt/1.05 Georgia, "Times New Roman", serif; color: #1a1a1a; orphans: 1; widows: 1; }
+  header { border-bottom: 1px solid #1b2a4a; padding-bottom: 1pt; margin-bottom: 2pt; }
+  .eyebrow { font: 700 7pt Helvetica, Arial, sans-serif; letter-spacing: 0.04em; text-transform: uppercase; color: #1b2a4a; margin: 0; }
+  h1 { font-size: 12pt; line-height: 1.02; margin: 0; }
+  .meta { font: 7.5pt/1.05 Helvetica, Arial, sans-serif; color: #333; margin: 0; }
+  .banner { background: #f4f1ea; border: 1px solid #d9d3c6; padding: 1pt 3pt; margin: 0 0 2pt 0; font: 7.5pt/1.1 Helvetica, Arial, sans-serif; }
+  h2 { font: 700 8.5pt Georgia, serif; color: #1b2a4a; margin: 2pt 0 0 0; }
+  p { margin: 0 0 0.5pt 0; }
+  ul { margin: 0 0 0.5pt 10pt; padding: 0; }
   li { margin: 0; }
   ul.sources { list-style: none; margin: 0; padding: 0; }
-  ul.sources li { font: 9pt/1.1 Helvetica, Arial, sans-serif; margin: 0; }
-  .conf { font: 8pt Helvetica, Arial, sans-serif; color: #444; }
-  .cite { font: 8pt Helvetica, Arial, sans-serif; color: #555; }
-  .trio { width: 100%; border-collapse: collapse; margin: 1pt 0 1pt 0; }
-  .trio td { width: 33%; vertical-align: top; padding: 0 6pt 0 0; }
+  ul.sources li { font: 7.5pt/1.05 Helvetica, Arial, sans-serif; margin: 0; }
+  .conf { font: 7pt Helvetica, Arial, sans-serif; color: #444; }
+  .cite { font: 7pt Helvetica, Arial, sans-serif; color: #555; }
+  .trio { width: 100%; border-collapse: collapse; margin: 0; }
+  .trio td { width: 33%; vertical-align: top; padding: 0 4pt 0 0; }
   .trio h2 { margin-top: 1pt; }
-  footer { margin-top: 3pt; font: 7.5pt/1.1 Helvetica, Arial, sans-serif; color: #444; }
+  footer { margin-top: 2pt; font: 7pt/1.05 Helvetica, Arial, sans-serif; color: #444; }
 </style>
 </head>
 <body>
@@ -38,7 +38,7 @@
 <h2>Snapshot</h2>
 <p>{{SNAPSHOT}}</p>
 <h2>Identity confidence</h2>
-<p>{{IDENTITY_LEVEL}}. {{IDENTITY_BASIS}}</p>
+<p>Owner-picked. {{IDENTITY_LEVEL}}. {{IDENTITY_BASIS}}</p>
 <table class="trio">
   <tr>
     <td>
@@ -55,9 +55,9 @@
     </td>
   </tr>
 </table>
-<h2>Communication style</h2>
+<h2>Personality / DISC read</h2>
 <p>{{DISC}} <span class="conf">Confidence: {{DISC_CONFIDENCE}}. Hypothesis only, not a diagnosis.</span></p>
-<h2>How to communicate</h2>
+<h2>How to talk to them</h2>
 {{HOW}}
 <h2>Appointment playbook</h2>
 <p><strong>Opening.</strong> {{OPENING}}</p>

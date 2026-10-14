@@ -22,6 +22,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -579,6 +580,12 @@ def screen_brief(brief: dict) -> list[dict]:
             errors.append({"code": "outbound_cta", "path": path, "message": "Brief contains a phone number or text-this-number instruction."})
         if STREET_RE.search(text) or POBOX_RE.search(text) or UNIT_RE.search(text):
             errors.append({"code": "street_address", "path": path, "message": "Brief contains a street address."})
+        if CONFIRMED_WORD.search(text):
+            errors.append({
+                "code": "identity_overclaim",
+                "path": path,
+                "message": "Rate identity confidence High, Medium, or Low.",
+            })
     return dedupe_errors(errors)
 
 
@@ -692,7 +699,7 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
     if not identity or identity.get("status") != "confirmed":
         return {
             "ok": False,
-            "errors": [{"code": "identity_not_confirmed", "message": "No brief without a confirmed identity."}],
+            "errors": [{"code": "identity_not_confirmed", "message": "No brief until the owner picks a candidate."}],
             "warnings": warnings,
             "brief": None,
         }
@@ -723,15 +730,6 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
                 "path": "/identity_match/level",
                 "from": claimed,
                 "to": allowed,
-            })
-        overclaim = sources < 2 or matches >= 3
-        basis = brief["identity_match"].get("basis") or ""
-        snapshot = brief.get("snapshot") or ""
-        if overclaim and (CONFIRMED_WORD.search(basis) or CONFIRMED_WORD.search(snapshot)):
-            errors.append({
-                "code": "identity_overclaim",
-                "path": "/identity_match",
-                "message": "Do not say confirmed. Rate identity confidence high, medium, or low.",
             })
     search_doc = load_search(path)
     public_confirmed = any(
@@ -969,15 +967,60 @@ def weasyprint_binary() -> str | None:
     return None
 
 
+def _pdfinfo_pages(path: Path) -> int | None:
+    binary = shutil.which("pdfinfo")
+    if not binary:
+        return None
+    try:
+        proc = subprocess.run(
+            [binary, str(path)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    for line in proc.stdout.splitlines():
+        if line.startswith("Pages:"):
+            tail = line.split(":", 1)[-1].strip()
+            if tail.isdigit() and int(tail) > 0:
+                return int(tail)
+    return None
+
+
+def _pdf_inflated(data: bytes) -> bytes:
+    """Join the file with its FlateDecode streams so page objects are visible.
+
+    WeasyPrint compresses /Type /Page into object streams. pdfinfo still counts
+    those pages. A raw regex on the compressed bytes does not.
+    """
+    parts = [data]
+    for match in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", data, re.S):
+        raw = match.group(1)
+        for wbits in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
+            try:
+                parts.append(zlib.decompress(raw, wbits))
+                break
+            except zlib.error:
+                continue
+    return b"\n".join(parts)
+
+
 def pdf_page_count(path: Path) -> int | None:
+    """Return the page count pdfinfo prints as Pages."""
+    reported = _pdfinfo_pages(path)
+    if reported:
+        return reported
     try:
         data = path.read_bytes()
     except OSError:
         return None
     if not data.startswith(b"%PDF-"):
         return None
-    # Uncompressed WeasyPrint output has one /Type /Page object per document page.
-    count = len(re.findall(rb"/Type\s*/Page(?!s)", data))
+    count = len(re.findall(rb"/Type\s*/Page(?!s)", _pdf_inflated(data)))
     return count or None
 
 
@@ -998,8 +1041,10 @@ def real_weasyprint(binary: str) -> bool:
 
 
 def weasyprint_document_pages(html_path: Path, pdf_path: Path) -> int | None:
-    """Render a PDF and return WeasyPrint's document page count.
+    """Render a PDF and return the page count pdfinfo would print.
 
+    len(document.pages) can disagree with the file pdfinfo reads. The count
+    used for trimming and the JSON pages field is the written PDF's count.
     None means no PDF was written, or the converter was a stub that does not
     report pages. Callers then fall back to estimate_pages.
     """
@@ -1008,6 +1053,12 @@ def weasyprint_document_pages(html_path: Path, pdf_path: Path) -> int | None:
         return None
     if pdf_path.exists():
         pdf_path.unlink()
+
+    def file_pages() -> int | None:
+        if pdf_path.is_file() and pdf_path.stat().st_size > 0:
+            return pdf_page_count(pdf_path)
+        return None
+
     if real_weasyprint(binary):
         code = (
             "import sys\n"
@@ -1027,6 +1078,9 @@ def weasyprint_document_pages(html_path: Path, pdf_path: Path) -> int | None:
         except subprocess.TimeoutExpired:
             proc = None
         if proc is not None and proc.returncode == 0 and pdf_path.is_file():
+            counted = file_pages()
+            if counted:
+                return counted
             lines = [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
             if lines and lines[-1].isdigit():
                 return int(lines[-1])
@@ -1043,7 +1097,7 @@ def weasyprint_document_pages(html_path: Path, pdf_path: Path) -> int | None:
         except subprocess.TimeoutExpired:
             return None
         if proc.returncode == 0 and pdf_path.is_file():
-            return pdf_page_count(pdf_path)
+            return file_pages()
         return None
     try:
         proc = subprocess.run(
@@ -1057,7 +1111,7 @@ def weasyprint_document_pages(html_path: Path, pdf_path: Path) -> int | None:
         return None
     if proc.returncode != 0 or not pdf_path.is_file():
         return None
-    return pdf_page_count(pdf_path)
+    return file_pages()
 
 
 def parse_flags(args: list[str]) -> tuple[list[str], dict[str, list[str]]]:
@@ -1248,7 +1302,43 @@ def trim_one_bullet(brief: dict) -> bool:
         if isinstance(items, list) and len(items) > minimum:
             items.pop()
             return True
-    return False
+    return shorten_one_prose(brief)
+
+
+def shorten_one_prose(brief: dict) -> bool:
+    """Shorten the longest prose field once. Leave a readable remainder."""
+    targets: list[tuple[dict, str, int]] = []
+
+    def add(box: object, key: str, floor: int) -> None:
+        if isinstance(box, dict):
+            text = box.get(key)
+            if isinstance(text, str) and len(text) > floor:
+                targets.append((box, key, floor))
+
+    add(brief, "snapshot", 90)
+    add(brief.get("identity_match"), "basis", 48)
+    add(brief.get("decision_speed"), "text", 48)
+    add(brief.get("yes_to_hear"), "text", 48)
+    play = brief.get("appointment_playbook")
+    if isinstance(play, dict):
+        add(play.get("opening"), "text", 48)
+        add(play, "close", 48)
+        add(play.get("pricing_conversation"), "text", 48)
+    if not targets:
+        return False
+    box, key, floor = max(targets, key=lambda item: len(item[0][item[1]]))
+    text = box[key].strip()
+    parts = [part for part in re.split(r"(?<=[.!?])\s+", text) if part]
+    if len(parts) >= 2 and len(" ".join(parts[:-1])) >= floor:
+        shortened = " ".join(parts[:-1])
+    elif len(text) > floor:
+        shortened = text[:floor].rstrip(" ,;:") + "…"
+    else:
+        return False
+    if len(shortened) >= len(text):
+        return False
+    box[key] = shortened
+    return True
 
 
 def build_queries(name: str, city: str, urls: list[str], company: str = "") -> tuple[list[dict], list[dict], list[str]]:
@@ -2452,7 +2542,7 @@ def cmd_render(client_id: str, opts: dict[str, list[str]]) -> None:
     # Tighten the layout in the template first. Cut a bullet only when the
     # rendered PDF is still longer than one page.
     guard = 0
-    while document_pages is not None and document_pages > 1 and guard < 40 and trim_one_bullet(view):
+    while document_pages is not None and document_pages > 1 and guard < 80 and trim_one_bullet(view):
         guard += 1
         html, document_pages = paint(view)
     wrote_pdf = pdf_path.is_file() and pdf_path.stat().st_size > 0
