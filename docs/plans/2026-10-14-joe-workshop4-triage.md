@@ -8,6 +8,17 @@
 
 ---
 
+## Product decision (David, 2026-10-14 10:48 AM)
+
+**Buyer Profile PDF may be up to two Letter pages.** The former one-page cap is **not** a planning constraint anymore (code still enforces one page until a follow-up implementation PR).
+
+- **Page 1** stays the core brief: Snapshot, DISC read, how to talk, appointment playbook (opening, lead points, questions, avoid, close), and the main cited sections.
+- **Page 2** is available for **household / couple** content (second person, “in the room together”) and a fuller **presentation block** (openers with “why this fits,” close / next step, optional data-pack prep, DISC stub pointers)—without relying on `trim_one_bullet` to delete Joe’s sections.
+
+Implementation will require updating `SKILL.md`, `template.html`, `cp.py` render/trim logic, and tests; **out of scope for PR #51** (plan-only).
+
+---
+
 ## Hard rules (non-negotiable for every item below)
 
 | Rule | Implication for this plan |
@@ -26,7 +37,7 @@
 
 | Area | Today |
 |------|--------|
-| **Purpose** | One **named person**, one **one-page** PDF for buyer/listing/other appointment prep (`SKILL.md` L8, L98; `template.html` L7, L32). |
+| **Purpose** | One **named person** (household TBD) appointment brief; **shipped today:** one-page PDF max (`SKILL.md` L98; `template.html` L7, L32). **Approved target:** up to **two pages** (see product decision above). |
 | **Intake** | `--name`, `--city`, `--type`, optional `--company`, `--role`, `--url`; **no** `--address` (`cp.py` `reject_address_flag`, `cmd_intake`). |
 | **Identity** | Single `split_name` → first + last (`cp.py` L1303–1307); couples like “David and Nadine Marshall” collapse to one first/last pair. |
 | **Search** | Up to 12 parallel Exa queries: LinkedIn, people, personal/company site, news, podcast, X (`SKILL.md` L108–127); banner shows query/source counts (`build_html` search notice). |
@@ -44,7 +55,7 @@ Joe’s **four buyer personas / four marketing pages** (N1–N6) are **out of sc
 | Size | Effort (engineering) | Typical scope |
 |------|----------------------|---------------|
 | **S** | ~2–6 hours | Prompt + SMS/copy, small `cp.py`/`SKILL.md`, tests only |
-| **M** | ~8–16 hours | Schema + validate + template trim, or intake flags + tests |
+| **M** | ~8–16 hours | Schema + validate + template/layout, or intake flags + tests |
 | **L** | ~24–40+ hours | Multi-person identity, new PDF layout, or new skill |
 
 ---
@@ -72,8 +83,8 @@ Joe’s **four buyer personas / four marketing pages** (N1–N6) are **out of sc
 |--|--|
 | **What it changes** | `brief.schema.json`, `evaluate_brief`, `template.html`, `trim_one_bullet`, synthesis prompt in `SKILL.md`; likely **two** search/confirm cycles or dual sections in one JSON; tests in `client-profile.test.mjs`. |
 | **Size** | **L** (~30–40 h) |
-| **Dependencies** | S1; may force **2-page** PDF or abandon strict one-page Joe sections for couples. |
-| **Risks** | One-page constraint (`SKILL.md` L98) vs dual DISC + “in the room together”; Fair Housing on “decision-maker” / spouse dynamics; identity merge bugs. |
+| **Dependencies** | S1; **two-page PDF** (David approved) for dual DISC + “in the room together” on page 2. |
+| **Risks** | Fair Housing on “decision-maker” / spouse dynamics; identity merge bugs; render must fail or warn if content exceeds two pages. |
 | **vs today** | One subject per `client_id`; one `NAME` in template. |
 | **Recommended order** | **#1 in “next”** (after S1 prototype). |
 
@@ -85,8 +96,8 @@ Joe’s **four buyer personas / four marketing pages** (N1–N6) are **out of sc
 |--|--|
 | **What it changes** | `SKILL.md` synthesis prompt; optional schema extension (`cited` + `rationale` or playbook subfields); `template.html` (playbook bullets); validate rules in `cp.py` if mandatory. |
 | **Size** | **M** (~8–12 h) |
-| **Dependencies** | None; competes for one-page space with S4/S5. |
-| **Risks** | PDF overflow → more `trim_one_bullet` drops; model omits rationale unless schema requires it. |
+| **Dependencies** | None; shares **page 2** with S2 couple block and S4 data-pack when those ship. |
+| **Risks** | Model omits rationale unless schema requires it; two-page hard cap still needs layout discipline. |
 | **vs today** | Opening/leads/avoid/close exist; no per-line style rationale. |
 | **Recommended order** | **#2 in “now”** (high Joe value, fits current sections). |
 
@@ -98,7 +109,7 @@ Joe’s **four buyer personas / four marketing pages** (N1–N6) are **out of sc
 |--|--|
 | **What it changes** | `SKILL.md` synthesis; possibly new `recommendations` or `appointment_playbook` subsection; **not** inventing comps—agent-facing checklist only; template slot or bullet under Recommendations. |
 | **Size** | **M** (~8–10 h) |
-| **Dependencies** | S3 (shared playbook real estate on one page). |
+| **Dependencies** | S3; fits naturally on **page 2** with presentation/openers block. |
 | **Risks** | Model invents numbers/tables not in evidence → Fair Housing and trust; must stay “prepare these before you go,” never hand to client. |
 | **vs today** | Generic recommendations; listing has `pricing_conversation` only. |
 | **Recommended order** | **#3 in “next”.** |
@@ -164,7 +175,7 @@ Joe’s **four buyer personas / four marketing pages** (N1–N6) are **out of sc
 | **What it changes** | New static assets under `skills/client-profile/assets/` (e.g. `playbooks/disc-c-listing.md`); `SKILL.md` + synthesis (“see stub C”); optional PDF appendix or link in SMS—not four pages. |
 | **Size** | **M** (~12–16 h) |
 | **Dependencies** | S5 tone; legal review of generic stubs. |
-| **Risks** | Generic playbooks read as steering; one-page overflow if embedded in PDF. |
+| **Risks** | Generic playbooks read as steering; keep stubs short or link-out if page 2 fills up. |
 | **vs today** | No reusable per-style assets. |
 | **Recommended order** | **#2 in “next”.** |
 
@@ -201,7 +212,7 @@ Joe’s **four buyer personas / four marketing pages** (N1–N6) are **out of sc
 1. **S6** → **S7** → **S3** + **S5** (prompt/banner; no schema explosion)  
 2. **S1** (intake only; city derivation; document couple limitations until S2)  
 3. **S4** → **S9** → **S11** → **S8**  
-4. **S2** when product accepts PDF/layout change for households  
+4. **S2** after two-page template/render PR lands (David decision removes layout blocker)  
 5. **S10** as parallel product line, not a client-profile PR
 
 ---
@@ -213,7 +224,7 @@ Assumes one implementer; parallel work possible after “now” bundle.
 | Day | Date | Focus |
 |-----|------|--------|
 | **D0** | Thu Oct 15 | Lock triage (this doc); David review gate for pilot scope; start S6 + S7 PRs. |
-| **D1** | Fri Oct 16 | Ship S6/S7; draft S3/S5 prompt PR; QA one-page PDF samples. |
+| **D1** | Fri Oct 16 | Ship S6/S7; draft S3/S5 prompt PR; spike two-page template wireframe (no fleet ship yet). |
 | **D2** | Mon Oct 19 | S1 design: couple + locality fields; no street in queries; tests. |
 | **D3** | Tue Oct 20 | S1 implementation PR; begin S4 or S9 stub copy (product choice). |
 | **D4** | Wed Oct 21 | **End “this week”** — merge window for now-bundle; **no SKILLS_REF** without David. |
@@ -264,11 +275,10 @@ Assumes one implementer; parallel work possible after “now” bundle.
 
 ## Open decisions for David / product
 
-1. **Couples:** One PDF with two people (S2) vs two linked briefs (smaller S1-only).  
+1. **Couples:** One PDF with two people (S2) vs two linked briefs (smaller S1-only). **Resolved:** up to **two pages** in one PDF is allowed; page 2 for couple + presentation.  
 2. **Address:** City/metro only from property mention vs optional `--locality` field never stored as street.  
-3. **One-page vs two-page** for household or data-pack (S4/S2).  
-4. **S10** agent-only personas vs export slides for listing deck.  
-5. **Pilot cohort** and date for first SKILLS_REF bump after “now” bundle.
+3. **S10** agent-only personas vs export slides for listing deck.  
+4. **Pilot cohort** and date for first SKILLS_REF bump after “now” bundle (includes two-page render change when implemented).
 
 ---
 
