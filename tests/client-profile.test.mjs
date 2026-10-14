@@ -3197,6 +3197,112 @@ test("a skipped search is search_required, not couldn't find", () => {
   assert.equal(existsSync(join(ctx.data, id, "brief.pdf")), false);
 });
 
+test("identity, brief, and render run search when search.json is missing", async () => {
+  const companyPage = "https://example.com/advisorreach/david-marshall";
+  const namesake = "https://www.axios.com/local/phoenix/david-marshall-recorder";
+  const otherName = "https://example.com/someone-else";
+  const pages = [
+    {
+      url: companyPage,
+      title: "David Marshall at AdvisorReach",
+      text: "David Marshall leads AdvisorReach in Phoenix.",
+    },
+    {
+      url: namesake,
+      title: "David Marshall, Navajo County recorder",
+      text: "David Marshall is the Navajo County recorder in Phoenix.",
+    },
+    {
+      url: otherName,
+      title: "Someone Else",
+      text: "Someone Else works in Phoenix.",
+    },
+  ];
+  const { server } = replayServer(pages);
+  const port = await listen(server);
+  const exa = {
+    EXA_API_KEY: "exa-test-key",
+    EXA_API_BASE: `http://127.0.0.1:${port}`,
+  };
+  const intake = (ctx) => run(
+    [
+      "intake",
+      "--actor",
+      "owner",
+      "--name",
+      "David Marshall",
+      "--city",
+      "Phoenix",
+      "--type",
+      "buyer",
+      "--company",
+      "AdvisorReach",
+    ],
+    ctx,
+  ).payload.client_id;
+  try {
+    const ctx = world();
+    const id = intake(ctx);
+    assert.equal(existsSync(join(ctx.data, id, "search.json")), false);
+    const listed = await runAsync(["identity", "candidates", id, "--actor", "owner"], ctx, exa);
+    assert.equal(listed.payload.ok, true, listed.stdout + listed.stderr);
+    assert.equal(listed.payload.status, "matches");
+    assert.equal(listed.payload.candidates.length, 1);
+    assert.doesNotMatch(listed.stdout, /couldn't find/);
+    assert.doesNotMatch(listed.payload.candidates[0].label, /recorder/i);
+    const stored = JSON.parse(readFileSync(join(ctx.data, id, "search.json"), "utf8"));
+    assert.equal(stored.status, "done");
+    assert.equal(stored.source_count, 1);
+    assert.deepEqual(stored.dropped, [
+      { url: otherName, reason: "name_mismatch" },
+      { url: namesake, reason: "namesake" },
+    ]);
+
+    const confirmId = intake(ctx);
+    const picked = await runAsync(
+      ["identity", "confirm", confirmId, "--actor", "owner", "--candidate", "1"],
+      ctx,
+      exa,
+    );
+    assert.equal(picked.payload.ok, true, picked.stdout + picked.stderr);
+    assert.equal(picked.payload.status, "confirmed");
+    assert.doesNotMatch(picked.stdout, /couldn't find/);
+    assert.equal(
+      JSON.parse(readFileSync(join(ctx.data, confirmId, "search.json"), "utf8")).status,
+      "done",
+    );
+
+    const renderId = intake(ctx);
+    const rendered = await runAsync(["brief", "render", renderId, "--actor", "owner"], ctx, exa);
+    assert.equal(rendered.payload.ok, false, rendered.stdout + rendered.stderr);
+    assert.equal(rendered.payload.error, "not_validated");
+    assert.doesNotMatch(rendered.stdout, /couldn't find/);
+    assert.equal(
+      JSON.parse(readFileSync(join(ctx.data, renderId, "search.json"), "utf8")).status,
+      "done",
+    );
+    assert.equal(existsSync(join(ctx.data, renderId, "brief.html")), false);
+
+    const validateId = intake(ctx);
+    const briefFile = join(ctx.dir, "auto-brief.json");
+    writeFileSync(briefFile, "{}\n");
+    const checked = await runAsync(
+      ["brief", "validate", validateId, briefFile, "--actor", "owner"],
+      ctx,
+      exa,
+    );
+    assert.equal(checked.payload.ok, false, checked.stdout + checked.stderr);
+    assert.notEqual(checked.payload.error, "search_required");
+    assert.doesNotMatch(checked.stdout, /couldn't find/);
+    assert.equal(
+      JSON.parse(readFileSync(join(ctx.data, validateId, "search.json"), "utf8")).status,
+      "done",
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("a company anchor drops Phoenix city-only namesakes and keeps the company source", async () => {
   assert.match(script, /counts\.raw|\"raw\"/);
   const recorder = "https://www.axios.com/local/phoenix/david-marshall-recorder";
@@ -3267,6 +3373,11 @@ test("a company anchor drops Phoenix city-only namesakes and keeps the company s
     const stored = JSON.parse(readFileSync(join(ctx.data, id, "search.json"), "utf8"));
     assert.deepEqual(stored.counts, searched.payload.counts);
     assert.equal(stored.conflict, false);
+    assert.deepEqual(
+      stored.dropped.map((item) => item.url),
+      [recorder, legislator],
+    );
+    assert.ok(stored.dropped.every((item) => item.reason === "namesake"));
     const evidence = readFileSync(join(ctx.data, id, "evidence.jsonl"), "utf8");
     assert.equal(evidence.includes(recorder), false);
     assert.equal(evidence.includes(legislator), false);
