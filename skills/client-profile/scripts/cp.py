@@ -217,7 +217,7 @@ REUSE_NAME = (
 )
 SEARCH_REQUIRED = "Run search first."
 NEED_ANCHOR = (
-    "Identity confidence is Low. No source matches this company, city, name handle, or email domain. "
+    "Identity confidence is Low. No source matches this company, name handle, or email domain. "
     "Send a profile link or company."
 )
 EXA_TOP = 3
@@ -2219,22 +2219,23 @@ def linkedin_handle(url: str) -> str:
 
 
 def url_name_handle(url: str, first: str, last: str) -> bool:
-    """Exact personal-domain stem, or a LinkedIn handle like first-initial plus last."""
+    """Exact personal-domain stem, or a short LinkedIn handle such as dkmarshall.
+
+    david-marshall-284923126, david-a-marshall, and davidmarshall14 are not handles.
+    """
     if name_domain_hit(url, first, last):
         return True
+    handle = linkedin_handle(url)
+    if not handle or re.search(r"\d", handle):
+        return False
     first_s = re.sub(r"[^a-z0-9]", "", (first or "").casefold())
     last_s = re.sub(r"[^a-z0-9]", "", (last or "").casefold())
     if not first_s or len(last_s) < 3:
         return False
-    slug = first_s + last_s
-    handle = linkedin_handle(url)
-    tokens = [handle] if handle else [part for part in (urlparse(url or "").path or "").split("/") if part]
-    pattern = re.compile(rf"^{re.escape(first_s[0])}[a-z0-9]{{0,8}}{re.escape(last_s)}$")
-    for token in tokens:
-        compact = re.sub(r"[^a-z0-9]", "", token.casefold())
-        if compact == slug or pattern.fullmatch(compact):
-            return True
-    return False
+    compact = re.sub(r"[^a-z0-9]", "", handle.casefold())
+    if compact == first_s + last_s:
+        return True
+    return re.fullmatch(rf"{re.escape(first_s[0])}[a-z]{{0,2}}{re.escape(last_s)}", compact) is not None
 
 
 def email_domains(text: str) -> list[str]:
@@ -2403,7 +2404,7 @@ def page_link_canons(text: str) -> set[str]:
 
 
 def source_matches_anchors(title: str, excerpt: str, url: str, intake: dict, snippet: str = "") -> bool:
-    """Full name plus company, city, a name handle, or the personal email domain."""
+    """Full name plus a strong signal. The city supports a signal. It does not keep a page alone."""
     blob = f"{title or ''} {excerpt or ''} {snippet or ''}"
     parts = split_name(intake.get("name") or "")
     if not parts or not full_name_match(blob, parts[0], parts[1]):
@@ -2420,11 +2421,13 @@ def source_matches_anchors(title: str, excerpt: str, url: str, intake: dict, sni
         or company_host_hit(url, company)
         or company_slug_hit(url, company)
     )
-    city_hit = any(phrase_present(blob, phrase) for phrase in place_phrases(intake.get("city") or ""))
     link_hit = link_matches(url, urls) or domain_matches(url, urls)
     handle_hit = url_name_handle(url, first, last)
     mail_hit = email_domain_hit(blob, first, last)
-    return bool(company_hit or link_hit or city_hit or handle_hit or mail_hit)
+    role = (intake.get("role") or "").strip()
+    city_hit = any(phrase_present(blob, phrase) for phrase in place_phrases(intake.get("city") or ""))
+    role_hit = bool(role) and phrase_present(blob, role) and city_hit
+    return bool(company_hit or link_hit or handle_hit or mail_hit or role_hit)
 
 
 def search_count(raw: int, deduped: int, name_matched: int, anchor_kept: int) -> dict:
@@ -2687,10 +2690,10 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
     if not kept:
         save_evidence(path, rows)
         write_couldnt_find(path, client_id, actor, queries, inaccessible, codes, tally, dropped)
-    # Full name plus company, city, email domain, a name handle, or a link
-    # to or from a page already kept. A kept page's LinkedIn handle and
-    # personal domain then keep that person's other posts and pages.
-    # Drop a clear contradiction, or a page with none of those signals.
+    # Full name plus a strong signal: company or company domain, a name
+    # handle, an email on the personal domain, or a link to or from a page
+    # already kept. The city supports that signal. It does not keep a page
+    # alone. Drop a clear contradiction, or a page with no strong signal.
     matched: list[dict] = []
     excluded_markers: list[str] = []
     excluded_pages = 0
