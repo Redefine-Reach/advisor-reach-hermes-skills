@@ -63,6 +63,7 @@ mailbox it sends from, the schedule — and do it only after they say yes.
 `"variant_distribution_type": "MANUAL_EQUAL"` and a `"seq_variants"` list of `{"variant_label": "A", "subject": "…", "email_body": "…"}` (then "B", "C"); the Database Funnel campaign is built this way, with three versions of its first email.
 In the file you give `add-leads`, a lead can carry `"custom_fields": {"market": "Boise, ID"}` and the email uses it as `{{market}}`. SmartLead keeps a lead's custom fields as they were on the day it was added,
 so a field you want to change for leads already in a campaign means a new campaign with the leads added again; a draft has sent nothing, so that is safe.
+A custom field can hold a whole block of HTML (a 26,555-byte field was stored and read back equal on 2026-10-15), and a lead's fields can be updated in a draft with POST /campaigns/{id}/leads/{lead_id}; if a test email shows the old value, delete the draft's leads and add them again. For A/B, an email's `seq_variants` may carry `variant_distribution_percentage` on each version (34, 33 and 33 read back as written); leave `variant_distribution_type` out when you give percentages, because `MANUAL` is rejected.
 
 ## Send or stop (ask first, every time)
 
