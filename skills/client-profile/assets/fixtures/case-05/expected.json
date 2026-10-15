@@ -1,0 +1,5 @@
+{
+  "command": "hd",
+  "error": "not_in_scope",
+  "skill_must_mention": ["Human Design", "birthday", "refus"]
+}

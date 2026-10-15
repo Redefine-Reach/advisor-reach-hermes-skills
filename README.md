@@ -67,6 +67,32 @@ via the box's Exa search): bio, 24-month production as published, 15 channel sco
 Profile field-by-field, and a 90-day game plan. Locked template (`assets/template.html`) rendered by
 `assets/render.py` (jinja2 + weasyprint) from small per-section JSON files; delivered via `present-file`.
 
+### client-profile
+One-page appointment brief for one named person the owner is about to meet (buyer, listing, or other).
+Intake is name, city, and appointment type. `scripts/cp.py search` runs those queries
+through Exa when `EXA_API_KEY` (or config `exa_api_key`) is set: LinkedIn, X, the company
+site, news, podcasts, and a keyword search. It fetches the top pages, dedupes them, and
+requires every kept URL to be cited. With no key it says search is unavailable instead of
+writing a one-source brief. It stops with "couldn't find"
+when no result contains the full first and last name. A common name asks for a profile link
+instead of a guess. Identity confidence on the brief is high, medium, or low. The brief also
+covers decision speed, what they need to hear to say yes, and likely objections. Research uses
+only publicly available information. There is no consent step and no text to the lead. The enable
+flag is `/opt/data/client-profile/config.json`, not an environment variable. Install is
+files-only (`install/cp_install.py`) and drops a stored `consent_required` key. No CRM write,
+Human Design, people-data vendor, or street address. Contract: `tests/client-profile.test.mjs`.
+Merging here does not reach boxes until `SKILLS_REF` advances.
+
+### advisorreach-site
+Team ARIN's way to change `https://advisorreach.ai` (the ARIN Lane): clones
+`Redefine-Reach/advisorreach-site` over HTTPS as the team machine user `ar-team-arin`, whose token
+`scripts/git-credential-wttc-oauth.py` gets from WTTC's GitHub OAuth Client through the box's OmegaAI MCP
+key (nothing stored), edits only `public/` on an `arin/*` branch, runs the copy and link contract tests with node,
+pushes the branch, and confirms the release by `git ls-remote` of `production` and
+`https://advisorreach.ai/release-identity.json`. The site repo's `arin-promote.yml` validates,
+promotes and deploys. A Lead Magnet page goes under `public/m/<name>/`. Contract:
+`tests/advisorreach-site.test.mjs`, `tests/git-credential-wttc-oauth.test.mjs`.
+
 ### lead-magnets
 How any box's ARIN builds a Lead Magnet end to end, with no developer: the leads are kept by the
 box workspace's Form Capture install (an OmegaAI component, form-capture repo), a Form Capture webhook
@@ -181,6 +207,9 @@ captured as the Delivery Target, then verify with `list` that it is `origin`/`te
 `local`. Edits, pause/resume/stop and "send it now" (`action: run`) live here too. A brief is a
 scheduled text whose content `daily-brief` defines. Routing prefix pinned by
 `tests/schedule-text.test.mjs`.
+
+### learning-loop
+Explicit preferences and repeated corrections (the same correction twice), tagged to the owner or to one named client, plus style and acted-on signals from a draft the owner edits, sends, or skips. One script, `skills/learning-loop/scripts/learning_loop.py`, saves without an approval prompt and returns a one-line `confirm` only after read-back. On a text turn the `learning_loop` tool is the path; `execute_code` runs that script only in a non-text session. `apply` is what a new session, including after `/new`, runs before a Daily Brief or the next draft of a kind. `list` answers "what do you remember"; `forget` removes one; `show` lists learned draft signals. Every save calls the box do-not-keep gate (`/opt/box/arin_donotkeep.py`) and refuses when that module is missing. Client procedures are small skills the script writes under `$HERMES_HOME/skills/c-<client>--<procedure>/`. The script does not turn background review on. Contract: `tests/learning-loop.test.mjs`.
 
 ### daily-brief
 The morning brief / daily update: what a Brief Job's prompt says (first line `User timezone: <IANA>`,

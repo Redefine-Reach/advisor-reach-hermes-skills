@@ -1,0 +1,4 @@
+{
+  "listing_requires": "pricing_conversation_required",
+  "buyer_optional": true
+}

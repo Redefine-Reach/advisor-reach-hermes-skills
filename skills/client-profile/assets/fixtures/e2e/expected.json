@@ -1,0 +1,7 @@
+{
+  "summary_max": 300,
+  "link_days": 7,
+  "disc_marker": "hypothesis",
+  "purge_min_age_days": 91,
+  "fair_housing_absent": ["fair_housing", "minor", "street_address", "outbound_cta"]
+}

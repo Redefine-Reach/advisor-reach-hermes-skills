@@ -1,0 +1,147 @@
+{
+  "note": "Exa SearchResultOutput shape for David Marshall / Phoenix / AdvisorReach, 14 Oct 2026. highlights is a string array. extras.links is a string array. extras.richLinks is {url, anchor}. A company name sits on entities[].properties, including person workHistory.company.name. This VM has no Exa key and the Exa connector was rate-limited, so this is not a captured api.exa.ai HTTP body. The advisorreach.ai text and the dkmarshall LinkedIn text are from the public pages. The team-page text does not include the LinkedIn URL; that URL is only in extras.links, which is where the live HTML puts https://www.linkedin.com/in/dkmarshall/. The LinkedIn profile and posts do not say AdvisorReach. News, podcast, and X opening text do not either: the company is in a highlight string, extras.links, richLinks, or the person entity. The recorder and legislator pages are other people.",
+  "results": [
+    {
+      "id": "https://advisorreach.ai/team/",
+      "url": "https://advisorreach.ai/team/",
+      "title": "Founding team | AdvisorReach",
+      "author": null,
+      "publishedDate": "2026-10-14T00:00:00.000Z",
+      "text": "Founding team | AdvisorReach. David Marshall. A non-technical AI builder and Fortune 500 operator who has led enterprise adoption and shipped practical real estate, automation, and visibility systems.",
+      "highlights": [
+        "David Marshall. A non-technical AI builder and Fortune 500 operator."
+      ],
+      "highlightScores": [0.42],
+      "extras": {
+        "links": [
+          "https://www.linkedin.com/in/dkmarshall/",
+          "https://www.linkedin.com/in/joe-gilmour-54666053/"
+        ]
+      }
+    },
+    {
+      "id": "https://advisorreach.ai/journal/daily-brief-priorities/",
+      "url": "https://advisorreach.ai/journal/daily-brief-priorities/",
+      "title": "AI Daily Brief for Real Estate Advisors | AdvisorReach Journal",
+      "author": "David Marshall",
+      "publishedDate": "2026-10-15T00:00:00.000Z",
+      "text": "Daily operating discipline By David Marshall October 15, 2026.",
+      "highlights": ["Daily operating discipline By David Marshall"],
+      "highlightScores": [0.2]
+    },
+    {
+      "id": "https://advisorreach.ai/journal/ai-agent-vs-chatbot-vs-automation/",
+      "url": "https://advisorreach.ai/journal/ai-agent-vs-chatbot-vs-automation/",
+      "title": "AI Agent vs. Chatbot vs. Automation | AdvisorReach",
+      "author": "David Marshall",
+      "publishedDate": "2026-10-11T00:00:00.000Z",
+      "text": "AI agents for real-estate advisors By David Marshall October 11, 2026.",
+      "highlights": ["By David Marshall"],
+      "highlightScores": [0.2]
+    },
+    {
+      "id": "https://advisorreach.ai/journal/what-is-an-ai-agent-for-real-estate-advisor/",
+      "url": "https://advisorreach.ai/journal/what-is-an-ai-agent-for-real-estate-advisor/",
+      "title": "What Is an AI Agent for a Real Estate Advisor? | AdvisorReach Journal",
+      "author": "David Marshall",
+      "publishedDate": "2026-08-26T00:00:00.000Z",
+      "text": "AI agents for real-estate advisors By David Marshall August 26, 2026.",
+      "highlights": ["By David Marshall"],
+      "highlightScores": [0.2]
+    },
+    {
+      "id": "https://www.linkedin.com/in/dkmarshall",
+      "url": "https://www.linkedin.com/in/dkmarshall",
+      "title": "David Marshall",
+      "author": "David Marshall",
+      "text": "David Marshall. Building AI products from operational experience. Principal Product Manager at Amazon. Phoenix, Arizona, United States.",
+      "highlights": ["Principal Product Manager at Amazon. Phoenix, Arizona."],
+      "highlightScores": [0.3],
+      "entities": [
+        {
+          "id": "person_dkmarshall",
+          "type": "person",
+          "version": 1,
+          "properties": {
+            "name": "David Marshall",
+            "location": "Phoenix, Arizona, United States",
+            "workHistory": [
+              {
+                "title": "Applied AI",
+                "location": "Phoenix",
+                "company": { "id": "co_advisorreach", "name": "AdvisorReach" }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "https://www.linkedin.com/posts/dkmarshall_intentbuilding-buildinpublic-aibuilders-activity-7428524872433065984-fAui",
+      "url": "https://www.linkedin.com/posts/dkmarshall_intentbuilding-buildinpublic-aibuilders-activity-7428524872433065984-fAui",
+      "title": "I pulled federal data this week to test a hunch. | David Marshall",
+      "author": "David Marshall",
+      "text": "David Marshall. Principal Product Manager at Amazon. Phoenix, Arizona, United States.",
+      "highlights": ["Principal Product Manager at Amazon."],
+      "highlightScores": [0.2]
+    },
+    {
+      "id": "https://www.linkedin.com/posts/dkmarshall_vibecoding-buildinpublic-aibuilders-activity-7416116688519139329-ldbT",
+      "url": "https://www.linkedin.com/posts/dkmarshall_vibecoding-buildinpublic-aibuilders-activity-7416116688519139329-ldbT",
+      "title": "You don't just use AI to build. You learn while you build. | David Marshall",
+      "author": "David Marshall",
+      "text": "David Marshall. Based in Phoenix, Arizona, United States.",
+      "highlights": ["Based in Phoenix, Arizona."],
+      "highlightScores": [0.2]
+    },
+    {
+      "id": "https://news.example.com/marshall-advisorreach",
+      "url": "https://news.example.com/marshall-advisorreach",
+      "title": "David Marshall interview",
+      "author": null,
+      "text": "David Marshall spoke in Phoenix.",
+      "highlights": ["AdvisorReach founder David Marshall"],
+      "highlightScores": [0.5]
+    },
+    {
+      "id": "https://podcast.example.com/marshall",
+      "url": "https://podcast.example.com/marshall",
+      "title": "David Marshall on the show",
+      "author": null,
+      "text": "David Marshall joins from Phoenix.",
+      "highlights": ["David Marshall joins from Phoenix."],
+      "highlightScores": [0.2],
+      "extras": {
+        "links": ["https://advisorreach.ai/team/"],
+        "richLinks": [{ "url": "https://advisorreach.ai/", "anchor": "AdvisorReach" }]
+      }
+    },
+    {
+      "id": "https://x.com/dkmarshall",
+      "url": "https://x.com/dkmarshall",
+      "title": "David Marshall",
+      "author": "David Marshall",
+      "text": "David Marshall in Phoenix.",
+      "highlights": ["Advisor Reach in Phoenix"],
+      "highlightScores": [0.4]
+    },
+    {
+      "id": "https://www.axios.com/local/phoenix/david-marshall-recorder",
+      "url": "https://www.axios.com/local/phoenix/david-marshall-recorder",
+      "title": "David Marshall, Navajo County recorder",
+      "author": null,
+      "text": "David Marshall is the Navajo County recorder in Phoenix.",
+      "highlights": ["Navajo County recorder"],
+      "highlightScores": [0.1]
+    },
+    {
+      "id": "https://www.azleg.gov/members/david-marshall",
+      "url": "https://www.azleg.gov/members/david-marshall",
+      "title": "David Marshall, Arizona legislator",
+      "author": null,
+      "text": "David Marshall is an Arizona legislator from Phoenix.",
+      "highlights": ["Arizona House"],
+      "highlightScores": [0.1]
+    }
+  ]
+}

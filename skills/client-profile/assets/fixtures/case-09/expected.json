@@ -1,0 +1,15 @@
+{
+  "bad": [
+    {
+      "text": "The surname Whitfield suggests English national origin.",
+      "error": "fair_housing",
+      "category": "national_origin"
+    },
+    {
+      "text": "Public bio lists age 47.",
+      "error": "fair_housing",
+      "category": "age"
+    }
+  ],
+  "clean_passes": true
+}
