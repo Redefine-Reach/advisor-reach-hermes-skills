@@ -62,8 +62,13 @@ class LiveEvalContext:
                 "SMS_PROC_ENVIRON": str(self.sms_proc_environ),
                 "TELNYX_API_KEY": "",
                 "ARIN_EVAL_BOX": os.environ.get("ARIN_EVAL_BOX", "e23fjkv6"),
+                # Keep staged drafts and the outbound audit log inside the throwaway home,
+                # never the real /opt/data/audit (sms_send_confirmed.py defaults to it).
+                "SMS_DRAFT_DIR": str(self.hermes_home / "audit" / "sms-drafts"),
+                "SMS_AUDIT_PATH": str(self.hermes_home / "audit" / "sms-outbound.jsonl"),
             }
         )
+        (self.hermes_home / "audit" / "sms-drafts").mkdir(parents=True, exist_ok=True)
         for key in CREDENTIAL_ENV_KEYS:
             overlay.setdefault(key, "")
         return overlay
@@ -78,12 +83,22 @@ class LiveEvalContext:
 
 
 def hermes_chat_argv(binary: str, owner_text: str) -> list[str]:
-    """Hermes 0.21.0: ``chat -Q -q "<text>"`` (not ``--message``)."""
-    if len(owner_text) > 4000 or "\n" in owner_text:
+    """Hermes 0.21.0: ``chat -Q -q "<text>" --source telnyx_sms``.
+
+    ``--source`` makes the CLI session look like an SMS turn so sms_stage does not refuse
+    it as "not the authorized owner". ARIN_EVAL_OWNER_PREFIX (default names the stub owner
+    number) is prepended to the owner text, standing in for the gateway's sender context.
+    Set either to an empty string to disable.
+    """
+    src = os.environ.get("ARIN_EVAL_SOURCE", "telnyx_sms")
+    prefix = os.environ.get("ARIN_EVAL_OWNER_PREFIX", "[SMS from box owner +15550100099]")
+    text = f"{prefix} {owner_text}".strip() if prefix else owner_text
+    extra = ["--source", src] if src else []
+    if len(text) > 4000 or "\n" in text:
         query_file = Path(tempfile.mkstemp(prefix="arin-eval-query-", suffix=".txt")[1])
-        query_file.write_text(owner_text, encoding="utf-8")
-        return [binary, "chat", "-Q", "--query-file", str(query_file)]
-    return [binary, "chat", "-Q", "-q", owner_text]
+        query_file.write_text(text, encoding="utf-8")
+        return [binary, "chat", "-Q", "--query-file", str(query_file), *extra]
+    return [binary, "chat", "-Q", "-q", text, *extra]
 
 
 def write_sms_stub_files(stub_base: str, dest_dir: Path) -> tuple[Path, Path]:

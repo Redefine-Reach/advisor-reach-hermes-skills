@@ -91,10 +91,50 @@ def _parse_tool_calls(text: str) -> list[dict[str, str]]:
     tools: list[dict[str, str]] = []
     for match in re.finditer(r'"tool(?:_name)?"\s*:\s*"([^"]+)"', text):
         tools.append({"name": match.group(1)})
-    for name in ("sms_send_confirmed", "learning_loop", "client-profile"):
+    for name in ("sms_stage", "sms_send_confirmed", "learning_loop", "client-profile"):
         if name in text and not any(t.get("name") == name for t in tools):
             tools.append({"name": name})
     return tools
+
+
+def _session_text(home: Path, combined: str) -> str:
+    """Dump the throwaway home's state.db messages for this run (quiet mode hides tool calls)."""
+    import sqlite3
+
+    m = re.search(r"session_id:\s*(\S+)", combined)
+    db = home / "state.db"
+    if not m or not db.is_file():
+        return ""
+    try:
+        con = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=3)
+        try:
+            cols = [r[1] for r in con.execute("pragma table_info(messages)")]
+            want = [c for c in cols if "tool" in c.lower()]
+            if not want:
+                return ""
+            sel = ", ".join(want)
+            rows = con.execute(
+                f"select {sel} from messages where session_id=? and role in ('assistant','tool')", (m.group(1),)
+            ).fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return ""
+    return "\n".join(str(r) for r in rows)
+
+
+def _staged_drafts(home: Path) -> list[dict[str, Any]]:
+    out = []
+    d = home / "audit" / "sms-drafts"
+    if d.is_dir():
+        for p in sorted(d.glob("*.json")):
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if data.get("status") == "pending":
+                out.append({"kind": "staged", "dest": data.get("dest"), "draft_id": data.get("draft_id"), "via": "sandbox_draft_dir"})
+    return out
 
 
 def run_fixture(case: dict[str, Any], recorder: OutboundRecorder | None = None) -> dict[str, Any]:
@@ -177,6 +217,10 @@ def run_hermes(
 
     ctx.recorder.clear()
     rec = ctx.recorder
+    drafts_dir = ctx.hermes_home / "audit" / "sms-drafts"
+    if drafts_dir.is_dir():  # each case starts with no staged drafts (no cross-case leakage)
+        for old in drafts_dir.glob("*.json"):
+            old.unlink(missing_ok=True)
     env = {**os.environ, **ctx.env_overlay()}
     argv = hermes_chat_argv(binary, owner)
     query_file = None
@@ -200,7 +244,10 @@ def run_hermes(
             Path(query_file).unlink(missing_ok=True)
 
     combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
-    assistant = (proc.stdout or "").strip()
+    assistant = "\n".join(
+        ln for ln in (proc.stdout or "").splitlines()
+        if not ln.startswith("Warning: Unknown toolsets") and not ln.startswith("session_id:")
+    ).strip()
     if rec.delivered_count() > 0:
         return {
             "mode": "hermes",
@@ -210,14 +257,19 @@ def run_hermes(
             "proof": proof.__dict__,
         }
 
+    tool_calls = _parse_tool_calls(combined + "\n" + _session_text(ctx.hermes_home, combined))
+    # The live plugin tool is sms_stage; the case fixtures call the flow sms_send_confirmed.
+    if any(t["name"] == "sms_stage" for t in tool_calls) and not any(t["name"] == "sms_send_confirmed" for t in tool_calls):
+        tool_calls.append({"name": "sms_send_confirmed", "alias_of": "sms_stage"})
+    outbound = rec.snapshot() + _staged_drafts(ctx.hermes_home)
     return {
         "mode": "hermes",
         "dry_run": False,
         "ok": proc.returncode == 0,
         "returncode": proc.returncode,
         "assistant_text": assistant,
-        "tool_calls": _parse_tool_calls(combined),
-        "outbound_log": rec.snapshot(),
+        "tool_calls": tool_calls,
+        "outbound_log": outbound,
         "hermes_pin": HERMES_PIN,
         "proof": proof.__dict__,
         "interception_probe": ctx.probe,
