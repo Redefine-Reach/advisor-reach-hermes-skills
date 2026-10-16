@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import tempfile
 import urllib.error
 import urllib.request
@@ -105,6 +106,14 @@ def write_sms_stub_files(stub_base: str, dest_dir: Path) -> tuple[Path, Path]:
     return runtime, proc_empty
 
 
+def _ignore_copy(directory: str, names: list[str]) -> set[str]:
+    skip = set(shutil.ignore_patterns(".git", "node_modules", "__pycache__")(directory, names))
+    for n in names:
+        if stat.S_ISSOCK(os.lstat(os.path.join(directory, n)).st_mode):
+            skip.add(n)
+    return skip
+
+
 def make_eval_hermes_home(source: Path | None) -> Path:
     src = source or Path(os.environ.get("HERMES_HOME", "/opt/data"))
     dest = Path(tempfile.mkdtemp(prefix="arin-eval-hermes-home-"))
@@ -113,7 +122,7 @@ def make_eval_hermes_home(source: Path | None) -> Path:
             src,
             dest,
             dirs_exist_ok=True,
-            ignore=shutil.ignore_patterns(".git", "node_modules", "__pycache__"),
+            ignore=_ignore_copy,
         )
     for rel in SANDBOX_REMOVE_RELATIVE:
         target = dest / rel
