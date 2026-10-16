@@ -8,18 +8,17 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from outbound_stub import (
-    DELIVERED,
-    OutboundRecorder,
-    infer_fixture_outbound,
-    start_http_stub,
-    stub_env,
-)
+from live_session import LiveEvalContext, begin_live_session, hermes_chat_argv, is_fixture_only_live
+from outbound_stub import DELIVERED, OutboundRecorder, infer_fixture_outbound, start_http_stub, stub_env
 
 HERMES_PIN = "0.21.0"
+
+_live_ctx: LiveEvalContext | None = None
 
 
 @dataclass
@@ -69,6 +68,25 @@ def prove_wrap() -> HermesWrapProof:
     )
 
 
+def ensure_live_session() -> tuple[LiveEvalContext | None, str | None]:
+    global _live_ctx
+    if _live_ctx is not None:
+        return _live_ctx, None
+    source = Path(os.environ.get("HERMES_HOME", "/opt/data"))
+    ctx, err = begin_live_session(source)
+    if err:
+        return None, err
+    _live_ctx = ctx
+    return ctx, None
+
+
+def shutdown_live_session() -> None:
+    global _live_ctx
+    if _live_ctx is not None:
+        _live_ctx.shutdown()
+        _live_ctx = None
+
+
 def _parse_tool_calls(text: str) -> list[dict[str, str]]:
     tools: list[dict[str, str]] = []
     for match in re.finditer(r'"tool(?:_name)?"\s*:\s*"([^"]+)"', text):
@@ -80,7 +98,6 @@ def _parse_tool_calls(text: str) -> list[dict[str, str]]:
 
 
 def run_fixture(case: dict[str, Any], recorder: OutboundRecorder | None = None) -> dict[str, Any]:
-    """Replay a redacted trajectory without calling the model."""
     fixture = case.get("fixture") or {}
     rec = recorder or OutboundRecorder()
     rec.clear()
@@ -95,7 +112,6 @@ def run_fixture(case: dict[str, Any], recorder: OutboundRecorder | None = None) 
 
 
 def _stub_hermes_live(case: dict[str, Any], recorder: OutboundRecorder) -> dict[str, Any]:
-    """CI/box fallback when ARIN_EVAL_STUB_HERMES=1: real outbound stub, fixture text."""
     fixture = case.get("fixture") or {}
     infer_fixture_outbound(case, recorder)
     return {
@@ -114,6 +130,7 @@ def run_hermes(
     case: dict[str, Any],
     dry_run: bool = True,
     recorder: OutboundRecorder | None = None,
+    live_ctx: LiveEvalContext | None = None,
 ) -> dict[str, Any]:
     proof = prove_wrap()
     rec = recorder or OutboundRecorder()
@@ -135,6 +152,13 @@ def run_hermes(
             "outbound_log": rec.snapshot(),
         }
 
+    if is_fixture_only_live(case):
+        out = run_fixture(case, recorder=rec)
+        out["mode"] = "hermes"
+        out["live_skipped"] = "fixture_only"
+        out["ok"] = True
+        return out
+
     if os.environ.get("ARIN_EVAL_STUB_HERMES") == "1":
         return {**_stub_hermes_live(case, rec), "proof": proof.__dict__}
 
@@ -145,13 +169,19 @@ def run_hermes(
     if not binary:
         return {"mode": "hermes", "ok": False, "error": "hermes_missing", "proof": proof.__dict__}
 
-    server, base = start_http_stub(rec)
-    env = {**os.environ, **stub_env(rec, base)}
-    cmd = os.environ.get("ARIN_EVAL_HERMES_CMD", "").strip()
-    if cmd:
-        argv = cmd.split() + [owner]
-    else:
-        argv = [binary, "chat", "-q", "--message", owner]
+    ctx = live_ctx
+    if ctx is None:
+        ctx, err = ensure_live_session()
+        if err or ctx is None:
+            return {"mode": "hermes", "ok": False, "error": err or "live_session_failed", "proof": proof.__dict__}
+
+    ctx.recorder.clear()
+    rec = ctx.recorder
+    env = {**os.environ, **ctx.env_overlay()}
+    argv = hermes_chat_argv(binary, owner)
+    query_file = None
+    if "--query-file" in argv:
+        query_file = argv[argv.index("--query-file") + 1]
 
     try:
         proc = subprocess.run(
@@ -161,13 +191,13 @@ def run_hermes(
             timeout=int(os.environ.get("ARIN_EVAL_HERMES_TIMEOUT", "180")),
             check=False,
             env=env,
-            cwd=os.environ.get("HERMES_HOME") or None,
+            cwd=str(ctx.hermes_home),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        server.shutdown()
         return {"mode": "hermes", "ok": False, "error": str(exc), "proof": proof.__dict__}
     finally:
-        server.shutdown()
+        if query_file:
+            Path(query_file).unlink(missing_ok=True)
 
     combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
     assistant = (proc.stdout or "").strip()
@@ -190,6 +220,8 @@ def run_hermes(
         "outbound_log": rec.snapshot(),
         "hermes_pin": HERMES_PIN,
         "proof": proof.__dict__,
+        "interception_probe": ctx.probe,
+        "hermes_home": str(ctx.hermes_home),
     }
 
 

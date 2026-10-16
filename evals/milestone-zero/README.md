@@ -38,17 +38,28 @@ node --test tests/arin-milestone-zero.test.mjs
 
 ## Live Hermes on ARIN TEST (`e23fjkv6`)
 
-Live mode is **enabled** (`--mode hermes` defaults to **non–dry-run**). Outbound SMS is **stubbed**: `TELNYX_SMS_API_BASE` points at a local HTTP stub that returns success but **never** delivers; trials **fail** if the outbound log records `delivered`.
+Live mode is **enabled** (`--mode hermes` defaults to **non–dry-run**).
+
+Safety (fail closed):
+
+1. **Interception probe** runs once before any live case (HTTP POST to local stub must return `blocked` / `eval_stub`).
+2. **SMS hydrate bypass closed**: child env sets `SMS_RUNTIME_ENV_FILE` (stub `runtime.env` with stub `TELNYX_SMS_API_BASE`, empty `TELNYX_API_KEY`), `SMS_PROC_ENVIRON` (empty file), and blank `TELNYX_API_KEY` so `sms_send_confirmed.py` cannot refill real keys from `/proc/1/environ`.
+3. **Throwaway `HERMES_HOME` copy** per trial (no real owner memory; stripped sessions/audit/learning-loop client dirs).
+4. **Hermes 0.21.0 CLI**: `hermes chat -Q -q "<text>"` (or `--query-file` for long prompts).
+5. **`mz-002` / `mz-007`** (`daily brief` prompts): `live_mode: fixture_only` until brief/outbound tools are stubbed.
 
 ```bash
+cd /opt/data/skills/advisor-reach-hermes-skills   # your checkout on e23fjkv6
+pip install -r evals/milestone-zero/requirements.txt
 export ARIN_EVAL_BOX=e23fjkv6
 export HERMES_HOME=/opt/data
-export HERMES_VERSION=0.21.0   # until `hermes --version` works
-python3 evals/milestone-zero/run_trial.py --limit 20 --mode hermes --no-dry-run
+hermes --version   # must contain 0.21.0
+
+python3 evals/milestone-zero/run_trial.py --limit 20 --mode hermes --no-dry-run --skip-inspect
 python3 evals/milestone-zero/run_repeat.py --repeats 5 --mode hermes --no-dry-run
 ```
 
-Optional override: `ARIN_EVAL_HERMES_CMD='hermes chat -q --message'` (message appended).
+Credential vars cleared in the child process include Composio, GHL, FUB, and Gmail-related keys (see `live_session.py`).
 
 For harness CI without a binary: `ARIN_EVAL_STUB_HERMES=1` exercises live path + outbound stub using fixture text.
 

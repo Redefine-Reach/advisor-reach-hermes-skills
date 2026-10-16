@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-16T05:48:09.530634+00:00",
+  "generated_at": "2026-10-16T05:53:15.204554+00:00",
   "box": "e23fjkv6",
   "hermes_pin": "0.21.0",
   "hermes_wrap_proof": {
@@ -10,6 +10,7 @@
   },
   "mode": "fixture",
   "dry_run": true,
+  "interception_probe": null,
   "repeats": 5,
   "suite_filter": "all",
   "summary": {

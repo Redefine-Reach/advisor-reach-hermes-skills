@@ -117,3 +117,41 @@ test("hermes_bridge pins 0.21.0", () => {
   const res = py(["-c", "from hermes_bridge import HERMES_PIN; print(HERMES_PIN)"]);
   assert.equal(res.stdout.trim(), "0.21.0");
 });
+
+test("hermes chat argv uses -Q -q for Hermes 0.21.0", () => {
+  const res = py([
+    "-c",
+    `from live_session import hermes_chat_argv
+a=hermes_chat_argv("/usr/bin/hermes","hello owner")
+print(" ".join(a))`,
+  ]);
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /chat -Q -q hello owner/);
+});
+
+test("interception probe passes against local stub", () => {
+  const res = py([
+    "-c",
+    `import tempfile
+from pathlib import Path
+from outbound_stub import OutboundRecorder, start_http_stub
+from live_session import write_sms_stub_files, interception_probe
+rec=OutboundRecorder()
+srv, base = start_http_stub(rec)
+d=Path(tempfile.mkdtemp())
+rt, pe = write_sms_stub_files(base, d)
+ok, detail = interception_probe(base, rt, pe)
+srv.shutdown()
+import sys; sys.exit(0 if ok else 1)`,
+  ]);
+  assert.equal(res.status, 0, res.stderr + res.stdout);
+});
+
+test("mz-002 and mz-007 are fixture-only in live mode", () => {
+  const lines = readFileSync(join(mz, "cases.jsonl"), "utf8").trim().split("\n");
+  const rows = lines.map((l) => JSON.parse(l));
+  for (const id of ["mz-002", "mz-007"]) {
+    const row = rows.find((r) => r.id === id);
+    assert.equal(row.live_mode, "fixture_only");
+  }
+});

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,7 +14,14 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from checks import run_checks  # noqa: E402
-from hermes_bridge import HERMES_PIN, prove_wrap, run_fixture, run_hermes  # noqa: E402
+from hermes_bridge import (  # noqa: E402
+    HERMES_PIN,
+    ensure_live_session,
+    prove_wrap,
+    run_fixture,
+    run_hermes,
+    shutdown_live_session,
+)
 from outbound_stub import OutboundRecorder  # noqa: E402
 from redact import redact  # noqa: E402
 
@@ -60,21 +68,30 @@ def main() -> int:
 
     proof = prove_wrap()
     cases = load_cases(args.limit)
+    live_ctx = None
+    interception_probe = None
+    if args.mode == "hermes" and not args.dry_run and os.environ.get("ARIN_EVAL_STUB_HERMES") != "1":
+        live_ctx, probe_err = ensure_live_session()
+        if probe_err:
+            print(json.dumps({"ok": False, "error": probe_err}), file=sys.stderr)
+            return 2
+        interception_probe = live_ctx.probe if live_ctx else None
+
     per_case = []
     passed = 0
-    for case in cases:
-        owner = case["input"]["owner_text"]
-        redacted, codes = redact(owner)
-        rec = OutboundRecorder()
-        if args.mode == "hermes":
-            run = run_hermes(case, dry_run=args.dry_run, recorder=rec)
-        else:
-            run = run_fixture(case, recorder=rec)
-        ok, failures = run_checks(case, run)
-        if ok:
-            passed += 1
-        per_case.append(
-            {
+    try:
+        for case in cases:
+            owner = case["input"]["owner_text"]
+            redacted, codes = redact(owner)
+            rec = OutboundRecorder()
+            if args.mode == "hermes":
+                run = run_hermes(case, dry_run=args.dry_run, recorder=rec, live_ctx=live_ctx)
+            else:
+                run = run_fixture(case, recorder=rec)
+            ok, failures = run_checks(case, run)
+            if ok:
+                passed += 1
+            row = {
                 "id": case["id"],
                 "category": case["category"],
                 "pass": ok,
@@ -82,7 +99,12 @@ def main() -> int:
                 "redaction_codes": codes,
                 "redacted_input": redacted,
             }
-        )
+            if run.get("live_skipped"):
+                row["live_skipped"] = run["live_skipped"]
+            per_case.append(row)
+    finally:
+        if live_ctx is not None:
+            shutdown_live_session()
 
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -91,6 +113,7 @@ def main() -> int:
         "hermes_wrap_proof": proof.__dict__,
         "mode": args.mode,
         "dry_run": args.dry_run,
+        "interception_probe": interception_probe,
         "summary": {"total": len(per_case), "passed": passed, "failed": len(per_case) - passed},
         "cases": per_case,
     }
