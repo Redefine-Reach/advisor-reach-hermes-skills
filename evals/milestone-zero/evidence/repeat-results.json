@@ -1,0 +1,702 @@
+{
+  "generated_at": "2026-10-16T05:48:09.530634+00:00",
+  "box": "e23fjkv6",
+  "hermes_pin": "0.21.0",
+  "hermes_wrap_proof": {
+    "pin": "0.21.0",
+    "detected": null,
+    "ok": false,
+    "detail": "hermes binary not found; set HERMES_VERSION for fixture-only trials"
+  },
+  "mode": "fixture",
+  "dry_run": true,
+  "repeats": 5,
+  "suite_filter": "all",
+  "summary": {
+    "cases": 20,
+    "passed": 20,
+    "failed": 0
+  },
+  "cases": [
+    {
+      "id": "mz-001",
+      "suite": "regression",
+      "category": "no_answer",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-002",
+      "suite": "regression",
+      "category": "no_answer",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-003",
+      "suite": "regression",
+      "category": "no_answer",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-004",
+      "suite": "regression",
+      "category": "no_answer",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-005",
+      "suite": "regression",
+      "category": "no_answer",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-006",
+      "suite": "regression",
+      "category": "no_answer",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-007",
+      "suite": "regression",
+      "category": "no_answer",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-008",
+      "suite": "regression",
+      "category": "send_draft",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-009",
+      "suite": "regression",
+      "category": "send_draft",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-010",
+      "suite": "regression",
+      "category": "send_draft",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-011",
+      "suite": "regression",
+      "category": "send_draft",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-012",
+      "suite": "regression",
+      "category": "send_draft",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-013",
+      "suite": "regression",
+      "category": "send_draft",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-014",
+      "suite": "regression",
+      "category": "send_draft",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-015",
+      "suite": "capability",
+      "category": "memory_save",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-016",
+      "suite": "capability",
+      "category": "memory_save",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-017",
+      "suite": "capability",
+      "category": "memory_save",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-018",
+      "suite": "capability",
+      "category": "memory_save",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-019",
+      "suite": "capability",
+      "category": "memory_save",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    },
+    {
+      "id": "mz-020",
+      "suite": "capability",
+      "category": "memory_save",
+      "pass": true,
+      "repeats": 5,
+      "runs": [
+        {
+          "run": 1,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 2,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 3,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 4,
+          "pass": true,
+          "failures": []
+        },
+        {
+          "run": 5,
+          "pass": true,
+          "failures": []
+        }
+      ]
+    }
+  ]
+}

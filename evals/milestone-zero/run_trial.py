@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT))
 
 from checks import run_checks  # noqa: E402
 from hermes_bridge import HERMES_PIN, prove_wrap, run_fixture, run_hermes  # noqa: E402
+from outbound_stub import OutboundRecorder  # noqa: E402
 from redact import redact  # noqa: E402
 
 try:
@@ -45,10 +46,17 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--mode", choices=["fixture", "hermes"], default="fixture")
-    parser.add_argument("--dry-run", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--dry-run",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Hermes only; default is live (--no-dry-run) when --mode hermes",
+    )
     parser.add_argument("--prove-wrap", action="store_true", default=True)
     parser.add_argument("--skip-inspect", action="store_true", help="Only write JSON evidence")
     args = parser.parse_args()
+    if args.dry_run is None:
+        args.dry_run = args.mode != "hermes"
 
     proof = prove_wrap()
     cases = load_cases(args.limit)
@@ -57,10 +65,11 @@ def main() -> int:
     for case in cases:
         owner = case["input"]["owner_text"]
         redacted, codes = redact(owner)
+        rec = OutboundRecorder()
         if args.mode == "hermes":
-            run = run_hermes(case, dry_run=args.dry_run)
+            run = run_hermes(case, dry_run=args.dry_run, recorder=rec)
         else:
-            run = run_fixture(case)
+            run = run_fixture(case, recorder=rec)
         ok, failures = run_checks(case, run)
         if ok:
             passed += 1

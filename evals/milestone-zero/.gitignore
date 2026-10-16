@@ -1,2 +1,4 @@
 .venv-eval/
 *.eval
+cases-export*.jsonl
+evidence/outbound-stub.jsonl

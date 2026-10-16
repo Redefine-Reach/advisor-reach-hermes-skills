@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-16T03:31:40.765953+00:00",
+  "generated_at": "2026-10-16T05:48:08.652937+00:00",
   "box": "e23fjkv6",
   "hermes_pin": "0.21.0",
   "hermes_wrap_proof": {
@@ -180,12 +180,5 @@
       "redaction_codes": [],
       "redacted_input": "Save that I prefer Scottsdale examples in briefs"
     }
-  ],
-  "inspect_eval": {
-    "inspect": true,
-    "log_paths": [
-      "/workspace/evals/milestone-zero/evidence/2026-10-16T03-31-41-00-00_arin-milestone-zero_CW6Zbc88u9CszQhSdJcwES.eval"
-    ],
-    "log_count": 1
-  }
+  ]
 }

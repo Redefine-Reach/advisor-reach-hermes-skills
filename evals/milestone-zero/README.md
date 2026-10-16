@@ -6,43 +6,76 @@ Inspect-based regression checker for ARIN text sessions on **ARIN TEST only** (`
 
 | Path | Role |
 |------|------|
-| `cases.jsonl` | First 20 milestone-zero cases (no-answer, SEND draft, learning-loop save) |
-| `redact.py` | Box-local redaction before a log line becomes a case |
-| `hermes_bridge.py` | Hermes **0.21.0** pin + invoke / fixture replay |
-| `checks.py` | Pass/fail rules per case |
+| `cases.jsonl` | 20 cases with `suite`: `regression` \| `capability` |
+| `redact.py` | Box-local redaction (`--fail-closed`) |
+| `export_session_to_case.py` | Box-local session → redacted JSONL case |
+| `BOX-EXPORT.md` | Operator procedure for TEST exports |
+| `outbound_stub.py` | Stub Telnyx base URL; outbound JSONL log |
+| `hermes_bridge.py` | Hermes **0.21.0** live invoke + fixture replay |
+| `checks.py` | Pass/fail (SEND gate uses **outbound log**, not the word SEND) |
+| `run_trial.py` | Single-pass trial → `evidence/trial-results.json` |
+| `run_repeat.py` | **≥5 repeats** per case; all must pass |
 | `task.py` | Inspect `Task` definition |
-| `run_trial.py` | Trial runner → `evidence/trial-results.json` |
-| `requirements.txt` | `inspect_ai` pin for CI and box venv |
+| `requirements.txt` | `inspect_ai` pin |
 
-## Quick start (hermetic, no live SMS)
+## Suite tags
+
+| Tag | Cases | Use |
+|-----|------:|-----|
+| `regression` | 14 | no_answer + send_draft — must not break |
+| `capability` | 6 | memory_save — behavior we are proving |
+
+Filter: `run_repeat.py --suite regression`.
+
+## Quick start (CI / hermetic)
 
 ```bash
-python3 -m venv .venv-eval
-. .venv-eval/bin/activate
 pip install -r evals/milestone-zero/requirements.txt
-python3 evals/milestone-zero/run_trial.py --limit 20 --mode fixture
+python3 evals/milestone-zero/run_trial.py --limit 20 --mode fixture --skip-inspect
+python3 evals/milestone-zero/run_repeat.py --repeats 5 --mode fixture
 node --test tests/arin-milestone-zero.test.mjs
 ```
 
-## ARIN TEST box (`e23fjkv6`)
+## Live Hermes on ARIN TEST (`e23fjkv6`)
 
-1. Lay this directory on the box under the skills repo checkout.
-2. Redact a real log excerpt **on the box** before exporting:  
-   `python3 evals/milestone-zero/redact.py --in session.txt --out session.redacted.txt`
-3. Live Hermes trial (no real texts to customers):  
-   `ARIN_EVAL_BOX=e23fjkv6 HERMES_HOME=/opt/data python3 evals/milestone-zero/run_trial.py --limit 20 --mode hermes --dry-run`
-4. Inspect log: `evidence/trial-results.json` (and optional `.eval` under `evidence/` when Inspect writes one).
+Live mode is **enabled** (`--mode hermes` defaults to **non–dry-run**). Outbound SMS is **stubbed**: `TELNYX_SMS_API_BASE` points at a local HTTP stub that returns success but **never** delivers; trials **fail** if the outbound log records `delivered`.
 
-Do not run against fleet or customer boxes. Do not send real third-party SMS during evals (`--dry-run` stubs `sms-send-confirmed`).
+```bash
+export ARIN_EVAL_BOX=e23fjkv6
+export HERMES_HOME=/opt/data
+export HERMES_VERSION=0.21.0   # until `hermes --version` works
+python3 evals/milestone-zero/run_trial.py --limit 20 --mode hermes --no-dry-run
+python3 evals/milestone-zero/run_repeat.py --repeats 5 --mode hermes --no-dry-run
+```
 
-## Blockers (Oct 16 trial)
+Optional override: `ARIN_EVAL_HERMES_CMD='hermes chat -q --message'` (message appended).
 
-| Blocker | Where it clears |
-|---------|------------------|
-| `hermes` binary / `HERMES_VERSION` not on CI VM | Run `--prove-wrap` on `e23fjkv6` after lay-down |
-| Live `hermes` invoke disabled in repo | Box trial with `--mode hermes` once David approves non-fixture run |
-| Cases are **synthetic** until redacted logs are exported from TEST | Replace rows in `cases.jsonl` after on-box redaction |
+For harness CI without a binary: `ARIN_EVAL_STUB_HERMES=1` exercises live path + outbound stub using fixture text.
+
+## Model grader policy
+
+- **Allowed only** on **redacted or synthetic** cases (`cases.jsonl`, `cases-export.local.jsonl` after `export_session_to_case.py`).
+- Use a **zero-retention** API route or a **self-hosted** grader on the box/VPC. Do not send raw session logs to vendor graders.
+- If `redact.py --fail-closed` or `export_session_to_case.py` reports residue, **stop** — no grader call, no export off-box.
+- Deterministic checks in `checks.py` remain the gate for milestone-zero; model graders are optional supplements, not replacements.
+
+## Box export (nothing leaves until redacted)
+
+See **`BOX-EXPORT.md`**. Summary:
+
+1. Export session JSON on-box only.  
+2. `export_session_to_case.py` → `cases-export.local.jsonl` (fail closed).  
+3. Review on-box; merge into `cases.jsonl` after replay passes.  
+4. Copy **only** the redacted JSONL line off-box if needed.
+
+## Evidence paths
+
+| Run | File |
+|-----|------|
+| Trial | `evals/milestone-zero/evidence/trial-results.json` |
+| Repeat | `evals/milestone-zero/evidence/repeat-results.json` |
+| Inspect | `evals/milestone-zero/evidence/*.eval` (gitignored) |
 
 ## Hermes 0.21.0
 
-`hermes_bridge.py` records `HERMES_PIN = "0.21.0"`. `--prove-wrap` checks `hermes --version` (or `HERMES_VERSION`) and fails the trial metadata block when the pin mismatches.
+`HERMES_PIN = "0.21.0"`. `prove_wrap()` must pass on TEST before you treat live Hermes results as valid.
