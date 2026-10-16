@@ -94,6 +94,10 @@ def _parse_tool_calls(text: str) -> list[dict[str, str]]:
     for name in ("sms_stage", "sms_send_confirmed", "learning_loop", "client-profile"):
         if name in text and not any(t.get("name") == name for t in tools):
             tools.append({"name": name})
+    # A loaded skill (skill_view client-profile) is not a profile run. A run is a
+    # render_file call or a cp.py invocation (intake/search/identity/render).
+    if re.search(r"render_file|cp\.py", text):
+        tools.append({"name": "client-profile-run"})
     return tools
 
 

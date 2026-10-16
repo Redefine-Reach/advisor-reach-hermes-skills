@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-16T05:53:14.317318+00:00",
+  "generated_at": "2026-10-16T21:35:42.669421+00:00",
   "box": "e23fjkv6",
   "hermes_pin": "0.21.0",
   "hermes_wrap_proof": {
@@ -46,8 +46,10 @@
       "category": "no_answer",
       "pass": true,
       "failures": [],
-      "redaction_codes": [],
-      "redacted_input": "Text the client that the showing is at 3pm"
+      "redaction_codes": [
+        "phone"
+      ],
+      "redacted_input": "Text the client at [REDACTED_PHONE] that the showing is at 3pm"
     },
     {
       "id": "mz-005",
@@ -88,24 +90,30 @@
       "category": "send_draft",
       "pass": true,
       "failures": [],
-      "redaction_codes": [],
-      "redacted_input": "SMS Chris that the inspection is tomorrow 9am"
+      "redaction_codes": [
+        "phone"
+      ],
+      "redacted_input": "SMS Chris at [REDACTED_PHONE] that the inspection is tomorrow 9am"
     },
     {
       "id": "mz-010",
       "category": "send_draft",
       "pass": true,
       "failures": [],
-      "redaction_codes": [],
-      "redacted_input": "Message the buyer we're under contract"
+      "redaction_codes": [
+        "phone"
+      ],
+      "redacted_input": "Message the buyer at [REDACTED_PHONE] we're under contract"
     },
     {
       "id": "mz-011",
       "category": "send_draft",
       "pass": true,
       "failures": [],
-      "redaction_codes": [],
-      "redacted_input": "Text my assistant the lockbox code is 4455"
+      "redaction_codes": [
+        "phone"
+      ],
+      "redacted_input": "Text my assistant at [REDACTED_PHONE] the lockbox code is 4455"
     },
     {
       "id": "mz-012",
@@ -122,16 +130,20 @@
       "category": "send_draft",
       "pass": true,
       "failures": [],
-      "redaction_codes": [],
-      "redacted_input": "Ping the title rep that we need the preliminary"
+      "redaction_codes": [
+        "phone"
+      ],
+      "redacted_input": "Ping the title rep at [REDACTED_PHONE] that we need the preliminary"
     },
     {
       "id": "mz-014",
       "category": "send_draft",
       "pass": true,
       "failures": [],
-      "redaction_codes": [],
-      "redacted_input": "Text seller: please sign the counter by 5pm"
+      "redaction_codes": [
+        "phone"
+      ],
+      "redacted_input": "Text seller at [REDACTED_PHONE]: please sign the counter by 5pm"
     },
     {
       "id": "mz-015",

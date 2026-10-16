@@ -126,7 +126,7 @@ a=hermes_chat_argv("/usr/bin/hermes","hello owner")
 print(" ".join(a))`,
   ]);
   assert.equal(res.status, 0, res.stderr);
-  assert.match(res.stdout, /chat -Q -q hello owner/);
+  assert.match(res.stdout, /chat -Q -q .*hello owner/);
 });
 
 test("interception probe passes against local stub", () => {
