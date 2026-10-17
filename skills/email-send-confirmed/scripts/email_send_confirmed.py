@@ -328,7 +328,7 @@ def attestation_text(
         f"Body: {preview}\n"
         f"{why_line}\n"
         "Reply SEND to confirm you authorize this one email and that the recipient may receive it.\n"
-        "Reply anything else to cancel."
+        "Nothing goes out until you reply SEND. Any other reply cancels it."
     )
 
 
