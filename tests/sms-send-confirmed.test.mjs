@@ -1345,3 +1345,61 @@ test("QA expected format: Why line is one line, reason only, no suffix, not in t
   assert.equal(r.payload.body_hash, plain.payload.body_hash);
 });
 
+
+test("owner_text: stored source_date is the owner's local date (audit only); stored why_line equals the displayed one", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sms-owner-date-"));
+  // 03:30 UTC on Oct 18 is still Oct 17 in Phoenix.
+  const staged = run(
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Dana, yes, the inspection report is in.",
+      "--why", "Dana asked if the inspection report is in", "--source-kind", "owner_text"],
+    { SMS_NOW: "2026-10-18T03:30:00+00:00", BOX_TIMEZONE: "America/Phoenix" },
+    dir,
+    { why: false },
+  );
+  assert.equal(staged.payload.outcome, "staged", staged.proc.stdout);
+  const draft = JSON.parse(readFileSync(join(dir, "drafts", `${staged.payload.draft_id}.json`), "utf8"));
+  assert.equal(draft.source_kind, "owner_text");
+  assert.equal(draft.source_date, "2026-10-17");
+  assert.ok(draft.source_date.length > 0);
+  const shown = "Why: Dana asked if the inspection report is in.";
+  assert.equal(draft.why_line, shown);
+  assert.equal(staged.payload.why_line, shown);
+  assert.ok(staged.payload.attestation.includes("\n" + shown + "\n"));
+  for (const hidden of ["(no source)", "(your text", "2026-10-17", "Oct 17"]) {
+    assert.equal(staged.payload.attestation.includes(hidden), false, hidden);
+    assert.equal(draft.why_line.includes(hidden), false, hidden);
+  }
+  // No zone: UTC date, still non-empty. An explicit date is kept as given.
+  const utc = run(
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY, "--why", "Dana asked if the inspection report is in",
+      "--source-kind", "owner_text"],
+    { SMS_NOW: "2026-10-18T03:30:00+00:00" }, mkdtempSync(join(tmpdir(), "sms-owner-date2-")), { why: false });
+  assert.equal(utc.payload.source_date, "2026-10-18");
+  const given = run(
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY, "--why", "Dana asked if the inspection report is in",
+      "--source-kind", "owner_text", "--source-date", "2026-10-15"], {}, mkdtempSync(join(tmpdir(), "sms-owner-date3-")), { why: false });
+  assert.equal(given.payload.source_date, "2026-10-15");
+});
+
+test("the script never rewrites the draft body: pronouns and wording are stored and shown as given", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sms-body-verbatim-"));
+  const body = "Hi Dana, please bring her signature and his ID. Tell Sam we are set.";
+  const staged = run(
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", body, "--why", "Dana asked if the inspection report is in",
+      "--source-kind", "owner_text"], {}, dir, { why: false });
+  // 'Tell Sam' mid-text is refused as an owner instruction; the point here is the pronouns, so use a clean body.
+  assert.equal(staged.payload.outcome, "refused_body_meta");
+  const clean = "Hi Dana, please bring her signature and his ID to closing.";
+  const ok = run(
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", clean, "--why", "Dana asked if the inspection report is in",
+      "--source-kind", "owner_text"], {}, mkdtempSync(join(tmpdir(), "sms-body-verbatim2-")), { why: false });
+  assert.equal(ok.payload.outcome, "staged", ok.proc.stdout);
+  const draft = JSON.parse(readFileSync(join(ok.dir, "drafts", `${ok.payload.draft_id}.json`), "utf8"));
+  assert.equal(draft.body, clean);
+  assert.equal(ok.payload.attestation.split("\n")[1], clean);
+});
+
+test("skill: keep the owner's wording and facts; only address the recipient; keep other people's pronouns", () => {
+  assert.match(skill, /Only the recipient becomes "you"/);
+  assert.match(skill, /keep every other person's pronouns/);
+});

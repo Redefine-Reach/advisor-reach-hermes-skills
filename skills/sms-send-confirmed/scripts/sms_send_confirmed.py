@@ -417,6 +417,24 @@ def restates_trigger(why: str) -> bool:
     return not content
 
 
+def owner_message_date() -> str:
+    """Today's date (YYYY-MM-DD) in the owner's zone (BOX_TIMEZONE), else UTC.
+
+    Used as the audit source_date for owner_text when the caller gives none: staging
+    happens in the same turn as the owner's message. Audit only, never shown.
+    """
+    now = utc_now()
+    zone = str(os.environ.get("BOX_TIMEZONE") or "").strip()
+    if zone:
+        try:
+            from zoneinfo import ZoneInfo
+
+            now = now.astimezone(ZoneInfo(zone))
+        except Exception:  # unknown zone: fall back to UTC
+            pass
+    return now.strftime("%Y-%m-%d")
+
+
 def format_source_date(raw: str) -> str:
     text = str(raw or "").strip()
     try:
@@ -1241,6 +1259,8 @@ def stage(
                 field="body",
             )
         assert_not_opted_out(dest, ctx["store"]["opt_out"])
+        if str(source_kind_raw or "").strip().lower() == "owner_text" and not str(source_date_raw or "").strip():
+            source_date_raw = owner_message_date()
         why_clean = strip_why_provenance(one_line(why_raw))
         # Format first (missing, bad source, GSM-7, tokens, length, restated trigger),
         # then the 0002-0005 quality gates, then render the line from the cause only.

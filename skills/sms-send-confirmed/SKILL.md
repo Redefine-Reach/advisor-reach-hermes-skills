@@ -115,6 +115,11 @@ Every `stage` needs why this text, why now, and where you read that. If
   `refused_why_circular`: the reason is the action or the draft ("Congratulate Pat");
   a trailing "so congratulate Pat" is trimmed off. A source or date the model appends
   itself, such as "(owner text, 2026-10-15)", is stripped and never shown.
+- Wording: keep the owner's own words and facts. Only the recipient becomes "you"
+  or "your" (the owner's "tell Dana to bring her signature" becomes "please bring
+  your signature" in a text TO Dana); keep every other person's pronouns and names
+  exactly as the owner gave them ("her" for a third person stays "her"). Do not add,
+  drop, or reword facts, dates, amounts, or names. The script never edits the body.
 - Body quality: the draft is the text itself, to the recipient, in second person
   (greet them by name; use "you" and "your"). ALWAYS draft when the owner names a
   recipient and gives anything to say. Missing facts become placeholders such as
