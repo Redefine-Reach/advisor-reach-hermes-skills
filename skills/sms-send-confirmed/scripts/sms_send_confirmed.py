@@ -89,6 +89,10 @@ SOURCE_LABELS = {
     "owner_text": "your text",
 }
 NAME_SOURCE_KINDS = frozenset({"gmail", "memory"})
+# Sources the owner reads as "this is just what I told you": no source suffix
+# is shown for these (it only restates the trigger). The kind and date are
+# still stored on the draft for the audit record.
+HIDDEN_SOURCE_LABEL_KINDS = frozenset({"owner_text"})
 SOURCE_KINDS = frozenset(SOURCE_LABELS) | NAME_SOURCE_KINDS | {"none"}
 SOURCE_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 WHY_TOKEN_RE = re.compile(r"(?i)(?:\b(?:send|stop)\b|/approve)")
@@ -257,6 +261,39 @@ def one_line(raw: str) -> str:
     return re.sub(r"[ \t]+", " ", folded).strip()
 
 
+# A Why line must give a cause. These only say that the owner asked, or cite
+# the owner's text and its date, which restates the trigger (RED-585).
+_TRIGGER_RESTATE_RES = (
+    re.compile(
+        r"(?i)\b(?:you|owner|the owner|user)\s+"
+        r"(?:just\s+)?(?:asked|told|texted|messaged|wanted|requested|said|instructed)\b"
+    ),
+    re.compile(r"(?i)\b(?:per|from|in|as|at)\s+(?:your|the owner'?s?)\s+(?:text|message|request|ask)\b"),
+    re.compile(r"(?i)\b(?:as|per)\s+requested\b"),
+    re.compile(r"(?i)\b(?:your|owner)\s+(?:text|message|request)\b"),
+    re.compile(r"(?i)\(\s*(?:your|owner)[^)]*\)"),
+)
+_TRIGGER_FILLER = frozenset(
+    "a an the this that it to for of on at in by is was text message request asked today now "
+    "you your me my i we owner user draft drafting".split()
+)
+
+
+def restates_trigger(why: str) -> bool:
+    """True when the Why text only restates that the owner asked, or only cites
+    the owner's text and its date, instead of giving a reason."""
+    text = one_line(why)
+    if any(rx.search(text) for rx in _TRIGGER_RESTATE_RES):
+        return True
+    words = re.findall(r"[a-z0-9']+", text.lower())
+    month_or_day = set(m.lower() for m in SOURCE_MONTHS) | {"oct", "october"}
+    content = [
+        w for w in words
+        if w not in _TRIGGER_FILLER and w not in month_or_day and not w.isdigit()
+    ]
+    return not content
+
+
 def format_source_date(raw: str) -> str:
     text = str(raw or "").strip()
     try:
@@ -289,6 +326,13 @@ def build_why_line(
         refuse_why("stage requires --why and --source-kind")
     if len(why) > WHY_TEXT_MAX:
         refuse_why(f"why is {len(why)} characters; the limit is {WHY_TEXT_MAX}")
+    if restates_trigger(why):
+        raise GateFailure(
+            "refused_why_trigger",
+            "why restates the trigger (the owner's text or request) and gives no reason; "
+            "state what is due or happened and why now",
+            field="why",
+        )
     if kind not in SOURCE_KINDS:
         refuse_why(
             "source-kind must be fub_note, fub_record, ghl, gmail, calendar, owner_text, memory, or none"
@@ -315,9 +359,11 @@ def build_why_line(
                 label = f"ARIN memory: {name}"
             else:
                 refuse_why("source-name is not used for this source-kind")
+        elif kind in HIDDEN_SOURCE_LABEL_KINDS:
+            label = ""
         else:
             label = SOURCE_LABELS[kind]
-        line = f"Why: {why} ({label}, {shown_date})."
+        line = f"Why: {why}." if not label else f"Why: {why} ({label}, {shown_date})."
         stored_date = date_text
     if any(char not in GSM7_CHARS for char in line):
         refuse_why("Why line must be GSM-7")

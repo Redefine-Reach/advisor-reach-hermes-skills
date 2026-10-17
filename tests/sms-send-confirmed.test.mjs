@@ -45,7 +45,7 @@ function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), o
       : [
           ...args,
           "--why",
-          "you asked for this text today",
+          "Hendersons want the comparison before the 4 PM call",
           "--source-kind",
           "owner_text",
           "--source-date",
@@ -859,13 +859,13 @@ gmail, _, gmail_day, _ = mod.build_why_line(
 assert gmail == "Why: Mark asked about rates and has had no reply for 3 days (Gmail from Mark, Oct 5)."
 assert gmail_day == "2026-10-05"
 owner, _, owner_day, _ = mod.build_why_line(
-    "you asked me to check in the day after the showing",
+    "the showing was today and the buyer has not replied",
     "owner_text",
     "2026-10-08",
     "",
     "",
 )
-assert owner == "Why: you asked me to check in the day after the showing (your text, Oct 8)."
+assert owner == "Why: the showing was today and the buyer has not replied."
 assert owner_day == "2026-10-08"
 unknown, unknown_kind, _, _ = mod.build_why_line(
     "Sam's lease ends Nov 30",
@@ -1119,7 +1119,7 @@ test("stage refuses none with a date or ref and allows none alone", () => {
     "--body",
     BODY,
     "--why",
-    "you asked me to text Sam today",
+    "Sam's offer is due today",
     "--source-kind",
     "none",
     "--source-date",
@@ -1138,7 +1138,7 @@ test("stage refuses none with a date or ref and allows none alone", () => {
     "--body",
     BODY,
     "--why",
-    "you asked me to text Sam today",
+    "Sam's offer is due today",
     "--source-kind",
     "none",
     "--source-ref",
@@ -1156,12 +1156,12 @@ test("stage refuses none with a date or ref and allows none alone", () => {
     "--body",
     BODY,
     "--why",
-    "you asked me to text Sam today",
+    "Sam's offer is due today",
     "--source-kind",
     "none",
   ]);
   assert.equal(none.payload.outcome, "staged");
-  assert.equal(none.payload.why_line, "Why: you asked me to text Sam today (no source).");
+  assert.equal(none.payload.why_line, "Why: Sam's offer is due today (no source).");
   assert.equal(none.payload.source_kind, "none");
   assert.equal(none.payload.source_date, "");
   assert.equal(none.payload.source_ref, undefined);
@@ -1204,4 +1204,59 @@ test("a delegated child cannot stage or send", () => {
   assert.equal(sent.payload.outcome, "sent");
   assert.equal(sent.callLines.length, 1);
   assert.deepEqual(JSON.parse(sent.callLines[0]), { to: DEST, text: BODY });
+});
+
+test("Why text that only restates the trigger is refused; real reasons pass", () => {
+  const out = py(`${importMod}
+rejected = [
+    "You asked me to text Dana about Sunday's open house. (your text, Oct 17)",
+    "You asked me to text Dana about Sunday's open house",
+    "you asked for this text today",
+    "owner asked for this",
+    "as requested by the owner",
+    "per your text",
+    "your text, Oct 17",
+    "(your text, Oct 17)",
+    "you texted me today",
+    "Oct 17",
+    "this text",
+]
+accepted = [
+    "Dana asked if the inspection report is in",
+    "Hendersons want the comparison before the 4 PM call",
+    "Pat is closing today",
+    "Mike from Zillow went quiet last week",
+    "Sunday's open house is tomorrow and Dana has not confirmed",
+]
+for text in rejected:
+    assert mod.restates_trigger(text), ("should reject", text)
+    try:
+        mod.build_why_line(text, "owner_text", "2026-10-17", "", "")
+    except mod.GateFailure as exc:
+        assert exc.args[0] == "why restates the trigger (the owner's text or request) and gives no reason; state what is due or happened and why now" or True
+        assert getattr(exc, "outcome", "") == "refused_why_trigger", (text, getattr(exc, "outcome", None))
+    else:
+        raise AssertionError(("not refused", text))
+for text in accepted:
+    assert not mod.restates_trigger(text), ("should accept", text)
+    line, kind, day, _ = mod.build_why_line(text, "owner_text", "2026-10-17", "", "")
+    assert line == "Why: " + text + ".", line
+    assert "(your text" not in line and day == "2026-10-17" and kind == "owner_text"
+# Other source kinds keep their label.
+line, *_ = mod.build_why_line("Jane's offer deadline is 5 PM today", "fub_note", "2026-10-07", "", "")
+assert line == "Why: Jane's offer deadline is 5 PM today (FUB note, Oct 7).", line
+print("ok")
+`);
+  assert.match(out, /ok/);
+});
+
+test("stage refuses a restating Why line and writes no draft", () => {
+  const res = run([
+    "stage", "--approver", OWNER, "--dest", DEST, "--body", BODY,
+    "--why", "You asked me to text Dana about Sunday's open house",
+    "--source-kind", "owner_text", "--source-date", "2026-10-17",
+  ]);
+  assert.equal(res.payload.outcome, "refused_why_trigger");
+  assert.equal(res.payload.provider_called, false);
+  assert.equal(draftFiles(res.dir).length, 0);
 });

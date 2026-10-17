@@ -100,6 +100,12 @@ Every `stage` needs why this text, why now, and where you read that. If
 `refused_no_why` and writes no draft.
 
 - `--why`: why this, and why now. One line, 90 characters or fewer.
+  Give a cause (what is due or happened, and why now), never the trigger.
+  "You asked me to text Dana", "as requested", or any wording that only
+  cites the owner's text and date is refused (`refused_why_trigger`). For
+  `owner_text` the owner sees no source suffix, so the line reads
+  `Why: Dana asked if the inspection report is in.`; the kind and date are
+  still stored for the audit record. Other kinds keep `(<source>, <Mon D>)`.
 - `--source-kind`: `fub_note`, `fub_record`, `ghl`, `gmail`, `calendar`,
   `owner_text`, `memory`, or `none`.
 - `--source-date`: `YYYY-MM-DD`. Required unless the kind is `none`.
