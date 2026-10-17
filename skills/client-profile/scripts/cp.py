@@ -2854,6 +2854,26 @@ def shrink(text: str, limit: int) -> str:
     return room.rstrip(".") + "…"
 
 
+def clean_clip(text: str, limit: int, min_len: int = 15) -> str:
+    """A shorter whole-sentence (or whole-clause) version of ``text`` that fits ``limit``.
+
+    Returns "" when no clean cut exists, so the caller can drop the item or fall back to
+    ``shrink``. Never cuts inside a word and never adds an ellipsis.
+    """
+    if len(text) <= limit:
+        return text
+    cut = 0
+    for match in re.finditer(r"[.!?;:](?=\s|$)", text):
+        if match.end() <= limit:
+            cut = match.end()
+    clipped = text[:cut].rstrip(" ;:")
+    if len(clipped) < min_len:
+        return ""
+    if not clipped.endswith((".", "!", "?")):
+        clipped += "."
+    return clipped if len(clipped) <= limit else ""
+
+
 def cmd_sms(client_id: str, opts: dict[str, list[str]]) -> None:
     gate(actor_of(opts), mutate=False)
     path = require_client(client_id)
@@ -2886,18 +2906,37 @@ def cmd_sms(client_id: str, opts: dict[str, list[str]]) -> None:
     banner = "Verify before use."
 
     def assemble(style_text: str, left: str, right: str) -> str:
-        return f"{banner}{identity}{style_text} 1) {left} 2) {right} {url}".strip()
+        numbered = f"1) {left}" if not right else f"1) {left} 2) {right}"
+        return f"{banner}{identity}{style_text} {numbered} {url}".strip()
 
     # Keep the style hunch: cap it first, then trim the lead points evenly; drop style last.
+    # Prefer a whole shorter sentence or clause, or dropping a point, over ending in "...".
     if len(style) > 72:
-        trimmed = shrink(style.rstrip("."), 72)
-        style = trimmed if trimmed.endswith((".", "!", "?", "…")) else trimmed + "."
+        clean = clean_clip(style.rstrip("."), 72)
+        if clean:
+            style = " " + clean.lstrip() if not clean.startswith(" ") else clean
+        else:
+            trimmed = shrink(style.rstrip("."), 72)
+            style = trimmed if trimmed.endswith((".", "!", "?", "…")) else trimmed + "."
     text = assemble(style, first, second)
     while len(text) > 300 and (len(first) > 40 or len(second) > 40 or style):
-        if len(first) >= len(second) and len(first) > 40:
-            first = shrink(first, max(40, len(first) - 10))
-        elif len(second) > 40:
-            second = shrink(second, max(40, len(second) - 10))
+        longest_is_first = len(first) >= len(second)
+        point = first if longest_is_first else second
+        if len(point) > 40:
+            target = max(40, len(point) - 10)
+            clean = clean_clip(point, target)
+            if not clean and second and not longest_is_first:
+                clean = ""  # no clean clip of point 2: drop it below
+            if clean:
+                shorter = clean
+            elif not longest_is_first and len(second) > 40:
+                shorter = ""  # drop the second point rather than end it with an ellipsis
+            else:
+                shorter = shrink(point, target)
+            if longest_is_first:
+                first = shorter
+            else:
+                second = shorter
         else:
             style = ""
         text = assemble(style, first, second)
