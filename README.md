@@ -221,18 +221,8 @@ captured as the Delivery Target, then verify with `list` that it is `origin`/`te
 scheduled text whose content `daily-brief` defines. Routing prefix pinned by
 `tests/schedule-text.test.mjs`.
 
-### proactive-owner
-Owner-only proactive texts, default off. A box turns them on with
-`/opt/data/proactivity/config.json` (`"enabled": true`), not with an environment
-variable. The script reads the box IANA zone from the top-level `timezone` key
-in `config.yaml`, enforces quiet hours and a daily cap, and stores a `quiet`
-pause the owner can text. The morning brief can include a "Who needs you today"
-section. An afternoon nudge returns `[SILENT]` when nothing qualifies. Nothing
-here texts a client; a draft still has to go through `sms-send-confirmed` and
-`SEND`, which refuses cron. Contract: `tests/proactive-owner.test.mjs`. The
-Hermes cron pre-script and the afternoon job are specified in
-`skills/proactive-owner/references/afternoon-job.md` and are not installed by
-this repo.
+### learning-loop
+Explicit preferences and repeated corrections (the same correction twice), tagged to the owner or to one named client, plus style and acted-on signals from a draft the owner edits, sends, or skips. One script, `skills/learning-loop/scripts/learning_loop.py`, saves without an approval prompt and returns a one-line `confirm` only after read-back. On a text turn the `learning_loop` tool is the path; `execute_code` runs that script only in a non-text session. `apply` is what a new session, including after `/new`, runs before a Daily Brief or the next draft of a kind. `list` answers "what do you remember"; `forget` removes one; `show` lists learned draft signals. Every save calls the box do-not-keep gate (`/opt/box/arin_donotkeep.py`) and refuses when that module is missing. Client procedures are small skills the script writes under `$HERMES_HOME/skills/c-<client>--<procedure>/`. The script does not turn background review on. Contract: `tests/learning-loop.test.mjs`.
 
 ### daily-brief
 The morning brief / daily update: what a Brief Job's prompt says (first line `User timezone: <IANA>`,
