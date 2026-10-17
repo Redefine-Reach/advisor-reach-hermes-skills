@@ -4463,3 +4463,103 @@ test("a brief missing one confirmed source passes and the source is added", () =
   assert.ok(codes(rejected.payload).includes("unconfirmed_evidence"));
   assert.equal(codes(rejected.payload).includes("uncited_source"), false);
 });
+
+test("QA gap 1: validate rejects a brief that keeps LinkedIn posts but cites none", () => {
+  const ctx = world();
+  const seeded = seed(ctx, {
+    name: "David Marshall",
+    city: "Phoenix",
+    type: "buyer",
+    evidence: [
+      {
+        url: "https://advisorreach.ai/team/",
+        title: "Team",
+        excerpt: "David Marshall works with AdvisorReach in Phoenix.",
+        origin: "web",
+        query: '"David Marshall" "Phoenix"',
+        candidate: 1,
+      },
+      {
+        url: "https://www.linkedin.com/posts/dkmarshall_intentbuilding-activity-1",
+        title: "Intent building",
+        excerpt: "David Marshall wrote about intent building in public.",
+        origin: "web",
+        query: '"David Marshall" LinkedIn',
+        candidate: 1,
+      },
+    ],
+  });
+  confirm(ctx, seeded.id, 1);
+  const brief = loadGood([seeded.evidenceIds[0]]);
+  const rejected = validate(ctx, seeded.id, brief);
+  assert.equal(rejected.payload.ok, false, JSON.stringify(rejected.payload));
+  assert.ok(codes(rejected.payload).includes("uncited_linkedin_post"));
+  const fixed = loadGood([seeded.evidenceIds[0]], (next) => {
+    next.observations[0].evidence_ids = [seeded.evidenceIds[1]];
+  });
+  const ok = validate(ctx, seeded.id, fixed);
+  assert.equal(ok.payload.ok, true, JSON.stringify(ok.payload));
+});
+
+test("QA gap 1: cited LinkedIn post appears in PDF sources", () => {
+  const ctx = world();
+  const seeded = seed(ctx, {
+    name: "David Marshall",
+    city: "Phoenix",
+    type: "buyer",
+    evidence: [
+      {
+        url: "https://advisorreach.ai/team/",
+        title: "Team",
+        excerpt: "David Marshall works with AdvisorReach in Phoenix.",
+        origin: "web",
+        query: '"David Marshall" "Phoenix"',
+        candidate: 1,
+      },
+      {
+        url: "https://www.linkedin.com/posts/dkmarshall_intentbuilding-activity-1",
+        title: "Intent building",
+        excerpt: "David Marshall wrote about intent building in public.",
+        origin: "web",
+        query: '"David Marshall" LinkedIn',
+        candidate: 1,
+      },
+    ],
+  });
+  confirm(ctx, seeded.id, 1);
+  const postId = seeded.evidenceIds[1];
+  const brief = loadGood([seeded.evidenceIds[0]], (next) => {
+    next.verified_facts[0].evidence_ids = [postId];
+    next.observations[0].evidence_ids = [postId];
+    next.communication_style.evidence_ids = [postId];
+    for (const key of ["decision_speed", "yes_to_hear"]) next[key].evidence_ids = [postId];
+    next.likely_objections[0].evidence_ids = [postId];
+    next.how_to_communicate[0].evidence_ids = [postId];
+    next.hypotheses[0].evidence_ids = [postId];
+    next.recommendations[0].evidence_ids = [postId];
+    next.appointment_playbook.opening.evidence_ids = [postId];
+    next.appointment_playbook.lead_points.forEach((item) => {
+      item.evidence_ids = [postId];
+    });
+  });
+  const checked = validate(ctx, seeded.id, brief);
+  assert.equal(checked.payload.ok, true, JSON.stringify(checked.payload));
+  writeFileSync(join(ctx.data, seeded.id, "brief.json"), JSON.stringify(checked.payload.brief || brief));
+  const rendered = run(["brief", "render", seeded.id, "--actor", "owner"], ctx);
+  assert.equal(rendered.payload.ok, true, rendered.stdout);
+  const html = readFileSync(join(ctx.data, seeded.id, "brief.html"), "utf8");
+  assert.match(html, /linkedin\.com\/posts\/dkmarshall/);
+  assert.match(html, new RegExp(postId));
+});
+
+test("QA gaps 2–4: skill forbids queue leaks, duplicate delivery, and calendar acks", () => {
+  assert.match(skill, /Queued for the next turn/i);
+  assert.match(skill, /never say "Checking your calendar\./i);
+  assert.match(skill, /send \*\*one\*\* SMS/i);
+  assert.match(skill, /Do not call `op: render` again/i);
+  assert.match(skill, /linkedin\.com\/posts\//);
+  const soul = readFileSync(join(root, "skills", "client-profile", "install", "soul-block.md"), "utf8");
+  assert.match(soul, /Queued for the next turn/i);
+  assert.match(soul, /Checking your calendar/i);
+  assert.match(soul, /send the brief link once/i);
+});

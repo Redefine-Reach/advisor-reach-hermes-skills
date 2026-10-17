@@ -648,6 +648,46 @@ def confirmed_ids(rows: list[dict]) -> set[str]:
     return {row["evidence_id"] for row in rows if row.get("identity_status") == "confirmed"}
 
 
+def cited_evidence_ids(brief: dict) -> set[str]:
+    cited: set[str] = set()
+    for _path, claim, _low_allowed in claim_targets(brief):
+        if not isinstance(claim, dict):
+            continue
+        for evidence_id in claim.get("evidence_ids") or []:
+            if isinstance(evidence_id, str) and evidence_id:
+                cited.add(evidence_id)
+    return cited
+
+
+def linkedin_post_citation_errors(brief: dict, rows: list[dict], confirmed: set[str]) -> list[dict]:
+    """Kept LinkedIn posts only appear in the PDF Sources section when cited in the body."""
+    post_ids: list[str] = []
+    for row in rows:
+        evidence_id = row.get("evidence_id")
+        url = str(row.get("url") or "")
+        if (
+            isinstance(evidence_id, str)
+            and evidence_id in confirmed
+            and row.get("identity_status") == "confirmed"
+            and "linkedin.com" in url
+            and "/posts/" in url
+        ):
+            post_ids.append(evidence_id)
+    if not post_ids:
+        return []
+    cited = cited_evidence_ids(brief)
+    if any(evidence_id in cited for evidence_id in post_ids):
+        return []
+    return [
+        {
+            "code": "uncited_linkedin_post",
+            "path": "/appendix/sources",
+            "message": "Cite at least one kept LinkedIn post in the brief body.",
+            "evidence_ids": post_ids,
+        }
+    ]
+
+
 def claim_targets(brief: dict) -> list[tuple[str, dict, bool]]:
     """Return (path, object, low_allowed). low_allowed is true only in the appendix."""
     found: list[tuple[str, dict, bool]] = []
@@ -930,6 +970,8 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
             errors.append({"code": "unconfirmed_evidence", "path": f"/appendix/sources/{index}", "evidence_id": evidence_id})
         if not is_http_url(source.get("url") or ""):
             errors.append({"code": "rejected_url", "path": f"/appendix/sources/{index}"})
+    if public_confirmed:
+        errors.extend(linkedin_post_citation_errors(brief, rows, confirmed))
     errors = dedupe_errors(errors)
     # A brief can be stored only after this folder finished its own search
     # and identity. A copied record from another person does not count.
