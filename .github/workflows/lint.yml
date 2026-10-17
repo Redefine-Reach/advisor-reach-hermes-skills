@@ -25,6 +25,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: node --test tests/*.test.mjs
+      - run: |
+          chmod 600 evals/milestone-zero/fixtures/fake_sessions/known_names.txt \
+            evals/milestone-zero/fixtures/fake_sessions/forgotten.txt \
+            evals/milestone-zero/fixtures/fake_sessions_heldout/known_names.txt \
+            evals/milestone-zero/fixtures/fake_sessions_heldout/forgotten.txt
+      - run: |
+          cd evals/milestone-zero
+          python3 check_leaks.py --label main --cwd . --strict-drop --fail-on-overredaction \
+            --cmd 'python3 export_session_to_case.py --session {in} --redacted-text-out {out} --known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex'
+          python3 check_leaks.py --label heldout --cwd . --sessions fixtures/fake_sessions_heldout --strict-drop --fail-on-overredaction \
+            --cmd 'python3 export_session_to_case.py --session {in} --redacted-text-out {out} --known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex'
   state-rules:
     runs-on: ubuntu-latest
     steps:

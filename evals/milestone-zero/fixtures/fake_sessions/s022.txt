@@ -1,0 +1,2 @@
+OWNER (Alex): Open https://app.example.com/connect?code=FAKEOAUTH55 and summarize it.
+ARIN: Got it.

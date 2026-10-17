@@ -2,27 +2,40 @@
 
 Run **on the test box**. Do not SCP raw session JSON off the box. Copy only redacted JSONL lines after this procedure passes.
 
-**Policy:** Nothing leaves a box unredacted. Redaction here is **necessary but not sufficient** — operators still owe a human spot check on-box and Vault review before anything is merged into shared eval corpora.
+**Policy:** Nothing leaves a box unredacted. Redaction is **necessary but not sufficient**: a human must read the **first redacted output** from David's sessions on ARIN TEST on the box before anything is copied off-box, and Vault still reviews batches before grader use. **No model-based health/legal classifier** is permitted until an approved on-box route exists (lexicon drop only today).
+
+## Exit codes (`export_session_to_case.py`)
+
+| Code | Meaning |
+|------|---------|
+| **0** | Redacted output written (`exported:` on stderr). |
+| **1** | **Blocked** — residue, decode/JSON error, unsupported field type, or detector failure. No output file. |
+| **2** | **Excluded** — whole session dropped (health, legal, do-not-keep, forgotten, forget/`/new`, opt-out, minor). Count only on stderr; **no output file** (not a successful export). |
+
+Use **only** `export_session_to_case.py` for redaction. There is no supported `redact.py` CLI.
+
+## Retention (30 days)
+
+Redacted cases, manifests, and temp working files on the box: **delete within 30 days** of the run date (`deletion_date` in the manifest). Raw session copies: delete at end of the export run. Log deletion with **date and count only**.
 
 ## 1. Export session from Hermes logs (on box)
 
-Identify the session file under `$HERMES_HOME` (path varies by deployment). Copy it to a working file, e.g. `/tmp/session-raw.json`. Use the operator path your box documents (gateway export, `sessions/` tree, etc.).
+Identify the session file under `$HERMES_HOME`. Copy to a working file (e.g. `/tmp/session-raw.json`). Optional sidecars (mode **0600**, never commit):
 
-Prepare optional sidecar files (mode **0600**, never commit):
-
-- `--known-names` — one known client/person name per line for this box
-- `--rules` — `rules.json` with `do_not_keep` phrases (token-normalized matching)
-- `--forgotten` — one forgotten phrase per line
+- `--known-names` — known client/person names for this box  
+- `--rules` — `donotkeep_rules.json` with `do_not_keep` phrases (token-normalized, ≥75% overlap)  
+- `--forgotten` — forgotten phrases (same matching)
 
 ## 2. Redact and build case (fail closed)
 
 ```bash
-cd /opt/data/skills/advisor-reach-hermes-skills   # or your checkout path
+cd /opt/data/skills/advisor-reach-hermes-skills
 python3 evals/milestone-zero/export_session_to_case.py \
   --session /tmp/session-raw.json \
   --id mz-021 \
   --suite regression \
   --category send_draft \
+  --owner-name Alex \
   --known-names /tmp/box-known-names.txt \
   --rules /tmp/donotkeep-rules.json \
   --forgotten /tmp/forgotten-phrases.txt \
@@ -31,36 +44,30 @@ python3 evals/milestone-zero/export_session_to_case.py \
   --manifest evals/milestone-zero/cases-export.local.manifest.json
 ```
 
-- Exit **0** (exported): one redacted line appended to `cases-export.local.jsonl` (gitignored: `cases-export*.jsonl`). Stdout stays empty; stderr logs **counts per class only** and `session_index=…` (no source path, no case body).
-- Exit **0** (`excluded_sessions: 1`): session matched do-not-keep, forgotten, opt-out, minor, or forget/`/new` rules — **no file written**.
-- Exit **1**: decode/JSON error, detector exception, unknown field type, or residue after the independent second pass. **Do not export.**
+- **Health or legal topic** (including common rewordings): entire session **excluded** (exit **2**), not redacted in place.  
+- **Phones** (10-digit, +1, 7-digit local): masked as `[PHONE ***1234]` (last four only).  
+- Stdout stays empty; stderr logs **counts per class only** and `session_index=…` (no source path, no case body).
 
-Output files are created mode **0600**; parent directories **0700**. The manifest is content-free (redaction version, per-class counts, generated date, deletion date +30d).
-
-Optional one-off text redaction:
+Leak-check helper (synthetic fixtures in CI):
 
 ```bash
-python3 evals/milestone-zero/redact.py \
-  --in /tmp/session.txt \
-  --out /tmp/session.redacted.txt \
-  --known-names /tmp/box-known-names.txt \
-  --manifest /tmp/session.redacted.manifest.json \
-  --fail-closed
+python3 evals/milestone-zero/check_leaks.py \
+  --cwd evals/milestone-zero \
+  --cmd 'python3 export_session_to_case.py --session {in} --redacted-text-out {out} --known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex' \
+  --strict-drop --fail-on-overredaction
 ```
 
-## 3. Review on box
+## 3. Human review on box
 
-Inspect `cases-export.local.jsonl`. Confirm placeholders only (`[REDACTED_PHONE]`, `CLIENT_n`, etc.) and no raw customer text you would not want in evals.
+Inspect redacted output. Confirm placeholders, phone masks, and no raw customer text you would not ship to evals.
 
-## 4. Merge into harness (still on box first)
-
-Validate with fixture replay:
+## 4. Merge into harness (on box first)
 
 ```bash
-python3 evals/milestone-zero/run_trial.py --mode fixture --limit 1   # after merging line into cases.jsonl
+python3 evals/milestone-zero/run_trial.py --mode fixture --limit 1
 python3 evals/milestone-zero/run_repeat.py --repeats 5 --mode fixture
 ```
 
 ## 5. Leave the box
 
-Only after steps 2–3 succeed, an operator may copy **the redacted JSONL line** into the git repo on a dev machine. Never copy `session-raw.json` or sidecar name/rule files.
+Copy **only** the redacted JSONL line after steps 2–3. Never copy raw sessions or sidecar name/rule files.
