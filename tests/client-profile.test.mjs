@@ -4562,4 +4562,66 @@ test("QA gaps 2–4: skill forbids queue leaks, duplicate delivery, and calendar
   assert.match(soul, /Queued for the next turn/i);
   assert.match(soul, /Checking your calendar/i);
   assert.match(soul, /send the brief link once/i);
+function smsFor(mutate) {
+  const ctx = world();
+  const made = seed(ctx);
+  confirm(ctx, made.id, 1);
+  const brief = loadGood(made.evidenceIds, mutate);
+  const vres = validate(ctx, made.id, brief); assert.equal(vres.payload.ok, true, "brief valid " + vres.stdout.slice(0, 400));
+  run(["brief", "render", made.id], ctx);
+  const delivered = run(["deliver", made.id], ctx);
+  const sms = run(["sms-summary", made.id], ctx);
+  assert.equal(sms.payload.ok, true, sms.stdout + sms.stderr);
+  return { text: sms.payload.text, url: delivered.payload.url };
+}
+
+test("sms-summary shortens on whole sentences and never ends a point with an ellipsis when a clean cut exists", () => {
+  const { text, url } = smsFor((next) => {
+    next.appointment_playbook.lead_points[0].text =
+      "Ask about the move timeline first. Then explain the pricing steps in plain words and show two recent comparable sales nearby.";
+    next.appointment_playbook.lead_points[1].text =
+      "Open with the school zones they asked about. Mention commute times and the new light rail stop near the listing on the east side.";
+    next.communication_style.disc_hypothesis =
+      "Working hypothesis only: steady and concrete, prefers a clear plan and a short list of next steps before deciding anything.";
+  });
+  assert.ok(text.length <= 300, text);
+  assert.equal(text.split(url).length - 1, 1);
+  assert.doesNotMatch(text, /\.\.\.|\u2026/, text);
+  const body = text.replace(url, "").trim();
+  assert.match(body, /[.!?]$/, text);
+  for (const point of body.split(/\d\) /).slice(1)) assert.match(point.trim(), /[.!?]$/, point);
+});
+
+test("sms-summary falls back to a whole-word cut, never mid-word, when no clean sentence fits", () => {
+  const { text, url } = smsFor((next) => {
+    next.appointment_playbook.lead_points[0].text = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda sigma omega river stone cloud ridge valley harbor meadow forest canyon summit prairie lantern orchard window garden bridge market simple honest steady patient careful curious quiet bright gentle".split(" ").join(" ");
+    next.appointment_playbook.lead_points[1].text = "bravo kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu copper silver amber crimson violet indigo scarlet emerald cobalt ivory ebony marble velvet cotton linen wool silk";
+    next.communication_style.disc_hypothesis = "Working hypothesis only: charlie tends toward careful steady answers and prefers a clear plan with written details before agreeing to any next step together";
+  });
+  assert.ok(text.length <= 300, text);
+  assert.equal(text.split(url).length - 1, 1);
+  assert.doesNotMatch(text, /\.\.\.|\.\u2026|\u2026\./);
+  const vocab = new Set(["alpha","beta","gamma","delta","epsilon","zeta","eta","theta","iota","kappa","lambda","sigma","omega","river","stone","cloud","ridge","valley","harbor","meadow","forest","canyon","summit","prairie","lantern","orchard","window","garden","bridge","market","simple","honest","steady","patient","careful","curious","quiet","bright","gentle","bravo","kilo","lima","mike","november","oscar","papa","quebec","romeo","sierra","tango","uniform","victor","whiskey","xray","yankee","zulu","copper","silver","amber","crimson","violet","indigo","scarlet","emerald","cobalt","ivory","ebony","marble","velvet","cotton","linen","wool","silk","charlie","tends","toward","answers","and","prefers","a","clear","plan","with","written","details","before","agreeing","to","any","next","step","together","verify","use","identity","style","low","medium","high","working","hypothesis","only","insufficient","evidence","by"]);
+  for (const raw of text.replace(url, "").split(/\s+/)) {
+    const word = raw.replace(/[.:\u2026,;!?()]/g, "").toLowerCase();
+    if (!word || /^\d$/.test(word)) continue;
+    assert.ok(vocab.has(word), "cut mid-word near: " + raw + " in " + text);
+  }
+});
+
+test("clean_clip unit cases: whole sentence, clause, none", () => {
+  const out = spawnSync("python3", ["-c", `
+import importlib.util
+spec = importlib.util.spec_from_file_location("cp", ${JSON.stringify(join(root, "skills/client-profile/scripts/cp.py"))})
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+t = "Ask about the move timeline first. Then explain the pricing steps in plain words and show two recent comparable sales nearby."
+assert m.clean_clip(t, 200) == t
+assert m.clean_clip(t, 60) == "Ask about the move timeline first."
+assert m.clean_clip("Lead with school zones; mention commute times and the new light rail stop", 50) == "Lead with school zones."
+assert m.clean_clip("A" * 100, 50) == ""
+assert m.clean_clip(t, 20) == ""
+print("ok")
+`], { encoding: "utf8" });
+  assert.equal(out.status, 0, out.stderr);
+  assert.match(out.stdout, /ok/);
 });
