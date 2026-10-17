@@ -43,6 +43,22 @@ from redact import (
 ROOT = Path(__file__).resolve().parent
 
 
+def redacted_transcript(redacted: object) -> str:
+    if isinstance(redacted, dict):
+        owner = redacted.get("owner_text")
+        if isinstance(owner, str) and owner.strip():
+            return owner
+        lines: list[str] = []
+        for msg in redacted.get("messages") or []:
+            if isinstance(msg, dict):
+                content = msg.get("content")
+                if isinstance(content, str) and content.strip():
+                    lines.append(content)
+        if lines:
+            return "\n".join(lines)
+    return collect_session_text(redacted)
+
+
 def derive_session_index(case_id: str, explicit: str | None) -> str:
     if explicit:
         return explicit
@@ -165,7 +181,7 @@ def main() -> int:
         print("export_blocked: redaction_error", file=sys.stderr)
         return EXIT_BLOCKED
 
-    blob = collect_session_text(redacted)
+    blob = redacted_transcript(redacted)
     residue2 = scan_residue_secondary(blob) + own_residue(blob)
     residue2 = [r for r in dict.fromkeys([*residue, *residue2]) if r not in ("phone", "name")]
     if residue2 or not ok:
@@ -173,7 +189,7 @@ def main() -> int:
         print(f"export_blocked: residue={','.join(residue2 or residue)}", file=sys.stderr)
         return EXIT_BLOCKED
 
-    transcript = blob if isinstance(blob, str) else collect_session_text(redacted)
+    transcript = blob
 
     scratch_parent = (
         dest.parent

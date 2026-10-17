@@ -26,13 +26,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
-      - run: node --test tests/*.test.mjs
-      - run: python3 -m unittest tests/test_milestone_zero_redact.py -q
       - run: |
           chmod 600 evals/milestone-zero/fixtures/fake_sessions/known_names.txt \
             evals/milestone-zero/fixtures/fake_sessions/forgotten.txt \
             evals/milestone-zero/fixtures/fake_sessions_heldout/known_names.txt \
             evals/milestone-zero/fixtures/fake_sessions_heldout/forgotten.txt
+      - run: node --test tests/*.test.mjs
+      - run: python3 -m unittest tests/test_milestone_zero_redact.py -q
       - run: |
           cd evals/milestone-zero
           python3 check_leaks.py --label main --cwd . --strict-drop --fail-on-overredaction \

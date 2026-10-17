@@ -53,6 +53,17 @@ class VaultRegression(unittest.TestCase):
 
 
 class ExportIntegration(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        for path in (
+            FIX_MAIN / "known_names.txt",
+            FIX_MAIN / "forgotten.txt",
+            MZ / "fixtures" / "fake_sessions_heldout" / "known_names.txt",
+            MZ / "fixtures" / "fake_sessions_heldout" / "forgotten.txt",
+        ):
+            if path.exists():
+                os.chmod(path, 0o600)
+
     def test_export_text_mode_and_exit_codes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -168,6 +179,10 @@ class Manifest(unittest.TestCase):
 
 
 class CheckLeaksCI(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        ExportIntegration.setUpClass()
+
     def test_fake_sets_zero_leaks(self) -> None:
         cmd = (
             "python3 export_session_to_case.py --session {in} --redacted-text-out {out} "
