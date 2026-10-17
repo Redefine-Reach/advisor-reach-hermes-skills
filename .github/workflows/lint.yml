@@ -33,5 +33,5 @@ jobs:
         with: { python-version: '3.12' }
       - run: pip install pyyaml
       # Unit tests (incl. the 121-day fixture under tests/fixtures/rules), then the live files.
-      - run: python -m unittest tests/test_check_state_rules.py -v
+      - run: python -m unittest tests/test_check_state_rules.py tests/test_milestone_zero_redact.py -v
       - run: python scripts/check_state_rules.py
