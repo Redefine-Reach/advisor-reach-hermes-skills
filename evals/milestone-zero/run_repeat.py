@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""Repeat each case N times; all runs must pass (flake guard)."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+
+from checks import run_checks  # noqa: E402
+import os  # noqa: E402
+
+from hermes_bridge import (  # noqa: E402
+    HERMES_PIN,
+    ensure_live_session,
+    prove_wrap,
+    run_fixture,
+    run_hermes,
+    shutdown_live_session,
+)
+from outbound_stub import OutboundRecorder  # noqa: E402
+from run_trial import load_cases  # noqa: E402
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument("--mode", choices=["fixture", "hermes"], default="fixture")
+    parser.add_argument(
+        "--dry-run",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Hermes only; default is live when --mode hermes",
+    )
+    parser.add_argument("--suite", choices=["regression", "capability", "all"], default="all")
+    args = parser.parse_args()
+    if args.repeats < 5:
+        print("repeats must be >= 5", file=sys.stderr)
+        return 2
+    if args.dry_run is None:
+        args.dry_run = args.mode != "hermes"
+
+    cases = load_cases(args.limit)
+    if args.suite != "all":
+        cases = [c for c in cases if c.get("suite") == args.suite]
+
+    proof = prove_wrap()
+    live_ctx = None
+    interception_probe = None
+    if args.mode == "hermes" and not args.dry_run and os.environ.get("ARIN_EVAL_STUB_HERMES") != "1":
+        live_ctx, probe_err = ensure_live_session()
+        if probe_err:
+            print(json.dumps({"ok": False, "error": probe_err}), file=sys.stderr)
+            return 2
+        interception_probe = live_ctx.probe if live_ctx else None
+
+    report_cases = []
+    all_ok = True
+    try:
+        for case in cases:
+            runs = []
+            case_ok = True
+            for n in range(args.repeats):
+                rec = OutboundRecorder()
+                if args.mode == "hermes":
+                    run = run_hermes(case, dry_run=args.dry_run, recorder=rec, live_ctx=live_ctx)
+                else:
+                    run = run_fixture(case, recorder=rec)
+                ok, failures = run_checks(case, run)
+                runs.append({"run": n + 1, "pass": ok, "failures": failures})
+                if not ok:
+                    case_ok = False
+                    all_ok = False
+            report_cases.append(
+                {
+                    "id": case["id"],
+                    "suite": case.get("suite"),
+                    "category": case["category"],
+                    "pass": case_ok,
+                    "repeats": args.repeats,
+                    "runs": runs,
+                }
+            )
+    finally:
+        if live_ctx is not None:
+            shutdown_live_session()
+
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "box": "e23fjkv6",
+        "hermes_pin": HERMES_PIN,
+        "hermes_wrap_proof": prove_wrap().__dict__,
+        "mode": args.mode,
+        "dry_run": args.dry_run,
+        "interception_probe": interception_probe,
+        "repeats": args.repeats,
+        "suite_filter": args.suite,
+        "summary": {
+            "cases": len(report_cases),
+            "passed": sum(1 for c in report_cases if c["pass"]),
+            "failed": sum(1 for c in report_cases if not c["pass"]),
+        },
+        "cases": report_cases,
+    }
+    out = ROOT / "evidence" / "repeat-results.json"
+    out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps({"ok": all_ok, "evidence": str(out), "summary": payload["summary"]}))
+    return 0 if all_ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
