@@ -3,11 +3,13 @@
 state: ZZ
 rules:
 - id: fixture-fresh-120
+  category: statute
   source_type: statute
   sources: [{url: https://example.invalid/a}, {url: https://example.invalid/b}]
   effective_date: '2020-01-01'
   last_verified: '2026-06-14'
 - id: fixture-stale-121
+  category: statute
   source_type: statute
   sources: [{url: https://example.invalid/a}, {url: https://example.invalid/b}]
   effective_date: '2020-01-01'
