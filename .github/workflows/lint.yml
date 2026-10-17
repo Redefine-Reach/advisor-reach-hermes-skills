@@ -24,7 +24,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
       - run: node --test tests/*.test.mjs
+      - run: python3 -m unittest tests/test_milestone_zero_redact.py -q
       - run: |
           chmod 600 evals/milestone-zero/fixtures/fake_sessions/known_names.txt \
             evals/milestone-zero/fixtures/fake_sessions/forgotten.txt \
@@ -43,6 +46,11 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - run: pip install pyyaml
+      - run: |
+          chmod 600 evals/milestone-zero/fixtures/fake_sessions/known_names.txt \
+            evals/milestone-zero/fixtures/fake_sessions/forgotten.txt \
+            evals/milestone-zero/fixtures/fake_sessions_heldout/known_names.txt \
+            evals/milestone-zero/fixtures/fake_sessions_heldout/forgotten.txt
       # Unit tests (incl. the 121-day fixture under tests/fixtures/rules), then the live files.
-      - run: python -m unittest tests/test_check_state_rules.py tests/test_milestone_zero_redact.py -v
-      - run: python scripts/check_state_rules.py
+      - run: python3 -m unittest tests/test_check_state_rules.py tests/test_milestone_zero_redact.py -v
+      - run: python3 scripts/check_state_rules.py
