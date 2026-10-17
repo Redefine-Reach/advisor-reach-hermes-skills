@@ -4562,6 +4562,8 @@ test("QA gaps 2–4: skill forbids queue leaks, duplicate delivery, and calendar
   assert.match(soul, /Queued for the next turn/i);
   assert.match(soul, /Checking your calendar/i);
   assert.match(soul, /send the brief link once/i);
+});
+
 function smsFor(mutate) {
   const ctx = world();
   const made = seed(ctx);
@@ -4625,6 +4627,7 @@ print("ok")
   assert.equal(out.status, 0, out.stderr);
   assert.match(out.stdout, /ok/);
 });
+
 test("a one-source brief uses the singular and ends the DISC line", async () => {
   const page = {
     url: "https://advisorreach.ai/journal/listing-meetings",
