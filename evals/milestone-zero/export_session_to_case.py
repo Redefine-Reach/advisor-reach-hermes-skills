@@ -32,8 +32,8 @@ from redact import (
     log_counts,
     log_excluded,
     redact_object,
+    post_export_safety_flags,
     scan_residue_secondary,
-    own_residue,
     secure_mkdir,
     secure_write_text,
     session_drop_reason,
@@ -134,9 +134,17 @@ def main() -> int:
     parser.add_argument("--forgotten", type=Path, help="Forgotten phrases file (mode 0600)")
     parser.add_argument("--session-index", help="Opaque session index for export_meta")
     parser.add_argument("--owner-name", default="Alex", help="Owner first name kept during name redaction")
+    parser.add_argument(
+        "--fixture-check",
+        action="store_true",
+        help="Leak-check mode: do not require --known-names (CI fixtures only)",
+    )
     args = parser.parse_args()
 
     append_jsonl = args.out is not None or args.redacted_text_out is None
+    if append_jsonl and not args.fixture_check and args.known_names is None:
+        print("export_blocked: known_names_required", file=sys.stderr)
+        return EXIT_BLOCKED
     if append_jsonl and (not args.id or not args.category):
         print("export_blocked: missing_id_or_category", file=sys.stderr)
         return EXIT_BLOCKED
@@ -182,7 +190,11 @@ def main() -> int:
         return EXIT_BLOCKED
 
     blob = redacted_transcript(redacted)
-    residue2 = scan_residue_secondary(blob) + own_residue(blob)
+    safety = post_export_safety_flags(blob)
+    if safety:
+        log_excluded(",".join(safety))
+        return EXIT_EXCLUDED
+    residue2 = scan_residue_secondary(blob)
     residue2 = [r for r in dict.fromkeys([*residue, *residue2]) if r not in ("phone", "name")]
     if residue2 or not ok:
         log_counts(ctx.class_counts)

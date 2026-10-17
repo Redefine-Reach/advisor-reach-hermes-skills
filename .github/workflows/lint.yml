@@ -30,7 +30,9 @@ jobs:
           chmod 600 evals/milestone-zero/fixtures/fake_sessions/known_names.txt \
             evals/milestone-zero/fixtures/fake_sessions/forgotten.txt \
             evals/milestone-zero/fixtures/fake_sessions_heldout/known_names.txt \
-            evals/milestone-zero/fixtures/fake_sessions_heldout/forgotten.txt
+            evals/milestone-zero/fixtures/fake_sessions_heldout/forgotten.txt \
+            evals/milestone-zero/fixtures/fake_sessions_heldout2/known_names.txt \
+            evals/milestone-zero/fixtures/fake_sessions_heldout2/forgotten.txt
       - run: node --test tests/*.test.mjs
       - run: python3 -m unittest tests/test_milestone_zero_redact.py -q
       - run: |
@@ -39,6 +41,9 @@ jobs:
             --cmd 'python3 export_session_to_case.py --session {in} --redacted-text-out {out} --known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex'
           python3 check_leaks.py --label heldout --cwd . --sessions fixtures/fake_sessions_heldout --strict-drop --fail-on-overredaction \
             --cmd 'python3 export_session_to_case.py --session {in} --redacted-text-out {out} --known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex'
+          python3 check_leaks.py --label heldout2 --cwd . --sessions fixtures/fake_sessions_heldout2 --strict-drop --fail-on-overredaction \
+            --cmd 'python3 export_session_to_case.py --session {in} --redacted-text-out {out} --known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex'
+          # Optional private unseen set (not in repo): MZ_PRIVATE_LEAK_SESSIONS=/path/to/dir
   state-rules:
     runs-on: ubuntu-latest
     steps:
@@ -50,7 +55,9 @@ jobs:
           chmod 600 evals/milestone-zero/fixtures/fake_sessions/known_names.txt \
             evals/milestone-zero/fixtures/fake_sessions/forgotten.txt \
             evals/milestone-zero/fixtures/fake_sessions_heldout/known_names.txt \
-            evals/milestone-zero/fixtures/fake_sessions_heldout/forgotten.txt
+            evals/milestone-zero/fixtures/fake_sessions_heldout/forgotten.txt \
+            evals/milestone-zero/fixtures/fake_sessions_heldout2/known_names.txt \
+            evals/milestone-zero/fixtures/fake_sessions_heldout2/forgotten.txt
       # Unit tests (incl. the 121-day fixture under tests/fixtures/rules), then the live files.
       - run: python3 -m unittest tests/test_check_state_rules.py tests/test_milestone_zero_redact.py -v
       - run: python3 scripts/check_state_rules.py

@@ -12,7 +12,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-REDACTION_VERSION = "2.1.0"
+from conservative_guard import post_redact_unsafe, pre_export_drop_category, scrub_benign
+from phrase_match import phrase_hit
+
+REDACTION_VERSION = "2.2.0"
 
 EXIT_OK = 0
 EXIT_BLOCKED = 1
@@ -51,12 +54,17 @@ _HEALTH_DROP = re.compile(
 _LEGAL_DROP = re.compile(
     r"\b(?:divorc\w*|custody|lawyers?|attorneys?|lawsuit|sued|suing|chapter (?:7|11|13)|bankrupt\w*|subpoena|probate|"
     r"restraining order|served papers|immigration|dui|arrest\w*|court (?:date|hearing)|in court|hearing|settlement|"
-    r"litigation|eviction)\b",
+    r"litigation|eviction|\bjudge\b|child\s+support|spousal\s+support|prenup|probation|green\s+card)\b",
     re.I,
 )
 _BENIGN_PHRASES = re.compile(
+    r"(?:"
     r"\b(?:call|meeting with|text|see) (?:Mon|Tues?|Wed(?:nes)?|Thu(?:rs)?|Fri|Sat(?:ur)?|Sun)(?:day)?\b|"
-    r"therapy dog|custody of the [a-z ]*keys|chapter 7 of the|doctor'?s office building|hospital-district|medical office lease",
+    r"(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|"
+    r"Mon|Tues?|Wed(?:nesday)?|Thu(?:rsday)?|Fri|Sat(?:urday)?|Sun(?:day)?)'s\b|"
+    r"therapy dog|custody of the [a-z ]*keys|chapter 7 of the|doctor'?s office building|hospital-district|"
+    r"medical office lease|Hunter Douglas|Mason jar"
+    r")",
     re.I,
 )
 _FORGET_TOPIC = re.compile(r"(?:^|\s)/new\b", re.I)
@@ -71,8 +79,42 @@ _NAME_ALLOW = {
     for w in """Monday Tuesday Wednesday Thursday Friday Saturday Sunday Jan January Feb February Mar March Apr April May Jun June Jul July
 Aug August Sep Sept September Oct October Nov November Dec December Phoenix Arizona ARIN OWNER Alex Hi Hey Hello Thanks Thank Done Draft Note
 Remember Summarize Make Set Use Got Reply Schedule Pick Order Sign Add Call Text Remind Forward Open Show Wire Lender Her His The It Link Card Routing
-Client Mr Mrs Ms Dr Why Version Meeting List Fill Wifi FYI MLS PDF LLC DOB SSN EIN AZ""".split()
+Client Mr Mrs Ms Dr Why Version Meeting List Fill Wifi FYI MLS PDF LLC DOB SSN EIN AZ Grace Bill Summer Frank Hunter Mason Grace Douglas Jar""".split()
 }
+
+_DIGIT_WORDS = {
+    "zero": "0",
+    "oh": "0",
+    "o": "0",
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
+}
+_RE_SPELLED_DIGIT_RUN = re.compile(
+    r"\b(?:(?:zero|one|two|three|four|five|six|seven|eight|nine|oh)\s+){3,}"
+    r"(?:zero|one|two|three|four|five|six|seven|eight|nine|oh)\b",
+    re.I,
+)
+_RE_DIGIT_SPACED = re.compile(r"(?<![\d$])(?:\d\s+){9,14}\d(?!\d)")
+_RE_EMAIL_OBF = re.compile(
+    r"\b[a-z0-9._%+\-]+\s+at\s+[a-z0-9._\-]+\s+dot\s+(?:com|org|net|io)\b",
+    re.I,
+)
+_RE_ADDR_LOOSE = re.compile(
+    r"\b\d{1,5}\s+(?:[A-Z][a-z]+)(?:\s+[A-Z][a-z]+){0,2}\b",
+)
+_RE_ROUTING_BARE = re.compile(r"(?<![\d])\b0\d{8}\b(?!\d)")
+_RE_GATE_SPELLED = re.compile(
+    r"\b(?:gate|door|lockbox|garage)\s+code\s+is\s+"
+    r"((?:(?:zero|one|two|three|four|five|six|seven|eight|nine|oh)\s+){2,6})",
+    re.I,
+)
 
 _RE_SSN = re.compile(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b")
 _RE_EMAIL = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
@@ -120,6 +162,10 @@ _CRED_PATTERNS = [
         r"\b(?:api[ _-]?key|secret|token)\s*(?:is|:|=)?\s*[A-Za-z0-9_\-.]{8,}",
         r"\bwifi password:?\s*\S+",
         r"\b(?:lockbox|gate|door|garage|alarm)\s+(?:code|pin)\s*(?:is|:)?\s*\d{3,8}",
+        r"\blogin\s+(?:is\s+)?\S{4,}",
+        r"\bclient_secret\s*=\s*\S+",
+        r"\bghp_[A-Za-z0-9]{20,}",
+        r"\bapi\s+key\s+\S{4,}",
     )
 ]
 
@@ -196,6 +242,16 @@ class ExclusionRules:
         return cls(do_not_keep=[str(p) for p in phrases], opt_out_field=field_name)
 
 
+def expand_known_names(names: list[str]) -> list[str]:
+    expanded: list[str] = []
+    for name in names:
+        expanded.append(name)
+        for part in re.split(r"\s+", name.strip()):
+            if len(part) > 1:
+                expanded.append(part)
+    return list(dict.fromkeys(expanded))
+
+
 def load_known_names(path: Path | None) -> list[str]:
     if path is None:
         return []
@@ -203,7 +259,8 @@ def load_known_names(path: Path | None) -> list[str]:
     if mode != 0o600:
         raise RedactionError(f"known_names_file_mode:{mode:o}")
     lines = path.read_text(encoding="utf-8").splitlines()
-    return [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
+    raw = [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
+    return expand_known_names(raw)
 
 
 def load_forgotten(path: Path | None) -> list[str]:
@@ -213,27 +270,6 @@ def load_forgotten(path: Path | None) -> list[str]:
     if mode != 0o600:
         raise RedactionError(f"forgotten_file_mode:{mode:o}")
     return [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
-
-
-def _stem(token: str) -> str:
-    t = token.lower().replace("\u2019", "'")
-    t = re.sub(r"'s$|s'$", "", t)
-    for suf in ("ing", "ed", "es", "s"):
-        if len(t) > len(suf) + 3 and t.endswith(suf):
-            return t[: -len(suf)]
-    return t
-
-
-def _toks(text: str) -> list[str]:
-    return [_stem(t) for t in re.findall(r"[A-Za-z0-9\u2019']+", text) if t.lower() not in _STOP]
-
-
-def phrase_hit(text: str, phrase: str, thresh: float = 0.75) -> bool:
-    need = _toks(phrase)
-    if len(need) < 2:
-        return bool(need) and need[0] in set(_toks(text))
-    have = set(_toks(text))
-    return sum(1 for t in need if t in have) / len(need) >= thresh
 
 
 def _collect_session_parts(obj: object) -> list[str]:
@@ -271,7 +307,10 @@ def session_drop_reason(
         return "forget_command"
     if _MINOR.search(blob):
         return "minor_mentioned"
-    scrub = _BENIGN_PHRASES.sub(" ", blob)
+    scrub = scrub_benign(_BENIGN_PHRASES.sub(" ", blob))
+    topic = pre_export_drop_category(scrub)
+    if topic:
+        return topic
     if _HEALTH_DROP.search(scrub):
         return "health"
     if _LEGAL_DROP.search(scrub):
@@ -288,6 +327,30 @@ def session_drop_reason(
 def phone_mask(match: re.Match[str]) -> str:
     digits = re.sub(r"\D", "", match.group(0))
     return f"[PHONE ***{digits[-4:]}]"
+
+
+def _digits_from_words(words: list[str]) -> str:
+    return "".join(_DIGIT_WORDS.get(w.lower(), "") for w in words)
+
+
+def _mask_spelled_digit_run(match: re.Match[str], ctx: RedactionContext) -> str:
+    words = match.group(0).split()
+    digits = _digits_from_words(words)
+    if len(digits) >= 7:
+        ctx.bump("phone")
+        return f"[PHONE ***{digits[-4:]}]"
+    if len(digits) >= 3:
+        ctx.bump("credential")
+        return PLACEHOLDER_CREDENTIAL
+    return match.group(0)
+
+
+def _mask_spaced_digits(match: re.Match[str], ctx: RedactionContext) -> str:
+    digits = re.sub(r"\s+", "", match.group(0))
+    if len(digits) >= 10:
+        ctx.bump("phone")
+        return f"[PHONE ***{digits[-4:]}]"
+    return match.group(0)
 
 
 def _sub(pattern: re.Pattern[str], repl: str, code: str, text: str, ctx: RedactionContext) -> str:
@@ -316,6 +379,29 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
                 flags=re.I,
             )
 
+    def replace_lower(m: re.Match[str]) -> str:
+        word = m.group(1)
+        if word.lower() in allow:
+            return m.group(0)
+        ctx.bump("name")
+        return m.group(0).replace(word, ph(word), 1)
+
+    out = re.sub(
+        r"\btext\s+([a-z]{2,}(?:\s+[a-z]{2,})?)",
+        replace_lower,
+        out,
+        flags=re.I,
+    )
+    out = re.sub(
+        r"\btell\s+([a-z]{2,})\s+and\s+([a-z]{2,})",
+        lambda m: (
+            ctx.bump("name"),
+            f"tell {ph(m.group(1))} and {ph(m.group(2))}",
+        )[1],
+        out,
+        flags=re.I,
+    )
+
     def fix_line(line: str) -> str:
         m = re.match(r"^(\s*(?:OWNER \([^)]*\)|ARIN):\s*)(.*)$", line)
         head, body = (m.group(1), m.group(2)) if m else ("", line)
@@ -332,18 +418,28 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
 
         def word(g: re.Match[str]) -> str:
             w = g.group(1)
+            tail = g.group(0)[len(w) :]
             start = g.start(1)
             if w.lower() in allow or w.startswith("CLIENT_"):
-                return w
+                return w + tail
             before = body[:start].rstrip()
             sentence_start = before == "" or before[-1:] in ".!?:"
             nxt = re.match(r"\s+([A-Z][a-z]+)\b", body[g.end(1) :])
             if sentence_start and not (nxt and nxt.group(1).lower() not in allow):
-                return w
+                return w + tail
             ctx.bump("name")
             return ph(w)
 
         body = re.sub(r"\b([A-Z][a-z]{2,})(?:'s)?\b", word, body)
+        body = re.sub(
+            r"\b([a-z]{2,})\b",
+            lambda g: g.group(0)
+            if g.group(1).lower() in allow or g.group(1).startswith("client_")
+            else (ctx.bump("name"), ph(g.group(1)))[1]
+            if g.group(1).lower() in {p.lower() for p in ctx.known_names}
+            else g.group(0),
+            body,
+        )
         return head + body
 
     return "\n".join(fix_line(ln) for ln in out.split("\n"))
@@ -360,6 +456,13 @@ def redact_text(text: str, ctx: RedactionContext) -> tuple[str, list[str]]:
         return f"\u2063{len(hold) - 1}\u2063"
 
     out = _BENIGN_PHRASES.sub(_hold, out)
+    out = _RE_GATE_SPELLED.sub(
+        lambda m: (ctx.bump("credential"), PLACEHOLDER_CREDENTIAL)[1],
+        out,
+    )
+    out = _RE_SPELLED_DIGIT_RUN.sub(lambda m: _mask_spelled_digit_run(m, ctx), out)
+    out = _RE_DIGIT_SPACED.sub(lambda m: _mask_spaced_digits(m, ctx), out)
+    out = _RE_EMAIL_OBF.sub(lambda m: (ctx.bump("email"), PLACEHOLDER_EMAIL)[1], out)
     for pat in _CRED_PATTERNS:
         out = pat.sub(lambda m: (ctx.bump("credential"), PLACEHOLDER_CREDENTIAL)[1], out)
     out = _CARD_ANY.sub(lambda m: (ctx.bump("card"), PLACEHOLDER_CARD)[1], out)
@@ -373,6 +476,7 @@ def redact_text(text: str, ctx: RedactionContext) -> tuple[str, list[str]]:
     out = _sub(_RE_LISTING, PLACEHOLDER_URL, "url", out, ctx)
     out = _sub(_RE_URL, PLACEHOLDER_URL, "url", out, ctx)
     out = _sub(_RE_POBOX, PLACEHOLDER_ADDRESS, "address", out, ctx)
+    out = _sub(_RE_ADDR_LOOSE, PLACEHOLDER_ADDRESS, "address", out, ctx)
     out = _sub(_RE_STREET, PLACEHOLDER_ADDRESS, "address", out, ctx)
     out = _sub(_RE_CITY_STATE_ZIP, PLACEHOLDER_ADDRESS, "address", out, ctx)
     out = _sub(_RE_SSN, PLACEHOLDER_SSN, "ssn", out, ctx)
@@ -382,6 +486,7 @@ def redact_text(text: str, ctx: RedactionContext) -> tuple[str, list[str]]:
     out = _sub(_RE_CHECKING_ENDING, PLACEHOLDER_ACCOUNT, "account", out, ctx)
     out = _sub(_RE_LOAN, PLACEHOLDER_LOAN, "loan", out, ctx)
     out = _sub(_RE_ROUTING, PLACEHOLDER_ROUTING, "routing", out, ctx)
+    out = _sub(_RE_ROUTING_BARE, PLACEHOLDER_ROUTING, "routing", out, ctx)
     out = _sub(_RE_DOB_LABEL, PLACEHOLDER_DOB, "dob", out, ctx)
     out = _sub(_RE_DIGITS_LONG, PLACEHOLDER_DIGITS, "long_digits", out, ctx)
     out = re.sub("\u2063(\\d+)\u2063", lambda m: hold[int(m.group(1))], out)
@@ -440,34 +545,20 @@ def scan_residue_secondary(text: str) -> list[str]:
     return list(dict.fromkeys(found))
 
 
-def own_residue(text: str) -> list[str]:
-    scrub = _BENIGN_PHRASES.sub(" ", text)
-    found: list[str] = []
-    if re.search(r"@\w", text):
-        found.append("email")
-    if re.search(r"https?://|www\.", text, re.I):
-        found.append("url")
-    if re.search(r"(?<![\d$,])\d{9,}", text):
-        found.append("long_digits")
-    if re.search(r"(?<![\d$,.\-])\d{3}[-\s.]\d{4}(?![\d\-])", text):
-        found.append("phone7")
-    if any(p.search(text) for p in _CRED_PATTERNS):
-        found.append("credential")
-    if _HEALTH_DROP.search(scrub) or _LEGAL_DROP.search(scrub):
-        found.append("health_legal")
-    return found
-
-
 def redact_fail_closed(text: str, ctx: RedactionContext | None = None) -> tuple[str, list[str], bool, list[str]]:
     local = ctx or RedactionContext()
     try:
         cleaned, codes = redact_text(text, local)
-        residue = scan_residue_secondary(cleaned) + own_residue(cleaned)
+        residue = scan_residue_secondary(cleaned)
         residue = [r for r in dict.fromkeys(residue) if r not in ("phone", "name")]
         ok = len(residue) == 0
         return cleaned, codes, ok, residue
     except Exception:
         return "", [], False, ["detector_error"]
+
+
+def post_export_safety_flags(text: str) -> list[str]:
+    return post_redact_unsafe(text)
 
 
 def redact_key(key: str, ctx: RedactionContext) -> str:

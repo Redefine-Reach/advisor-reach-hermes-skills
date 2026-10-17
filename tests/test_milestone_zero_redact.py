@@ -17,6 +17,7 @@ FIX_MAIN = MZ / "fixtures" / "fake_sessions"
 
 sys.path.insert(0, str(MZ))
 
+from phrase_match import phrase_hit  # noqa: E402
 from redact import (  # noqa: E402
     EXIT_BLOCKED,
     EXIT_EXCLUDED,
@@ -60,6 +61,8 @@ class ExportIntegration(unittest.TestCase):
             FIX_MAIN / "forgotten.txt",
             MZ / "fixtures" / "fake_sessions_heldout" / "known_names.txt",
             MZ / "fixtures" / "fake_sessions_heldout" / "forgotten.txt",
+            MZ / "fixtures" / "fake_sessions_heldout2" / "known_names.txt",
+            MZ / "fixtures" / "fake_sessions_heldout2" / "forgotten.txt",
         ):
             if path.exists():
                 os.chmod(path, 0o600)
@@ -148,6 +151,39 @@ class ExportIntegration(unittest.TestCase):
             self.assertEqual(proc.returncode, EXIT_BLOCKED)
             self.assertFalse(out.exists())
 
+    def test_jsonl_export_requires_known_names(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "s.json"
+            session.write_text(
+                json.dumps({"owner_text": "callback at 555-0142", "arin_text": "ok"}),
+                encoding="utf-8",
+            )
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(MZ / "export_session_to_case.py"),
+                    "--session",
+                    str(session),
+                    "--id",
+                    "mz-test",
+                    "--category",
+                    "send_draft",
+                    "--out",
+                    str(Path(tmp) / "cases.jsonl"),
+                ],
+                capture_output=True,
+                text=True,
+                cwd=str(MZ),
+            )
+            self.assertEqual(proc.returncode, EXIT_BLOCKED, proc.stderr)
+            self.assertIn("known_names_required", proc.stderr)
+
+
+class PhraseMatch(unittest.TestCase):
+    def test_do_not_keep_stem_matches_plural(self) -> None:
+        self.assertTrue(phrase_hit("please do not keep mornings chaos", "do not keep morning chaos"))
+        self.assertTrue(phrase_hit("do not keep evenings only", "do not keep evening only"))
+
 
 class LeakGuard(unittest.TestCase):
     def test_weakened_detector_makes_leak_guard_fail(self) -> None:
@@ -188,7 +224,11 @@ class CheckLeaksCI(unittest.TestCase):
             "python3 export_session_to_case.py --session {in} --redacted-text-out {out} "
             "--known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex"
         )
-        for label, sub in (("main", FIX_MAIN), ("heldout", MZ / "fixtures" / "fake_sessions_heldout")):
+        for label, sub in (
+            ("main", FIX_MAIN),
+            ("heldout", MZ / "fixtures" / "fake_sessions_heldout"),
+            ("heldout2", MZ / "fixtures" / "fake_sessions_heldout2"),
+        ):
             proc = subprocess.run(
                 [
                     sys.executable,

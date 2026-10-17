@@ -1,0 +1,39 @@
+{"id": "u001", "file": "u001.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "phone_spelled", "value": "six oh two", "type": "text", "leak_if_any": ["six oh two five five five"]}], "keep": ["tonight"]}
+{"id": "u002", "file": "u002.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "phone_spaced", "value": "4 8 0 5 5 5 0 1 1 7", "type": "digits", "leak_if_any": ["4805550117"]}], "keep": ["text only"]}
+{"id": "u003", "file": "u003.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "address_nosuffix", "value": "4412 Testmont", "type": "text", "leak_if_any": ["Testmont"]}], "keep": ["tomorrow at ten"]}
+{"id": "u004", "file": "u004.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "address_nosuffix", "value": "88 Imaginary Heights", "type": "text", "leak_if_any": ["Imaginary Heights"]}], "keep": ["after the closing"]}
+{"id": "u005", "file": "u005.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "routing", "value": "021000021", "type": "digits", "leak_if_any": ["021000021"]}], "keep": ["escrow officer"]}
+{"id": "u006", "file": "u006.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "routing", "value": "021000021", "type": "digits", "leak_if_any": ["021000021"]}, {"cat": "account", "value": "33445566", "type": "digits", "leak_if_any": ["33445566"]}], "keep": []}
+{"id": "u007", "file": "u007.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "email", "value": "jamie.t+offer@example.org", "type": "text", "leak_if_any": ["jamie.t+offer@example.org"]}, {"cat": "email", "value": "lee_fake99@example.com", "type": "text", "leak_if_any": ["lee_fake99@example.com"]}], "keep": ["send it to"]}
+{"id": "u008", "file": "u008.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "email_obfuscated", "value": "tess at example dot com", "type": "text", "leak_if_any": ["example dot com"]}], "keep": ["use that"]}
+{"id": "u009", "file": "u009.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "credential", "value": "hunter22-FAKE", "type": "text", "leak_if_any": ["hunter22-FAKE"]}], "keep": ["portal"]}
+{"id": "u010", "file": "u010.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "credential", "value": "abcdEFGH12345678FAKE", "type": "text", "leak_if_any": ["abcdEFGH12345678FAKE"]}, {"cat": "credential", "value": "ghp_FAKE0123456789abcdefghij", "type": "text", "leak_if_any": ["ghp_FAKE0123456789abcdefghij"]}], "keep": []}
+{"id": "u011", "file": "u011.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "credential_spelled", "value": "four eight two one", "type": "text", "leak_if_any": ["four eight two one"]}], "keep": ["door is propped"]}
+{"id": "u012", "file": "u012.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "name_lower", "value": "jordan fakerton", "type": "text", "leak_if_any": ["jordan", "fakerton"]}, {"cat": "nickname_lower", "value": "bex", "type": "text", "leak_if_any": ["bex"]}, {"cat": "nickname_lower", "value": "dani", "type": "text", "leak_if_any": ["dani"]}], "keep": ["running late", "start without me"]}
+{"id": "u013", "file": "u013.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "nickname", "value": "Big Mike", "type": "text", "leak_if_any": ["Mike"]}, {"cat": "nickname", "value": "Mama Rosa", "type": "text", "leak_if_any": ["Rosa"]}], "keep": ["2pm slot"]}
+{"id": "u014", "file": "u014.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "name_possessive_adj", "value": "Fakerton", "type": "text", "leak_if_any": ["Fakerton"]}], "keep": ["status on the", "offer"]}
+{"id": "u015", "file": "u015.txt", "kind": "drop", "drop_reason": "do_not_keep", "spans": [{"cat": "do_not_keep", "value": "Fakeman", "type": "text", "leak_if_any": ["Fakeman"]}], "keep": []}
+{"id": "u016", "file": "u016.txt", "kind": "drop", "drop_reason": "do_not_keep", "spans": [{"cat": "do_not_keep", "value": "Fakeman", "type": "text", "leak_if_any": ["Fakeman"]}], "keep": []}
+{"id": "u017", "file": "u017.txt", "kind": "drop", "drop_reason": "do_not_keep", "spans": [{"cat": "do_not_keep", "value": "Placeholder", "type": "text", "leak_if_any": ["Placeholder"]}], "keep": []}
+{"id": "u018", "file": "u018.txt", "kind": "drop", "drop_reason": "do_not_keep", "spans": [{"cat": "do_not_keep", "value": "Samplesworth", "type": "text", "leak_if_any": ["Samplesworth"]}], "keep": []}
+{"id": "u019", "file": "u019.txt", "kind": "drop", "drop_reason": "do_not_keep", "spans": [{"cat": "do_not_keep", "value": "Fakeman", "type": "text", "leak_if_any": ["Fakeman"]}], "keep": []}
+{"id": "u020", "file": "u020.txt", "kind": "drop", "drop_reason": "health", "spans": [{"cat": "health", "value": "spine", "type": "text", "leak_if_any": ["spine", "off her feet"]}], "keep": []}
+{"id": "u021", "file": "u021.txt", "kind": "drop", "drop_reason": "health", "spans": [{"cat": "health", "value": "ablation", "type": "text", "leak_if_any": ["ablation"]}], "keep": []}
+{"id": "u022", "file": "u022.txt", "kind": "drop", "drop_reason": "health", "spans": [{"cat": "health", "value": "miscarriage", "type": "text", "leak_if_any": ["miscarriage"]}], "keep": []}
+{"id": "u023", "file": "u023.txt", "kind": "drop", "drop_reason": "health", "spans": [{"cat": "health", "value": "AA", "type": "text", "leak_if_any": ["AA meetings"]}], "keep": []}
+{"id": "u024", "file": "u024.txt", "kind": "drop", "drop_reason": "health", "spans": [{"cat": "health", "value": "insulin", "type": "text", "leak_if_any": ["insulin"]}], "keep": []}
+{"id": "u025", "file": "u025.txt", "kind": "drop", "drop_reason": "health", "spans": [{"cat": "health", "value": "hospice", "type": "text", "leak_if_any": ["hospice"]}], "keep": []}
+{"id": "u026", "file": "u026.txt", "kind": "drop", "drop_reason": "legal", "spans": [{"cat": "legal", "value": "judge", "type": "text", "leak_if_any": ["judge", "support"]}], "keep": []}
+{"id": "u027", "file": "u027.txt", "kind": "drop", "drop_reason": "legal", "spans": [{"cat": "legal", "value": "prenup", "type": "text", "leak_if_any": ["prenup"]}], "keep": []}
+{"id": "u028", "file": "u028.txt", "kind": "drop", "drop_reason": "legal", "spans": [{"cat": "legal", "value": "probation", "type": "text", "leak_if_any": ["probation"]}], "keep": []}
+{"id": "u029", "file": "u029.txt", "kind": "drop", "drop_reason": "legal", "spans": [{"cat": "legal", "value": "green card", "type": "text", "leak_if_any": ["green card"]}], "keep": []}
+{"id": "u030", "file": "u030.txt", "kind": "control", "drop_reason": null, "spans": [], "keep": ["tuesday at 9"]}
+{"id": "u031", "file": "u031.txt", "kind": "control", "drop_reason": null, "spans": [], "keep": ["Wednesday's crew"]}
+{"id": "u032", "file": "u032.txt", "kind": "control", "drop_reason": null, "spans": [], "keep": ["Saturday's attendees"]}
+{"id": "u033", "file": "u033.txt", "kind": "control", "drop_reason": null, "spans": [], "keep": ["Grace period", "Friday"]}
+{"id": "u034", "file": "u034.txt", "kind": "control", "drop_reason": null, "spans": [], "keep": ["Bill the buyer"]}
+{"id": "u035", "file": "u035.txt", "kind": "control", "drop_reason": null, "spans": [], "keep": ["Hunter Douglas blinds"]}
+{"id": "u036", "file": "u036.txt", "kind": "control", "drop_reason": null, "spans": [], "keep": ["Mason jar"]}
+{"id": "u037", "file": "u037.txt", "kind": "control", "drop_reason": null, "spans": [], "keep": ["Summer open house", "10 to 2"]}
+{"id": "u038", "file": "u038.txt", "kind": "control", "drop_reason": null, "spans": [], "keep": ["frank note", "repairs"]}
+{"id": "u039", "file": "u039.txt", "kind": "control", "drop_reason": null, "spans": [], "keep": ["monday", "lender"]}
