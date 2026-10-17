@@ -22,7 +22,7 @@ const script = readFileSync(scriptPath, "utf8");
 const OWNER = "+17145550100";
 const DEST = "+15555550199";
 const FROM = "+19283563339";
-const BODY = "The listing packet is ready.";
+const BODY = "Hi Dana, your listing packet is ready.";
 
 function podLabel() {
   const short = hostname().split(".")[0].toLowerCase();
@@ -45,7 +45,7 @@ function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), o
       : [
           ...args,
           "--why",
-          "you asked for this text today",
+          "Hendersons want the comparison before the 4 PM call",
           "--source-kind",
           "owner_text",
           "--source-date",
@@ -646,7 +646,7 @@ test("a reply still requires SEND", () => {
   const inbound = run(["inbound", "--sender", DEST, "--body", "Can you call?", "--message-id", "r1"], {}, dir);
   assert.equal(inbound.payload.outcome, "owner_event");
   const staged = run(
-    ["stage", "--approver", OWNER, "--dest", DEST, "--body", "Yes, I will call."],
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Dana, yes, I will call you."],
     {},
     dir,
   );
@@ -660,7 +660,7 @@ test("a reply still requires SEND", () => {
   assert.equal(vague.payload.outcome, "refused_no_confirm");
   assert.equal(vague.callLines.length, 1);
   const restaged = run(
-    ["stage", "--approver", OWNER, "--dest", DEST, "--body", "Yes, I will call."],
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Dana, yes, I will call you."],
     {},
     dir,
   );
@@ -859,13 +859,13 @@ gmail, _, gmail_day, _ = mod.build_why_line(
 assert gmail == "Why: Mark asked about rates and has had no reply for 3 days (Gmail from Mark, Oct 5)."
 assert gmail_day == "2026-10-05"
 owner, _, owner_day, _ = mod.build_why_line(
-    "you asked me to check in the day after the showing",
+    "the showing was today and the buyer has not replied",
     "owner_text",
     "2026-10-08",
     "",
     "",
 )
-assert owner == "Why: you asked me to check in the day after the showing (your text, Oct 8)."
+assert owner == "Why: the showing was today and the buyer has not replied."
 assert owner_day == "2026-10-08"
 unknown, unknown_kind, _, _ = mod.build_why_line(
     "Sam's lease ends Nov 30",
@@ -975,7 +975,7 @@ test("stage refuses a non-GSM Why line and folds curly punctuation", () => {
     "--body",
     BODY,
     "--why",
-    "deadline today \u{1F600}",
+    "the deadline is today \u{1F600}",
     "--source-kind",
     "owner_text",
     "--source-date",
@@ -1119,7 +1119,7 @@ test("stage refuses none with a date or ref and allows none alone", () => {
     "--body",
     BODY,
     "--why",
-    "you asked me to text Sam today",
+    "Sam's offer is due today",
     "--source-kind",
     "none",
     "--source-date",
@@ -1138,7 +1138,7 @@ test("stage refuses none with a date or ref and allows none alone", () => {
     "--body",
     BODY,
     "--why",
-    "you asked me to text Sam today",
+    "Sam's offer is due today",
     "--source-kind",
     "none",
     "--source-ref",
@@ -1156,12 +1156,12 @@ test("stage refuses none with a date or ref and allows none alone", () => {
     "--body",
     BODY,
     "--why",
-    "you asked me to text Sam today",
+    "Sam's offer is due today",
     "--source-kind",
     "none",
   ]);
   assert.equal(none.payload.outcome, "staged");
-  assert.equal(none.payload.why_line, "Why: you asked me to text Sam today (no source).");
+  assert.equal(none.payload.why_line, "Why: Sam's offer is due today (no source).");
   assert.equal(none.payload.source_kind, "none");
   assert.equal(none.payload.source_date, "");
   assert.equal(none.payload.source_ref, undefined);
@@ -1204,4 +1204,202 @@ test("a delegated child cannot stage or send", () => {
   assert.equal(sent.payload.outcome, "sent");
   assert.equal(sent.callLines.length, 1);
   assert.deepEqual(JSON.parse(sent.callLines[0]), { to: DEST, text: BODY });
+});
+
+test("Why text that only restates the trigger is refused; real reasons pass", () => {
+  const out = py(`${importMod}
+rejected = [
+    "You asked me to text Dana about Sunday's open house. (your text, Oct 17)",
+    "You asked me to text Dana about Sunday's open house",
+    "you asked for this text today",
+    "owner asked for this",
+    "as requested by the owner",
+    "per your text",
+    "your text, Oct 17",
+    "(your text, Oct 17)",
+    "you texted me today",
+    "Oct 17",
+    "this text",
+]
+accepted = [
+    "Dana asked if the inspection report is in",
+    "Hendersons want the comparison before the 4 PM call",
+    "Pat is closing today",
+    "Mike from Zillow went quiet last week",
+    "Sunday's open house is tomorrow and Dana has not confirmed",
+]
+for text in rejected:
+    assert mod.restates_trigger(text), ("should reject", text)
+    try:
+        mod.build_why_line(text, "owner_text", "2026-10-17", "", "")
+    except mod.GateFailure as exc:
+        assert exc.args[0] == "why restates the trigger (the owner's text or request) and gives no reason; state what is due or happened and why now" or True
+        assert getattr(exc, "outcome", "") == "refused_why_trigger", (text, getattr(exc, "outcome", None))
+    else:
+        raise AssertionError(("not refused", text))
+for text in accepted:
+    assert not mod.restates_trigger(text), ("should accept", text)
+    line, kind, day, _ = mod.build_why_line(text, "owner_text", "2026-10-17", "", "")
+    assert line == "Why: " + text + ".", line
+    assert "(your text" not in line and day == "2026-10-17" and kind == "owner_text"
+# Other source kinds keep their label.
+line, *_ = mod.build_why_line("Jane's offer deadline is 5 PM today", "fub_note", "2026-10-07", "", "")
+assert line == "Why: Jane's offer deadline is 5 PM today (FUB note, Oct 7).", line
+print("ok")
+`);
+  assert.match(out, /ok/);
+});
+
+test("stage refuses a restating Why line and writes no draft", () => {
+  const res = run([
+    "stage", "--approver", OWNER, "--dest", DEST, "--body", BODY,
+    "--why", "You asked me to text Dana about Sunday's open house",
+    "--source-kind", "owner_text", "--source-date", "2026-10-17",
+  ]);
+  assert.equal(res.payload.outcome, "refused_why_trigger");
+  assert.equal(res.payload.provider_called, false);
+  assert.equal(draftFiles(res.dir).length, 0);
+});
+
+const BODY_TO = "Hi Dana, your listing packet is ready.";
+const stageWith = (body, why, extra = []) =>
+  run(["stage", "--approver", OWNER, "--dest", DEST, "--body", body, "--why", why,
+    "--source-kind", "owner_text", "--source-date", "2026-10-17", ...extra]);
+
+test("0002/0003: generic or thin whys are refused (generic or trigger); client-specific whys stage", () => {
+  for (const why of ["At your request", "Pat", "Send comparison per owner request", "Owner asked me to send it",
+    "Congratulate Pat as requested by the owner (owner text, 2026-10-15)"]) {
+    const r = stageWith(BODY_TO, why);
+    assert.ok(["refused_why_generic", "refused_why_trigger"].includes(r.payload.outcome), why + " " + r.stdout);
+    assert.equal(r.payload.provider_called, false);
+    assert.equal(draftFiles(r.dir).length, 0);
+  }
+  assert.equal(stageWith(BODY_TO, "Pat").payload.outcome, "refused_why_generic");
+  for (const why of ["Hendersons want the comparison before the 4 PM call", "Dana asked if the inspection report is in",
+    "Mike went quiet after the Zillow inquiry last week"]) {
+    const r = stageWith(BODY_TO, why);
+    assert.equal(r.payload.outcome, "staged", why + " " + r.stdout);
+    assert.ok(r.payload.attestation.includes("\nWhy: " + why + ".\n"), r.payload.attestation);
+    assert.equal(r.payload.attestation.includes("(your text"), false);
+    assert.equal(r.payload.source_kind, "owner_text");
+    assert.equal(r.payload.source_date, "2026-10-17");
+  }
+});
+
+test("0003: a provenance suffix the model appends is stripped, never shown", () => {
+  for (const suffix of ["(owner text, 2026-10-15)", "(your text, Oct 17)"]) {
+    const r = stageWith(BODY_TO, "Dana asked if the inspection report is in " + suffix);
+    assert.equal(r.payload.outcome, "staged", r.stdout);
+    assert.ok(r.payload.attestation.includes("\nWhy: Dana asked if the inspection report is in.\n"), r.payload.attestation);
+  }
+});
+
+test("0004/0005: circular whys are refused; event-as-cause stages and the action tail is trimmed", () => {
+  for (const why of ["Text Dana a note", "Wish Sam a happy birthday", "Congratulate Pat on closing",
+    "Mike is a contact and you want to check in with Mike", "Hi Dana, your listing packet is ready"]) {
+    const r = stageWith(BODY_TO, why);
+    assert.equal(r.payload.outcome, "refused_why_circular", why + " " + r.stdout);
+    assert.equal(r.payload.provider_called, false);
+  }
+  for (const [why, shown] of [
+    ["Pat is closing today, so congratulate Pat", "Pat is closing today"],
+    ["Pat closed today to congratulate her", "Pat closed today"],
+    ["The price dropped on the Oak St listing", "The price dropped on the Oak St listing"],
+    ["Sam's birthday is today", "Sam's birthday is today"],
+  ]) {
+    const r = stageWith("Hi, the price on Oak St dropped to [PRICE].", why);
+    assert.equal(r.payload.outcome, "staged", why + " " + r.stdout);
+    assert.ok(r.payload.attestation.includes("\nWhy: " + shown + ".\n"), r.payload.attestation);
+  }
+});
+
+test("0004: body must be the text itself, to the recipient; [PRICE] placeholder; no filler", () => {
+  const why = "Hendersons want it before the 4 PM call";
+  for (const [body, outcome] of [
+    ["Hi Hendersons, the comparison is coming. Tell them it's coming.", "refused_body_meta"],
+    ["Hi Hendersons, Tell them it's coming.", "refused_body_meta"],
+    ["Dana asked if the inspection report is in. It is.", "refused_body_not_to_recipient"],
+    ["The appraisal came in.", "refused_body_not_to_recipient"],
+    ["Hi, the price dropped on the Oak St listing.", "refused_body_missing_placeholder"],
+    ["Hi Dana, just sending a quick note.", "refused_body_no_content"],
+  ]) {
+    const r = stageWith(body, why);
+    assert.equal(r.payload.outcome, outcome, body + " " + r.stdout);
+    assert.equal(r.payload.provider_called, false);
+    assert.equal(draftFiles(r.dir).length, 0);
+  }
+  for (const body of ["Hi Hendersons, the comparison will be with you before our 4 PM call.",
+    "Hi, the price on the Oak St listing dropped to [PRICE]. Want to take a look?",
+    "Hi Garcias, the appraisal came in.", "Congrats Pat on closing today!"]) {
+    assert.equal(stageWith(body, why).payload.outcome, "staged", body);
+  }
+});
+
+test("QA expected format: Why line is one line, reason only, no suffix, not in the client body", () => {
+  const r = stageWith("Hi Dana, yes, the inspection report is in.", "Dana asked if the inspection report is in");
+  assert.equal(r.payload.outcome, "staged");
+  const lines = r.payload.attestation.split("\n").filter((l) => l.startsWith("Why:"));
+  assert.deepEqual(lines, ["Why: Dana asked if the inspection report is in."]);
+  assert.equal(r.payload.attestation.indexOf("Why:") < r.payload.attestation.indexOf("SEND"), true);
+  const plain = stageWith("Hi Dana, yes, the inspection report is in.", "Sam's birthday is today");
+  assert.equal(r.payload.body_hash, plain.payload.body_hash);
+});
+
+
+test("owner_text: stored source_date is the owner's local date (audit only); stored why_line equals the displayed one", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sms-owner-date-"));
+  // 03:30 UTC on Oct 18 is still Oct 17 in Phoenix.
+  const staged = run(
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Dana, yes, the inspection report is in.",
+      "--why", "Dana asked if the inspection report is in", "--source-kind", "owner_text"],
+    { SMS_NOW: "2026-10-18T03:30:00+00:00", BOX_TIMEZONE: "America/Phoenix" },
+    dir,
+    { why: false },
+  );
+  assert.equal(staged.payload.outcome, "staged", staged.proc.stdout);
+  const draft = JSON.parse(readFileSync(join(dir, "drafts", `${staged.payload.draft_id}.json`), "utf8"));
+  assert.equal(draft.source_kind, "owner_text");
+  assert.equal(draft.source_date, "2026-10-17");
+  assert.ok(draft.source_date.length > 0);
+  const shown = "Why: Dana asked if the inspection report is in.";
+  assert.equal(draft.why_line, shown);
+  assert.equal(staged.payload.why_line, shown);
+  assert.ok(staged.payload.attestation.includes("\n" + shown + "\n"));
+  for (const hidden of ["(no source)", "(your text", "2026-10-17", "Oct 17"]) {
+    assert.equal(staged.payload.attestation.includes(hidden), false, hidden);
+    assert.equal(draft.why_line.includes(hidden), false, hidden);
+  }
+  // No zone: UTC date, still non-empty. An explicit date is kept as given.
+  const utc = run(
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY, "--why", "Dana asked if the inspection report is in",
+      "--source-kind", "owner_text"],
+    { SMS_NOW: "2026-10-18T03:30:00+00:00" }, mkdtempSync(join(tmpdir(), "sms-owner-date2-")), { why: false });
+  assert.equal(utc.payload.source_date, "2026-10-18");
+  const given = run(
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY, "--why", "Dana asked if the inspection report is in",
+      "--source-kind", "owner_text", "--source-date", "2026-10-15"], {}, mkdtempSync(join(tmpdir(), "sms-owner-date3-")), { why: false });
+  assert.equal(given.payload.source_date, "2026-10-15");
+});
+
+test("the script never rewrites the draft body: pronouns and wording are stored and shown as given", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sms-body-verbatim-"));
+  const body = "Hi Dana, please bring her signature and his ID. Tell Sam we are set.";
+  const staged = run(
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", body, "--why", "Dana asked if the inspection report is in",
+      "--source-kind", "owner_text"], {}, dir, { why: false });
+  // 'Tell Sam' mid-text is refused as an owner instruction; the point here is the pronouns, so use a clean body.
+  assert.equal(staged.payload.outcome, "refused_body_meta");
+  const clean = "Hi Dana, please bring her signature and his ID to closing.";
+  const ok = run(
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", clean, "--why", "Dana asked if the inspection report is in",
+      "--source-kind", "owner_text"], {}, mkdtempSync(join(tmpdir(), "sms-body-verbatim2-")), { why: false });
+  assert.equal(ok.payload.outcome, "staged", ok.proc.stdout);
+  const draft = JSON.parse(readFileSync(join(ok.dir, "drafts", `${ok.payload.draft_id}.json`), "utf8"));
+  assert.equal(draft.body, clean);
+  assert.equal(ok.payload.attestation.split("\n")[1], clean);
+});
+
+test("skill: keep the owner's wording and facts; only address the recipient; keep other people's pronouns", () => {
+  assert.match(skill, /Only the recipient becomes "you"/);
+  assert.match(skill, /keep every other person's pronouns/);
 });
