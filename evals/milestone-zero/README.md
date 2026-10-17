@@ -15,7 +15,10 @@ Inspect-based regression checker for ARIN text sessions on **ARIN TEST only** (`
 | `checks.py` | Pass/fail (SEND gate uses **outbound log**, not the word SEND) |
 | `run_trial.py` | Single-pass trial → `evidence/trial-results.json` |
 | `run_repeat.py` | **≥5 repeats** per case; all must pass |
-| `task.py` | Inspect `Task` definition |
+| `task.py` | Inspect `Task` definition (+ `arin_milestone_mvq`) |
+| `cases_mvq_synthetic.jsonl` | **Synthetic-only** MVQ cases (RED-681) |
+| `run_mvq.py` | MVQ grader trial → `evidence/mvq-results.json` + scorecard |
+| `grader/` | MVQ scorer, prompt, scorecard, QA agreement |
 | `requirements.txt` | `inspect_ai` pin |
 
 ## Suite tags
@@ -62,6 +65,23 @@ python3 evals/milestone-zero/run_repeat.py --repeats 5 --mode hermes --no-dry-ru
 Credential vars cleared in the child process include Composio, GHL, FUB, and Gmail-related keys (see `live_session.py`).
 
 For harness CI without a binary: `ARIN_EVAL_STUB_HERMES=1` exercises live path + outbound stub using fixture text.
+
+## MVQ grader (RED-681)
+
+Synthetic cases only (`cases_mvq_synthetic.jsonl`, `synthetic: true`). Stub-only; **any delivered SMS in the outbound log fails the whole MVQ run**.
+
+```bash
+export ARIN_MVQ_GRADER_MODEL_ROUTE=fixture   # required; fail closed if unset
+python3 evals/milestone-zero/run_mvq.py --limit 12
+# evidence/mvq-results.json, evidence/mvq-scorecard.md
+python3 evals/milestone-zero/grader/qa_agreement.py \
+  --human evals/milestone-zero/grader/fixtures/qa_human_sample.json \
+  --grader evals/milestone-zero/evidence/mvq-results.json
+```
+
+Tuning: `ARIN_MVQ_GRADER_BAR` (default `8`), `ARIN_MVQ_GRADER_LINE_WEIGHTS`, `ARIN_MVQ_GRADER_ENABLED_HARD_FAILS`, optional `ARIN_MVQ_GRADER_CONFIG` JSON path. HTTP model route: `ARIN_MVQ_GRADER_MODEL_ROUTE=http` + `ARIN_MVQ_GRADER_HTTP_URL` (no API keys in repo).
+
+Grader prompt version: `grader/prompts/mvq-grader-v0.1.0.md` (`GRADER_VERSION` in `grader/version.py`).
 
 ## Model grader policy
 

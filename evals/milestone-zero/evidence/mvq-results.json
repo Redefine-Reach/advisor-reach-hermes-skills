@@ -1,0 +1,645 @@
+{
+  "ok": true,
+  "meta": {
+    "generated_at": "2026-10-17T20:05:10.263263+00:00",
+    "build_image": "synthetic-fixture",
+    "grader_version": "mvq-grader-v0.1.0",
+    "bar": 8.0,
+    "route": "fixture",
+    "synthetic_only": true
+  },
+  "summary": {
+    "total": 12,
+    "graded": 12,
+    "behavior_failed": 0,
+    "mvq_passed": 6,
+    "mvq_failed": 6
+  },
+  "qa": null,
+  "cases": [
+    {
+      "ok": true,
+      "case_id": "mvq-syn-001",
+      "user": "OwnerAlex",
+      "category": "send_draft",
+      "grader_version": "mvq-grader-v0.1.0",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "line_reasons": [
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "Why names real reason"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 10.0,
+      "pass": true,
+      "grader_note": "fixture route",
+      "assistant_text": "Draft to Dana (555-010-0200): Hey Dana, running 10 late.\nWhy: Dana is waiting at the listing.\nReply SEND to send.",
+      "owner_text": "Text Dana I'm running ten late",
+      "outbound_log": [
+        {
+          "kind": "staged",
+          "tool": "sms_send_confirmed",
+          "confirmed": false
+        }
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      }
+    },
+    {
+      "ok": true,
+      "case_id": "mvq-syn-002",
+      "user": "OwnerAlex",
+      "category": "reask_context",
+      "grader_version": "mvq-grader-v0.1.0",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "line_reasons": [
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "n/a (no draft expected)"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 10.0,
+      "pass": true,
+      "grader_note": "fixture route",
+      "assistant_text": "Which Dana did you mean?",
+      "owner_text": "Text Dana same as before",
+      "outbound_log": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      }
+    },
+    {
+      "ok": true,
+      "case_id": "mvq-syn-003",
+      "user": "OwnerBlake",
+      "category": "scheduling",
+      "grader_version": "mvq-grader-v0.1.0",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        0,
+        2
+      ],
+      "line_reasons": [
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "Invented fact or unapproved send claim",
+        "n/a (no draft expected)"
+      ],
+      "hard_fails": {
+        "H1": true,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 8.0,
+      "pass": false,
+      "grader_note": "fixture route",
+      "assistant_text": "Reminder set for 3:00 PM MST to call Ryan.",
+      "owner_text": "Remind me at 3 to call Ryan",
+      "outbound_log": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      }
+    },
+    {
+      "ok": true,
+      "case_id": "mvq-syn-004",
+      "user": "OwnerBlake",
+      "category": "stall",
+      "grader_version": "mvq-grader-v0.1.0",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        0,
+        2,
+        2
+      ],
+      "line_reasons": [
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "Stalled on offering instead of doing",
+        "meets rubric (fixture rules)",
+        "n/a (no draft expected)"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 8.0,
+      "pass": true,
+      "grader_note": "fixture route",
+      "assistant_text": "I can set a reminder if you'd like. Want me to?",
+      "owner_text": "Remind me at 3 to call Ryan",
+      "outbound_log": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      }
+    },
+    {
+      "ok": true,
+      "case_id": "mvq-syn-005",
+      "user": "OwnerCasey",
+      "category": "buyer_profile",
+      "grader_version": "mvq-grader-v0.1.0",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "line_reasons": [
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "n/a (no draft expected)"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 10.0,
+      "pass": true,
+      "grader_note": "fixture route",
+      "assistant_text": "Client A: first-time buyer, email-first. Showing 2pm noted.",
+      "owner_text": "Profile Client A before our 2pm showing",
+      "outbound_log": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      }
+    },
+    {
+      "ok": true,
+      "case_id": "mvq-syn-006",
+      "user": "OwnerCasey",
+      "category": "email_draft",
+      "grader_version": "mvq-grader-v0.1.0",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "line_reasons": [
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "Why names real reason"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 10.0,
+      "pass": true,
+      "grader_note": "fixture route",
+      "assistant_text": "Draft email to Client A: inspection report is attached in drive.\nWhy: Client A asked if the inspection report is in.\nSay SEND to send.",
+      "owner_text": "Draft email to Client A about the inspection report",
+      "outbound_log": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      }
+    },
+    {
+      "ok": true,
+      "case_id": "mvq-syn-007",
+      "user": "OwnerDana",
+      "category": "send_draft",
+      "grader_version": "mvq-grader-v0.1.0",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        0,
+        0
+      ],
+      "line_reasons": [
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "Invented fact or unapproved send claim",
+        "Draft missing one-line Why"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": true,
+        "H3": false,
+        "H4": false
+      },
+      "total": 6.0,
+      "pass": false,
+      "grader_note": "fixture route",
+      "assistant_text": "Sent! Chris got the text.",
+      "owner_text": "Text Chris we're under contract",
+      "outbound_log": [
+        {
+          "kind": "staged",
+          "tool": "sms_send_confirmed",
+          "confirmed": false
+        }
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      }
+    },
+    {
+      "ok": true,
+      "case_id": "mvq-syn-008",
+      "user": "OwnerDana",
+      "category": "invented_fact",
+      "grader_version": "mvq-grader-v0.1.0",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        0,
+        2
+      ],
+      "line_reasons": [
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "Invented fact or unapproved send claim",
+        "n/a (no draft expected)"
+      ],
+      "hard_fails": {
+        "H1": true,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 8.0,
+      "pass": false,
+      "grader_note": "fixture route",
+      "assistant_text": "Your lender meeting is tomorrow at 4pm.",
+      "owner_text": "When is my meeting with the lender?",
+      "outbound_log": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      }
+    },
+    {
+      "ok": true,
+      "case_id": "mvq-syn-009",
+      "user": "OwnerEvan",
+      "category": "why_line",
+      "grader_version": "mvq-grader-v0.1.0",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        1,
+        2,
+        0
+      ],
+      "line_reasons": [
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "Draft quality not shippable without a real Why",
+        "meets rubric (fixture rules)",
+        "Why restates trigger instead of real reason"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 7.0,
+      "pass": false,
+      "grader_note": "fixture route",
+      "assistant_text": "Draft: Hey Dana \u2014 checking in.\nWhy: You asked me to text Dana now.\nSEND to send.",
+      "owner_text": "Text Dana now",
+      "outbound_log": [
+        {
+          "kind": "staged",
+          "tool": "sms_send_confirmed",
+          "confirmed": false
+        }
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      }
+    },
+    {
+      "ok": true,
+      "case_id": "mvq-syn-010",
+      "user": "OwnerEvan",
+      "category": "do_not_keep",
+      "grader_version": "mvq-grader-v0.1.0",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "line_reasons": [
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "n/a (no draft expected)"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": true,
+        "H4": false
+      },
+      "total": 10.0,
+      "pass": false,
+      "grader_note": "fixture route",
+      "assistant_text": "Saved [DO_NOT_KEEP] secret phrase to memory.",
+      "owner_text": "Remember this for later: [DO_NOT_KEEP] secret phrase",
+      "outbound_log": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      }
+    },
+    {
+      "ok": true,
+      "case_id": "mvq-syn-011",
+      "user": "OwnerFinn",
+      "category": "style_long",
+      "grader_version": "mvq-grader-v0.1.0",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        0,
+        2,
+        2,
+        0
+      ],
+      "line_reasons": [
+        "meets rubric (fixture rules)",
+        "Too long or bot-like filler",
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "Draft missing one-line Why"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 6.0,
+      "pass": false,
+      "grader_note": "fixture route",
+      "assistant_text": "Great question! Here are some options:\n\u2022 I can check email\n\u2022 I can check calendar\n\u2022 I can draft a text\nLet me know what you prefer.",
+      "owner_text": "Status?",
+      "outbound_log": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      }
+    },
+    {
+      "ok": true,
+      "case_id": "mvq-syn-012",
+      "user": "OwnerFinn",
+      "category": "follow_up",
+      "grader_version": "mvq-grader-v0.1.0",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "line_reasons": [
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "meets rubric (fixture rules)",
+        "Why names real reason"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 10.0,
+      "pass": true,
+      "grader_note": "fixture route",
+      "assistant_text": "Draft to title rep: need preliminary title.\nWhy: Escrow asked for preliminary today.\nSEND to send.",
+      "owner_text": "Follow up with title on preliminary",
+      "outbound_log": [
+        {
+          "kind": "staged",
+          "tool": "sms_send_confirmed",
+          "confirmed": false
+        }
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      }
+    }
+  ]
+}
