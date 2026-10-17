@@ -1,0 +1,2 @@
+OWNER (Alex): Forward the inspection report to lender.fake_01@example.net please.
+ARIN: Got it.

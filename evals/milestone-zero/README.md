@@ -7,8 +7,9 @@ Inspect-based regression checker for ARIN text sessions on **ARIN TEST only** (`
 | Path | Role |
 |------|------|
 | `cases.jsonl` | 20 cases with `suite`: `regression` \| `capability` |
-| `redact.py` | Box-local redaction (`--fail-closed`) |
-| `export_session_to_case.py` | Box-local session → redacted JSONL case |
+| `redact.py` | Redaction library (import only; no CLI) |
+| `export_session_to_case.py` | **Only** supported box export / redaction entrypoint |
+| `check_leaks.py` | Synthetic leak checker over `fixtures/fake_sessions*` |
 | `BOX-EXPORT.md` | Operator procedure for TEST exports |
 | `outbound_stub.py` | Stub Telnyx base URL; outbound JSONL log |
 | `hermes_bridge.py` | Hermes **0.21.0** live invoke + fixture replay |
@@ -67,7 +68,7 @@ For harness CI without a binary: `ARIN_EVAL_STUB_HERMES=1` exercises live path +
 
 - **Allowed only** on **redacted or synthetic** cases (`cases.jsonl`, `cases-export.local.jsonl` after `export_session_to_case.py`).
 - Use a **zero-retention** API route or a **self-hosted** grader on the box/VPC. Do not send raw session logs to vendor graders.
-- If `redact.py --fail-closed` or `export_session_to_case.py` reports residue, **stop** — no grader call, no export off-box.
+- If `export_session_to_case.py` exits **1** (blocked) or **2** (excluded), **stop** — no grader call, no export off-box.
 - Deterministic checks in `checks.py` remain the gate for milestone-zero; model graders are optional supplements, not replacements.
 
 ## Box export (nothing leaves until redacted)

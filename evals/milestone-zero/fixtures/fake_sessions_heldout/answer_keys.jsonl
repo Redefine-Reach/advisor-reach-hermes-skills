@@ -1,0 +1,22 @@
+{"id": "h001", "file": "h001.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "phone", "value": "520-555-0123", "type": "digits", "leak_if_any": ["5205550123"]}], "keep": ["after lunch"]}
+{"id": "h002", "file": "h002.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "phone", "value": "(623) 555 0104", "type": "digits", "leak_if_any": ["6235550104"]}], "keep": ["text only"]}
+{"id": "h003", "file": "h003.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "phone7", "value": "555.0166", "type": "digits", "leak_if_any": ["5550166"]}], "keep": ["office line"]}
+{"id": "h004", "file": "h004.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "email", "value": "jordan.q.sample@example.com", "type": "text", "leak_if_any": ["jordan.q.sample@example.com"]}], "keep": ["offer"]}
+{"id": "h005", "file": "h005.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "address", "value": "18 Nowhere Avenue", "type": "text", "leak_if_any": ["Nowhere"]}], "keep": ["at noon"]}
+{"id": "h006", "file": "h006.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "url", "value": "https://files.example.net/d/FAKEHELD9?sig=zz1", "type": "text", "leak_if_any": ["FAKEHELD9"]}], "keep": ["Docs"]}
+{"id": "h007", "file": "h007.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "name", "value": "Rosalind Fakerton", "type": "text", "leak_if_any": ["Rosalind", "Fakerton"]}], "keep": ["appraisal"]}
+{"id": "h008", "file": "h008.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "nickname", "value": "Bex", "type": "text", "leak_if_any": ["Bex"]}], "keep": ["at 5"]}
+{"id": "h009", "file": "h009.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "ssn", "value": "900-12-3456", "type": "digits", "leak_if_any": ["900123456"]}], "keep": ["credit pull"]}
+{"id": "h010", "file": "h010.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "account", "value": "7788990011", "type": "digits", "leak_if_any": ["7788990011"]}], "keep": ["wire"]}
+{"id": "h011", "file": "h011.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "card", "value": "4000 0000 0000 0002", "type": "digits", "leak_if_any": ["4000000000000002"]}], "keep": ["the fee"]}
+{"id": "h012", "file": "h012.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "dob", "value": "7/4/1979", "type": "text", "leak_if_any": ["1979"]}], "keep": ["fill it in"]}
+{"id": "h013", "file": "h013.txt", "kind": "redact", "drop_reason": null, "spans": [{"cat": "credential", "value": "Swordfish-FAKE-1", "type": "text", "leak_if_any": ["Swordfish-FAKE-1"]}, {"cat": "credential", "value": "sk_live_FAKEHELD12345", "type": "text", "leak_if_any": ["sk_live_FAKEHELD12345"]}], "keep": ["portal"]}
+{"id": "h014", "file": "h014.txt", "kind": "drop", "drop_reason": "health", "spans": [{"cat": "health", "value": "hip", "type": "text", "leak_if_any": ["hip replacement"]}], "keep": []}
+{"id": "h015", "file": "h015.txt", "kind": "drop", "drop_reason": "health", "spans": [{"cat": "health", "value": "heart", "type": "text", "leak_if_any": ["heart condition", "specialist"]}], "keep": []}
+{"id": "h016", "file": "h016.txt", "kind": "drop", "drop_reason": "legal", "spans": [{"cat": "legal", "value": "lawyers", "type": "text", "leak_if_any": ["lawyers", "separation"]}], "keep": []}
+{"id": "h017", "file": "h017.txt", "kind": "drop", "drop_reason": "legal", "spans": [{"cat": "legal", "value": "bankruptcy", "type": "text", "leak_if_any": ["bankruptcy"]}], "keep": []}
+{"id": "h018", "file": "h018.txt", "kind": "control", "drop_reason": null, "spans": [], "keep": ["Thursday at 2", "market recap"]}
+{"id": "h019", "file": "h019.txt", "kind": "control", "drop_reason": null, "spans": [], "keep": ["$389,900"]}
+{"id": "h020", "file": "h020.txt", "kind": "control", "drop_reason": null, "spans": [], "keep": ["thanking the team", "open house"]}
+{"id": "h021", "file": "h021.txt", "kind": "control", "drop_reason": null, "spans": [], "keep": ["10:30", "11"]}
+{"id": "h022", "file": "h022.txt", "kind": "control", "drop_reason": null, "spans": [], "keep": ["250 flyers", "3 banners"]}

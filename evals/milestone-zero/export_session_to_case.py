@@ -2,84 +2,80 @@
 """
 Box-local: turn one Hermes session export into a redacted eval case line.
 
-Nothing leaves the box until an operator copies the redacted JSONL line manually.
-Redaction fails closed: exit 1 if sensitive residue remains.
+This is the only supported redaction entrypoint (no redact.py CLI).
+Exit codes: 0 exported; 1 blocked (residue/decode/unsupported); 2 excluded (drop rules).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import secrets
 import sys
+import tempfile
 from pathlib import Path
 
-from redact import redact_fail_closed
+from redact import (
+    EXIT_BLOCKED,
+    EXIT_EXCLUDED,
+    EXIT_OK,
+    REDACTION_VERSION,
+    ExclusionRules,
+    RedactionContext,
+    RedactionError,
+    UnsupportedFieldType,
+    collect_session_text,
+    load_forgotten,
+    load_known_names,
+    load_session_payload,
+    log_counts,
+    log_excluded,
+    redact_object,
+    post_export_safety_flags,
+    scan_residue_secondary,
+    secure_mkdir,
+    secure_write_text,
+    session_drop_reason,
+    write_manifest,
+)
 
 ROOT = Path(__file__).resolve().parent
 
 
-def walk_strings(obj: object, path: str = "") -> list[tuple[str, str]]:
-    found: list[tuple[str, str]] = []
-    if isinstance(obj, str):
-        found.append((path, obj))
-    elif isinstance(obj, dict):
-        for key, value in obj.items():
-            found.extend(walk_strings(value, f"{path}/{key}" if path else key))
-    elif isinstance(obj, list):
-        for index, value in enumerate(obj):
-            found.extend(walk_strings(value, f"{path}/{index}"))
-    return found
+def redacted_transcript(redacted: object) -> str:
+    if isinstance(redacted, dict):
+        owner = redacted.get("owner_text")
+        if isinstance(owner, str) and owner.strip():
+            return owner
+        lines: list[str] = []
+        for msg in redacted.get("messages") or []:
+            if isinstance(msg, dict):
+                content = msg.get("content")
+                if isinstance(content, str) and content.strip():
+                    lines.append(content)
+        if lines:
+            return "\n".join(lines)
+    return collect_session_text(redacted)
 
 
-def redact_object(obj: object) -> tuple[object, list[str], bool]:
-    residue_all: list[str] = []
-    if isinstance(obj, str):
-        cleaned, codes, ok, residue = redact_fail_closed(obj)
-        residue_all.extend(residue)
-        return cleaned, codes, ok
-    if isinstance(obj, dict):
-        out = {}
-        ok_all = True
-        codes_all: list[str] = []
-        for key, value in obj.items():
-            new_val, codes, ok = redact_object(value)
-            out[key] = new_val
-            codes_all.extend(codes)
-            ok_all = ok_all and ok
-        return out, codes_all, ok_all
-    if isinstance(obj, list):
-        out_list = []
-        ok_all = True
-        codes_all: list[str] = []
-        for item in obj:
-            new_val, codes, ok = redact_object(item)
-            out_list.append(new_val)
-            codes_all.extend(codes)
-            ok_all = ok_all and ok
-        return out_list, codes_all, ok_all
-    return obj, [], True
+def derive_session_index(case_id: str, explicit: str | None) -> str:
+    if explicit:
+        return explicit
+    digest = secrets.token_hex(4)
+    return f"{case_id}-{digest}"
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Export redacted session → eval case JSONL (stdout).")
-    parser.add_argument("--session", type=Path, required=True, help="Path to session JSON on the box")
-    parser.add_argument("--id", required=True, help="Case id, e.g. mz-021")
-    parser.add_argument("--suite", choices=["regression", "capability"], default="regression")
-    parser.add_argument("--category", required=True, help="no_answer | send_draft | memory_save")
-    parser.add_argument(
-        "--out",
-        type=Path,
-        help="Append redacted case to this JSONL (default: cases-export.local.jsonl beside harness)",
-    )
-    parser.add_argument("--box", default="e23fjkv6")
-    args = parser.parse_args()
-
-    raw = json.loads(args.session.read_text(encoding="utf-8"))
-    redacted, codes, ok = redact_object(raw)
-    if not ok:
-        print("export_blocked: redaction residue remains; case not written", file=sys.stderr)
-        return 1
-
+def build_case(
+    *,
+    case_id: str,
+    suite: str,
+    category: str,
+    box: str,
+    redacted: object,
+    session_index: str,
+    counts: dict[str, int],
+) -> dict[str, object]:
     owner_text = ""
     if isinstance(redacted, dict):
         owner_text = (
@@ -95,27 +91,161 @@ def main() -> int:
     if isinstance(redacted, dict):
         assistant_text = redacted.get("assistant_text") or redacted.get("final_reply") or ""
 
-    case = {
-        "id": args.id,
-        "suite": args.suite,
-        "category": args.category,
-        "box": args.box,
+    return {
+        "id": case_id,
+        "suite": suite,
+        "category": category,
+        "box": box,
         "input": {"channel": "sms", "owner_text": str(owner_text)},
         "fixture": {
             "assistant_text": str(assistant_text),
             "tool_calls": redacted.get("tool_calls") if isinstance(redacted, dict) else [],
         },
         "expect": redacted.get("expect") if isinstance(redacted, dict) else {},
-        "export_meta": {"redaction_codes": list(dict.fromkeys(codes)), "source": str(args.session)},
+        "export_meta": {
+            "session_index": session_index,
+            "redaction_version": REDACTION_VERSION,
+            "redaction_counts": counts,
+            "ok": True,
+        },
     }
 
-    line = json.dumps(case, ensure_ascii=False) + "\n"
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Export redacted session → eval case JSONL (no stdout payload).")
+    parser.add_argument("--session", type=Path, required=True, help="Session JSON or transcript .txt on the box")
+    parser.add_argument("--id", help="Case id, e.g. mz-021 (required when appending JSONL)")
+    parser.add_argument("--suite", choices=["regression", "capability"], default="regression")
+    parser.add_argument("--category", help="no_answer | send_draft | memory_save (required when appending JSONL)")
+    parser.add_argument(
+        "--out",
+        type=Path,
+        help="Append redacted case to this JSONL (default: cases-export.local.jsonl beside harness)",
+    )
+    parser.add_argument(
+        "--redacted-text-out",
+        type=Path,
+        help="Write redacted transcript text here (used by check_leaks; no JSONL unless --out is set)",
+    )
+    parser.add_argument("--manifest", type=Path, help="Content-free manifest path (default: beside --out)")
+    parser.add_argument("--box", default="e23fjkv6")
+    parser.add_argument("--known-names", type=Path, help="Per-box known names file (mode 0600, never commit)")
+    parser.add_argument("--rules", type=Path, help="do-not-keep rules.json path")
+    parser.add_argument("--forgotten", type=Path, help="Forgotten phrases file (mode 0600)")
+    parser.add_argument("--session-index", help="Opaque session index for export_meta")
+    parser.add_argument("--owner-name", default="Alex", help="Owner first name kept during name redaction")
+    parser.add_argument(
+        "--fixture-check",
+        action="store_true",
+        help="Leak-check mode: do not require --known-names (CI fixtures only)",
+    )
+    args = parser.parse_args()
+
+    append_jsonl = args.out is not None or args.redacted_text_out is None
+    if append_jsonl and not args.fixture_check and args.known_names is None:
+        print("export_blocked: known_names_required", file=sys.stderr)
+        return EXIT_BLOCKED
+    if append_jsonl and (not args.id or not args.category):
+        print("export_blocked: missing_id_or_category", file=sys.stderr)
+        return EXIT_BLOCKED
+
     dest = args.out or (ROOT / "cases-export.local.jsonl")
-    with dest.open("a", encoding="utf-8") as handle:
-        handle.write(line)
-    print(f"wrote {args.id} -> {dest}", file=sys.stderr)
-    sys.stdout.write(line)
-    return 0
+    if args.manifest:
+        manifest_path = args.manifest
+    elif args.redacted_text_out and not append_jsonl:
+        manifest_path = args.redacted_text_out.with_suffix(".manifest.json")
+    else:
+        manifest_path = dest.with_suffix(".manifest.json")
+
+    try:
+        raw = load_session_payload(args.session)
+    except UnicodeDecodeError:
+        print("export_blocked: decode_error", file=sys.stderr)
+        return EXIT_BLOCKED
+    except (json.JSONDecodeError, ValueError):
+        print("export_blocked: json_decode_error", file=sys.stderr)
+        return EXIT_BLOCKED
+
+    try:
+        rules = ExclusionRules.load(args.rules)
+        forgotten = load_forgotten(args.forgotten)
+        known = load_known_names(args.known_names)
+    except (RedactionError, OSError, json.JSONDecodeError):
+        print("export_blocked: config_error", file=sys.stderr)
+        return EXIT_BLOCKED
+
+    drop = session_drop_reason(raw, rules, forgotten)
+    if drop:
+        log_excluded(drop)
+        return EXIT_EXCLUDED
+
+    ctx = RedactionContext(known_names=known, owner_name=args.owner_name)
+    try:
+        redacted, _codes, ok, residue = redact_object(raw, ctx)
+    except UnsupportedFieldType:
+        print("export_blocked: unsupported_field_type", file=sys.stderr)
+        return EXIT_BLOCKED
+    except RedactionError:
+        print("export_blocked: redaction_error", file=sys.stderr)
+        return EXIT_BLOCKED
+
+    blob = redacted_transcript(redacted)
+    safety = post_export_safety_flags(blob)
+    if safety:
+        log_excluded(",".join(safety))
+        return EXIT_EXCLUDED
+    residue2 = scan_residue_secondary(blob)
+    residue2 = [r for r in dict.fromkeys([*residue, *residue2]) if r not in ("phone", "name")]
+    if residue2 or not ok:
+        log_counts(ctx.class_counts)
+        print(f"export_blocked: residue={','.join(residue2 or residue)}", file=sys.stderr)
+        return EXIT_BLOCKED
+
+    transcript = blob
+
+    scratch_parent = (
+        dest.parent
+        if append_jsonl
+        else (args.redacted_text_out.parent if args.redacted_text_out else ROOT)
+    )
+    tmp_base = Path(tempfile.mkdtemp(prefix="mz-export-", dir=scratch_parent))
+    try:
+        os.chmod(tmp_base, 0o700)
+        if args.redacted_text_out:
+            secure_write_text(args.redacted_text_out, transcript + ("\n" if not transcript.endswith("\n") else ""))
+        if append_jsonl:
+            session_index = derive_session_index(args.id or "mz", args.session_index)
+            case = build_case(
+                case_id=args.id or "mz",
+                suite=args.suite,
+                category=args.category or "no_answer",
+                box=args.box,
+                redacted=redacted,
+                session_index=session_index,
+                counts=dict(ctx.class_counts),
+            )
+            line = json.dumps(case, ensure_ascii=False) + "\n"
+            secure_mkdir(dest.parent)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+            fd = os.open(dest, flags, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as handle:
+                handle.write(line)
+            write_manifest(manifest_path, ctx.class_counts)
+            log_counts(ctx.class_counts)
+            print(
+                f"exported: session_index={session_index} bytes={len(line.encode('utf-8'))}",
+                file=sys.stderr,
+            )
+        else:
+            write_manifest(manifest_path, ctx.class_counts)
+            log_counts(ctx.class_counts)
+            print("exported: redacted_text_only", file=sys.stderr)
+    finally:
+        for child in tmp_base.iterdir():
+            child.unlink(missing_ok=True)
+        tmp_base.rmdir()
+
+    return EXIT_OK
 
 
 if __name__ == "__main__":
