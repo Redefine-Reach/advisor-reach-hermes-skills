@@ -22,7 +22,7 @@ const script = readFileSync(scriptPath, "utf8");
 const OWNER = "+17145550100";
 const DEST = "+15555550199";
 const FROM = "+19283563339";
-const BODY = "The listing packet is ready.";
+const BODY = "Hi Dana, your listing packet is ready.";
 
 function podLabel() {
   const short = hostname().split(".")[0].toLowerCase();
@@ -646,7 +646,7 @@ test("a reply still requires SEND", () => {
   const inbound = run(["inbound", "--sender", DEST, "--body", "Can you call?", "--message-id", "r1"], {}, dir);
   assert.equal(inbound.payload.outcome, "owner_event");
   const staged = run(
-    ["stage", "--approver", OWNER, "--dest", DEST, "--body", "Yes, I will call."],
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Dana, yes, I will call you."],
     {},
     dir,
   );
@@ -660,7 +660,7 @@ test("a reply still requires SEND", () => {
   assert.equal(vague.payload.outcome, "refused_no_confirm");
   assert.equal(vague.callLines.length, 1);
   const restaged = run(
-    ["stage", "--approver", OWNER, "--dest", DEST, "--body", "Yes, I will call."],
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Dana, yes, I will call you."],
     {},
     dir,
   );
@@ -975,7 +975,7 @@ test("stage refuses a non-GSM Why line and folds curly punctuation", () => {
     "--body",
     BODY,
     "--why",
-    "deadline today \u{1F600}",
+    "the deadline is today \u{1F600}",
     "--source-kind",
     "owner_text",
     "--source-date",
@@ -1260,3 +1260,88 @@ test("stage refuses a restating Why line and writes no draft", () => {
   assert.equal(res.payload.provider_called, false);
   assert.equal(draftFiles(res.dir).length, 0);
 });
+
+const BODY_TO = "Hi Dana, your listing packet is ready.";
+const stageWith = (body, why, extra = []) =>
+  run(["stage", "--approver", OWNER, "--dest", DEST, "--body", body, "--why", why,
+    "--source-kind", "owner_text", "--source-date", "2026-10-17", ...extra]);
+
+test("0002/0003: generic or thin whys are refused (generic or trigger); client-specific whys stage", () => {
+  for (const why of ["At your request", "Pat", "Send comparison per owner request", "Owner asked me to send it",
+    "Congratulate Pat as requested by the owner (owner text, 2026-10-15)"]) {
+    const r = stageWith(BODY_TO, why);
+    assert.ok(["refused_why_generic", "refused_why_trigger"].includes(r.payload.outcome), why + " " + r.stdout);
+    assert.equal(r.payload.provider_called, false);
+    assert.equal(draftFiles(r.dir).length, 0);
+  }
+  assert.equal(stageWith(BODY_TO, "Pat").payload.outcome, "refused_why_generic");
+  for (const why of ["Hendersons want the comparison before the 4 PM call", "Dana asked if the inspection report is in",
+    "Mike went quiet after the Zillow inquiry last week"]) {
+    const r = stageWith(BODY_TO, why);
+    assert.equal(r.payload.outcome, "staged", why + " " + r.stdout);
+    assert.ok(r.payload.attestation.includes("\nWhy: " + why + ".\n"), r.payload.attestation);
+    assert.equal(r.payload.attestation.includes("(your text"), false);
+    assert.equal(r.payload.source_kind, "owner_text");
+    assert.equal(r.payload.source_date, "2026-10-17");
+  }
+});
+
+test("0003: a provenance suffix the model appends is stripped, never shown", () => {
+  for (const suffix of ["(owner text, 2026-10-15)", "(your text, Oct 17)"]) {
+    const r = stageWith(BODY_TO, "Dana asked if the inspection report is in " + suffix);
+    assert.equal(r.payload.outcome, "staged", r.stdout);
+    assert.ok(r.payload.attestation.includes("\nWhy: Dana asked if the inspection report is in.\n"), r.payload.attestation);
+  }
+});
+
+test("0004/0005: circular whys are refused; event-as-cause stages and the action tail is trimmed", () => {
+  for (const why of ["Text Dana a note", "Wish Sam a happy birthday", "Congratulate Pat on closing",
+    "Mike is a contact and you want to check in with Mike", "Hi Dana, your listing packet is ready"]) {
+    const r = stageWith(BODY_TO, why);
+    assert.equal(r.payload.outcome, "refused_why_circular", why + " " + r.stdout);
+    assert.equal(r.payload.provider_called, false);
+  }
+  for (const [why, shown] of [
+    ["Pat is closing today, so congratulate Pat", "Pat is closing today"],
+    ["Pat closed today to congratulate her", "Pat closed today"],
+    ["The price dropped on the Oak St listing", "The price dropped on the Oak St listing"],
+    ["Sam's birthday is today", "Sam's birthday is today"],
+  ]) {
+    const r = stageWith("Hi, the price on Oak St dropped to [PRICE].", why);
+    assert.equal(r.payload.outcome, "staged", why + " " + r.stdout);
+    assert.ok(r.payload.attestation.includes("\nWhy: " + shown + ".\n"), r.payload.attestation);
+  }
+});
+
+test("0004: body must be the text itself, to the recipient; [PRICE] placeholder; no filler", () => {
+  const why = "Hendersons want it before the 4 PM call";
+  for (const [body, outcome] of [
+    ["Hi Hendersons, the comparison is coming. Tell them it's coming.", "refused_body_meta"],
+    ["Hi Hendersons, Tell them it's coming.", "refused_body_meta"],
+    ["Dana asked if the inspection report is in. It is.", "refused_body_not_to_recipient"],
+    ["The appraisal came in.", "refused_body_not_to_recipient"],
+    ["Hi, the price dropped on the Oak St listing.", "refused_body_missing_placeholder"],
+    ["Hi Dana, just sending a quick note.", "refused_body_no_content"],
+  ]) {
+    const r = stageWith(body, why);
+    assert.equal(r.payload.outcome, outcome, body + " " + r.stdout);
+    assert.equal(r.payload.provider_called, false);
+    assert.equal(draftFiles(r.dir).length, 0);
+  }
+  for (const body of ["Hi Hendersons, the comparison will be with you before our 4 PM call.",
+    "Hi, the price on the Oak St listing dropped to [PRICE]. Want to take a look?",
+    "Hi Garcias, the appraisal came in.", "Congrats Pat on closing today!"]) {
+    assert.equal(stageWith(body, why).payload.outcome, "staged", body);
+  }
+});
+
+test("QA expected format: Why line is one line, reason only, no suffix, not in the client body", () => {
+  const r = stageWith("Hi Dana, yes, the inspection report is in.", "Dana asked if the inspection report is in");
+  assert.equal(r.payload.outcome, "staged");
+  const lines = r.payload.attestation.split("\n").filter((l) => l.startsWith("Why:"));
+  assert.deepEqual(lines, ["Why: Dana asked if the inspection report is in."]);
+  assert.equal(r.payload.attestation.indexOf("Why:") < r.payload.attestation.indexOf("SEND"), true);
+  const plain = stageWith("Hi Dana, yes, the inspection report is in.", "Sam's birthday is today");
+  assert.equal(r.payload.body_hash, plain.payload.body_hash);
+});
+

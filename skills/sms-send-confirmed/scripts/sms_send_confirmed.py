@@ -261,6 +261,129 @@ def one_line(raw: str) -> str:
     return re.sub(r"[ \t]+", " ", folded).strip()
 
 
+# Ported from /workspace/eng/fixes patches 0002-0005 (RED-585). Quality gates for
+# owner-texted drafts: a Why must be a client-specific cause (refused_why_generic,
+# refused_why_circular) and the body must be the text itself, to the recipient
+# (refused_body_*). They run before build_why_line and before any draft is written.
+_GENERIC_WHY = (
+    r"\b(?:as|per|at|upon)\s+(?:the\s+)?(?:owner|your|agent|user)(?:'s|s)?\s*(?:request|ask|instruction|text|message)",
+    r"\b(?:as\s+)?(?:requested|asked|instructed|told)\s+by\s+(?:the\s+)?(?:owner|you|user|agent)\b",
+    r"\b(?:owner|you|user|agent)\s+(?:asked|requested|told me|wanted|said)\s+(?:me\s+)?to\b",
+    r"\bowner\s+text\b",
+    r"\bat\s+your\s+request\b",
+    r"\bthe\s+client's\s+recipient\b",
+)
+_ACTION_VERBS = r"(?:congratulate|congrats|wish|remind|tell|text|message|send|follow\s+up(?:\s+with)?|check\s+in(?:\s+with)?|let|notify|thank|ask|call|reach\s+out(?:\s+to)?)"
+_WHY_STOP = {
+    "the", "a", "an", "to", "of", "and", "is", "are", "was", "for", "on", "in", "at", "so", "that", "it",
+    "they", "their", "them", "he", "she", "his", "her", "about", "with", "has", "have", "had", "be", "as",
+}
+_ACTION_TAIL = re.compile(r"[,;:]?\s*\b(?:so|to|and\s+then|then|in\s+order\s+to)\s+" + _ACTION_VERBS + r"\b.*$", re.I)
+_WANT_TAIL = re.compile(r"\b(?:you|i|we|owner|they)?\s*(?:want|wants|need|needs|wish|wishes|would\s+like|'d\s+like)\s*$", re.I)
+_META_BODY = (
+    r"(?:^|[.!?,:;-]\s*)(?:Tell|Let|Remind|Ask|Say|Inform|Notify|Congratulate|Thank)\s+(?:them|him|her|the\s+\w+|[A-Z][a-z]+)\b",
+    r"\b(?:the\s+owner|your\s+agent|per\s+(?:the\s+)?owner|owner\s+(?:said|asked|wants))\b",
+)
+_SECOND_PERSON = r"\b(?:you|your|yours|you're|you'll|you've|you'd|yourself)\b|^\s*(?:hi|hello|hey|dear|good\s+(?:morning|afternoon|evening))\b|\bcongrat|\bhappy\s+birthday\b"
+_FILLER_BODY = r"^\W*(?:(?:hi|hello|hey)\b[^.!?]{0,40}?[,.!]\s*)?(?:i\s*(?:'m|am)\s+)?just\s+(?:sending|dropping)\s+(?:you\s+)?a\s+(?:quick\s+)?(?:note|text|message)\W*$"
+
+
+def _content_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9']+", text.lower()) if w not in _WHY_STOP and len(w) > 1}
+
+
+def strip_why_provenance(why: str) -> str:
+    """Drop a trailing '(owner text, 2026-10-15)' or '(your text, Oct 17)' tag the model added.
+    Provenance is audit-only (--source-kind/--source-date)."""
+    flat = " ".join(str(why or "").split())
+    stripped = re.sub(
+        r"\s*\((?:owner[ _]text|your[ _]text|[^()]*\b20\d\d-\d\d-\d\d)[^()]*\)\s*$", "", flat, flags=re.I
+    )
+    return stripped.rstrip(" .,;") if stripped != flat else flat
+
+
+def why_is_generic(why: str) -> bool:
+    """True when `why` only restates that the owner asked, or is too thin to be a reason."""
+    reason = " ".join(str(why or "").split())
+    if not reason:
+        return False
+    if len(reason.split()) < 4:
+        return True
+    return any(re.search(pat, reason, re.I) for pat in _GENERIC_WHY)
+
+
+def why_cause(why: str, body: str = "") -> str | None:
+    """Cause part of a why, or None when it only repeats the action or the draft.
+    An event named as the cause ("Pat is closing today") is accepted; a trailing
+    action clause ("..., so congratulate Pat") is trimmed off."""
+    reason = " ".join(str(why or "").split())
+    if not reason:
+        return ""
+    if re.search(r"^\s*" + _ACTION_VERBS + r"\b", reason, re.I):
+        return None
+    if re.search(r"\b(?:a|the)\s+(?:quick\s+)?(?:note|text|message)\s*$", reason, re.I):
+        return None
+    cause = reason
+    tail = _ACTION_TAIL.search(reason)
+    if tail:
+        cause = reason[: tail.start()].strip(" ,;:")
+        if _WANT_TAIL.search(cause):
+            return None
+    words = _content_words(cause)
+    if len(words) < 2:
+        return None
+    body_words = _content_words(body)
+    if body_words and len(words) >= 3 and words <= body_words and len(words) / len(body_words) >= 0.8:
+        return None
+    return cause
+
+
+def why_is_circular(why: str, body: str = "") -> bool:
+    return why_cause(why, body) is None
+
+
+def body_problem(body: str, why: str) -> tuple[str, str] | None:
+    """Quality gate for owner-texted drafts. Returns (outcome, reason) or None."""
+    text = " ".join(str(body or "").split())
+    if re.search(_FILLER_BODY, text, re.I):
+        return ("refused_body_no_content", "the draft says nothing; ask the owner one short question: what should the note say")
+    if re.search(_META_BODY[0], text) or re.search(_META_BODY[1], text, re.I):
+        return ("refused_body_meta", "the draft contains an instruction to the owner (for example 'Tell them ...'). Write the text itself, in second person, to the recipient")
+    if not re.search(_SECOND_PERSON, text, re.I):
+        return ("refused_body_not_to_recipient", "the draft is not addressed to the recipient. Write it to them in second person (greet them, use 'you/your')")
+    if re.search(r"\b(?:price|priced|pricing|cost)\b", text, re.I) and not re.search(r"[$\d\[]", text):
+        return ("refused_body_missing_placeholder", "the draft mentions price but gives no figure. Put [PRICE] where the number goes; do not invent one")
+    return None
+
+
+def gate_why_and_body(why_raw: str, body: str) -> str:
+    """Run the 0002-0005 gates. Returns the Why text to render (provenance and action tail removed)."""
+    why = strip_why_provenance(one_line(why_raw))
+    if not why:
+        return why_raw
+    if why_is_generic(why):
+        raise GateFailure(
+            "refused_why_generic",
+            "why only restates the request. Restage with one client-specific reason from the owner's "
+            "message or known context (deadline, last contact, what the client asked). Do not invent "
+            "one; take it from what the owner said",
+            field="why",
+        )
+    cause = why_cause(why, body)
+    if cause is None:
+        raise GateFailure(
+            "refused_why_circular",
+            "why repeats the action or the draft. Give the cause from the owner's message or context "
+            "(deadline, last contact, what the client asked, the event), not the action itself",
+            field="why",
+        )
+    problem = body_problem(body, cause)
+    if problem:
+        raise GateFailure(problem[0], problem[1], field="body")
+    return cause
+
+
+
 # A Why line must give a cause. These only say that the owner asked, or cite
 # the owner's text and its date, which restates the trigger (RED-585).
 _TRIGGER_RESTATE_RES = (
@@ -1118,8 +1241,13 @@ def stage(
                 field="body",
             )
         assert_not_opted_out(dest, ctx["store"]["opt_out"])
+        why_clean = strip_why_provenance(one_line(why_raw))
+        # Format first (missing, bad source, GSM-7, tokens, length, restated trigger),
+        # then the 0002-0005 quality gates, then render the line from the cause only.
+        build_why_line(why_clean, source_kind_raw, source_date_raw, source_name_raw, source_ref_raw)
+        why_shown = gate_why_and_body(why_clean, body)
         why_line, source_kind, source_date, source_ref = build_why_line(
-            why_raw,
+            why_shown,
             source_kind_raw,
             source_date_raw,
             source_name_raw,
