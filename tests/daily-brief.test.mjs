@@ -45,6 +45,19 @@ test("SMS is the default and page delivery requires authority and safe presentat
   assert.equal((page.match(/https?:\/\//g) || []).length, 0);
 });
 
+test("start-of-day brief can include who needs you today without texting a client", () => {
+  assert.match(skill, /Who needs you today/);
+  assert.match(skill, /`proactive-owner`/);
+  assert.match(skill, /omit it/);
+  assert.match(skill, /Do not text those people/);
+  assert.match(skill, /Do not call `sms-send-confirmed` from the brief/);
+  assert.match(skill, /final response is exactly `\[SILENT\]`/);
+  assert.match(skill, /do not let a saved quiet pause suppress that reply/);
+  assert.match(gathering, /Who needs you today/);
+  assert.match(gathering, /Omit the section when the feature is off/);
+  assert.match(gathering, /does not text a client/);
+});
+
 test("source-neutral notes preserve priority and honest status limits", () => {
   assert.match(gathering, /explicit unresolved customer requests and commitments/);
   assert.match(gathering, /not evidence of attendance, discussion, completion, or a decision/);
