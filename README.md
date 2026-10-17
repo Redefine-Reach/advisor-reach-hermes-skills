@@ -65,7 +65,7 @@ Generates a four-page "Digital + AI Scorecard · GBP Playbook" for a named real-
 public sources only (state license board, brokerage directory, portals, social, reviews, local press
 via the box's Exa search): bio, 24-month production as published, 15 channel scores, Google Business
 Profile field-by-field, and a 90-day game plan. Locked template (`assets/template.html`) rendered by
-`assets/render.py` (jinja2 + weasyprint) from small per-section JSON files; delivered via `present-file`.
+`assets/render.py` (jinja2 + weasyprint) from small per-section JSON files written in one `execute_code` call. `render.py --publish` copies the PDF into `ARTIFACT_DIR` under an opaque name and prints the public link; `present-file` is only the fallback when that publish is skipped. Contract: `tests/gbp-scorecard.test.mjs`.
 
 ### client-profile
 One-page appointment brief for one named person the owner is about to meet (buyer, listing, or other).
