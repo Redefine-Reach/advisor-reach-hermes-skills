@@ -295,15 +295,35 @@ _WHY_STOP = {
     "they", "their", "them", "he", "she", "his", "her", "about", "with", "has", "have", "had", "be", "as",
 }
 _ACTION_TAIL = re.compile(r"[,;:]?\s*\b(?:so|to|and\s+then|then|in\s+order\s+to)\s+" + _ACTION_VERBS + r"\b.*$", re.I)
-# RED-585 QA run 7 items 5-6: "..., and deserves congratulations", "..., so a reminder is timely" are action
-# tails, not causes. Trimmed off like "so congratulate Pat"; what is left must still be a real cause.
+# RED-585 QA run 7 items 5-6: "and deserves congratulations" and "so a reminder is timely"
+# are action tails. They match only at the end, so a real cause that uses "so", "meaning",
+# or "deserves" in the middle is left whole.
 _ACTION_TAIL_EXTRA = (
-    re.compile(r"[,;:]?\s*\b(?:and\s+)?(?:deserves?|warrants?|merits?|calls?\s+for)\b.*$", re.I),
-    re.compile(r"[,;:]?\s*\b(?:so|which\s+means|meaning)\s+(?:a|an|the)?\s*(?:[\w'-]+\s+){0,4}?(?:is|are|would\s+be|makes?\s+sense|seems?)\s+(?:\w+\s+)?(?:timely|appropriate|fitting|warranted|worthwhile|helpful|a\s+good\s+idea)\b.*$", re.I),
-    re.compile(r"[,;:]?\s*\bso\s+(?:a|an|the)\s+(?:congrat\w*|reminder|nudge|follow[- ]?up|check[- ]?in|note|text|message)\b.*$", re.I),
+    re.compile(
+        r"[,;:]?\s*\b(?:and\s+)?(?:deserves?|warrants?|merits?|calls?\s+for)\s+"
+        r"(?:a\s+|an\s+|the\s+)?(?:congrat\w*|recognition|kudos|praise)\s*[.!?]*\s*$",
+        re.I,
+    ),
+    re.compile(
+        r"[,;:]?\s*\b(?:so|which\s+means|meaning)\s+(?:a|an|the)?\s*(?:[\w'-]+\s+){0,4}?"
+        r"(?:is|are|would\s+be|makes?\s+sense|seems?)\s+(?:\w+\s+)?"
+        r"(?:timely|appropriate|fitting|warranted|worthwhile|helpful|a\s+good\s+idea)\s*[.!?]*\s*$",
+        re.I,
+    ),
 )
-# A Why that only states the thing in the draft is available now is a status, not the cause (QA run 7 item 2).
-_STATUS_WHY = re.compile(r"\b(?:is|are)\s+(?:now\s+)?(?:available|ready)\b[^.]*\bnow[\s.]*$|\b(?:is|are)\s+now\s+(?:available|ready)\b", re.I)
+# A Why that is only "X is available/ready now" is a status, not a cause (QA run 7 item 2).
+# "now" has to sit on that predicate. A separate cause ("Dana asked...", "because she lands at 4")
+# is not status-only.
+_STATUS_PREDICATE = re.compile(
+    r"(?i)\b(?:is|are)\s+(?:"
+    r"now\s+(?:available|ready)(?:\s+for\s+[\w'-]+(?:\s+[\w'-]+)?)?"
+    r"|(?:available|ready)\s+for\s+[\w'-]+(?:\s+[\w'-]+)?\s+now"
+    r"|(?:available|ready)\s+now(?:\s+for\s+[\w'-]+(?:\s+[\w'-]+)?)?"
+    r")"
+)
+_STATUS_CAUSE = re.compile(
+    r"(?i)\b(?:asked|because|since|due|deadline|expir\w*|clos\w*|lands?|needs?|wants?|before|after|so|meaning)\b"
+)
 _WANT_TAIL = re.compile(r"\b(?:you|i|we|owner|they)?\s*(?:want|wants|need|needs|wish|wishes|would\s+like|'d\s+like)\s*$", re.I)
 _META_BODY = (
     r"(?:^|[.!?,:;-]\s*)(?:Tell|Let|Remind|Ask|Say|Inform|Notify|Congratulate|Thank)\s+(?:them|him|her|the\s+\w+|[A-Z][a-z]+)\b",
@@ -311,6 +331,41 @@ _META_BODY = (
 )
 _SECOND_PERSON = r"\b(?:you|your|yours|you're|you'll|you've|you'd|yourself)\b|^\s*(?:hi|hello|hey|dear|good\s+(?:morning|afternoon|evening))\b|\bcongrat|\bhappy\s+birthday\b"
 _FILLER_BODY = r"^\W*(?:(?:hi|hello|hey)\b[^.!?]{0,40}?[,.!]\s*)?(?:i\s*(?:'m|am)\s+)?just\s+(?:sending|dropping)\s+(?:you\s+)?a\s+(?:quick\s+)?(?:note|text|message)\W*$"
+# Punctuation right after the greeting means there is no name yet: "Hi,", "Hey!",
+# "Hi there,", "Good morning,". "Hi, Dana" and "Dear Dana," have a name. A capital
+# sentence word ("The", "Your") is not a name.
+_GREETING_PUNCT = re.compile(
+    r"^\W*(?:hi|hello|hey|dear|good\s+(?:morning|afternoon|evening))(?:\s+there)?\s*[,.!:;-]\s*",
+    re.I,
+)
+_AFTER_GREETING_WORD = re.compile(r"([A-Za-z][A-Za-z'’.-]*)")
+_NOT_A_GREETING_NAME = frozenset(
+    "a an the and but so or it this that your you yours please just yes no ok okay we i our to for of on in at".split()
+)
+_STREET_NUMBER = re.compile(
+    r"\b\d+[A-Za-z]?\s+[A-Za-z0-9.'-]+(?:\s+[A-Za-z0-9.'-]+){0,3}\s+"
+    r"(?:street|st|avenue|ave|road|rd|drive|dr|lane|ln|boulevard|blvd|way|court|ct|"
+    r"place|pl|terrace|ter|circle|cir)\b\.?",
+    re.I,
+)
+
+
+def _greets_without_name(text: str) -> bool:
+    """True for 'Hi,' or 'Hey! The report'. False for 'Hi Dana,' and 'Hi, Dana,'."""
+    match = _GREETING_PUNCT.match(text)
+    if not match:
+        return False
+    word = _AFTER_GREETING_WORD.match(text[match.end() :])
+    if not word:
+        return True
+    return word.group(1).lower() in _NOT_A_GREETING_NAME
+
+
+def _has_price_figure(text: str) -> bool:
+    """True when the body has [PRICE], a dollar amount, or a number that is not a street address."""
+    if re.search(r"\[PRICE\]", text, re.I) or re.search(r"\$\s?\d", text):
+        return True
+    return re.search(r"\d", _STREET_NUMBER.sub(" ", text)) is not None
 
 
 def _content_words(text: str) -> set[str]:
@@ -324,7 +379,18 @@ def strip_why_provenance(why: str) -> str:
     stripped = re.sub(
         r"\s*\((?:owner[ _]text|your[ _]text|[^()]*\b20\d\d-\d\d-\d\d)[^()]*\)\s*$", "", flat, flags=re.I
     )
-    stripped = re.sub(r"[\s,;]*\bfrom\s+your\s+own\s+text\b[\s.]*$", "", stripped, flags=re.I)
+    # The script adds ", from your own text." itself. A copy the model already wrote,
+    # including a leading one or "(from your own text)", would show the phrase twice.
+    stripped = re.sub(
+        r"(?i)^[\s,;]*\(?\s*from\s+your\s+own\s+text\s*\)?\s*[,:;.-]*\s*",
+        "",
+        stripped,
+    )
+    stripped = re.sub(
+        r"(?i)[\s,;]*\(?\s*from\s+your\s+own\s+text\s*\)?[\s.]*$",
+        "",
+        stripped,
+    )
     return stripped.rstrip(" .,;") if stripped != flat else flat
 
 
@@ -336,6 +402,18 @@ def why_is_generic(why: str) -> bool:
     if len(reason.split()) < 4:
         return True
     return any(re.search(pat, reason, re.I) for pat in _GENERIC_WHY)
+
+
+def why_is_only_status(why: str) -> bool:
+    """True when `why` only says something is available or ready now."""
+    reason = " ".join(str(why or "").split())
+    match = _STATUS_PREDICATE.search(reason)
+    if not match:
+        return False
+    outside = f"{reason[: match.start()]} {reason[match.end() :]}"
+    if _STATUS_CAUSE.search(outside):
+        return False
+    return len(_content_words(outside)) < 4
 
 
 def why_cause(why: str, body: str = "") -> str | None:
@@ -350,7 +428,7 @@ def why_cause(why: str, body: str = "") -> str | None:
     if re.search(r"\b(?:a|the)\s+(?:quick\s+)?(?:note|text|message)\s*$", reason, re.I):
         return None
     cause = reason
-    if _STATUS_WHY.search(reason):
+    if why_is_only_status(reason):
         return None
     tail = _ACTION_TAIL.search(reason)
     for extra in _ACTION_TAIL_EXTRA:
@@ -383,10 +461,10 @@ def body_problem(body: str, why: str) -> tuple[str, str] | None:
         return ("refused_body_meta", "the draft contains an instruction to the owner (for example 'Tell them ...'). Write the text itself, in second person, to the recipient")
     if not re.search(_SECOND_PERSON, text, re.I):
         return ("refused_body_not_to_recipient", "the draft is not addressed to the recipient. Write it to them in second person (greet them, use 'you/your')")
-    if re.match(r"^\W*(?:hi|hello|hey|dear)(?:\s+there)?\s*[,.!:-]", text, re.I):
-        return ("refused_body_no_greeting_name", "the draft greets with no name. Start with the recipient's name, for example 'Hi Dana, ...'. If the owner gave no name, ask who the text is for")
-    if re.search(r"\b(?:price|priced|pricing|cost)\b", text, re.I) and not re.search(r"[$\d\[]", text):
-        return ("refused_body_missing_placeholder", "the draft mentions price but gives no figure. Put [PRICE] where the number goes; do not invent one")
+    if _greets_without_name(text):
+        return ("refused_body_no_greeting_name", "the draft greets with no name. Start with the recipient's name, for example 'Hi Dana, ...' or 'Hi, Dana, ...'. If the owner gave no name, ask who the text is for")
+    if re.search(r"\b(?:price|priced|pricing|cost)\b", text, re.I) and not _has_price_figure(text):
+        return ("refused_body_missing_placeholder", "the draft mentions price but gives no figure. Put [PRICE] where the number goes; a street number is not a price. Do not invent one")
     return None
 
 
@@ -401,6 +479,13 @@ def gate_why_and_body(why_raw: str, body: str) -> str:
             "why only restates the request. Restage with one client-specific reason from the owner's "
             "message or known context (deadline, last contact, what the client asked). Do not invent "
             "one; take it from what the owner said",
+            field="why",
+        )
+    if why_is_only_status(why):
+        raise GateFailure(
+            "refused_why_circular",
+            "why is a status, not a cause. Name what the client asked or what happened, "
+            "not that it is available or ready now",
             field="why",
         )
     cause = why_cause(why, body)
@@ -462,6 +547,21 @@ def format_source_date(raw: str) -> str:
     return f"{SOURCE_MONTHS[parsed.month - 1]} {parsed.day}"
 
 
+def _why_clause_for_line(why: str, kind: str) -> str:
+    """Drop trailing punctuation that would double against the source suffix.
+
+    ``owner_text`` joins with a comma, so "in..." would read "in..., from your
+    own text." and "today," would read "today,, from your own text." Other
+    kinds keep a trailing ellipsis in front of the parenthesis.
+    """
+    ellipsis = why.endswith("...")
+    core = why[:-3] if ellipsis else why
+    core = core.rstrip(" \t.,;:!?")
+    if ellipsis and kind != "owner_text" and core:
+        return f"{core}..."
+    return core
+
+
 def build_why_line(
     why_raw: str,
     kind_raw: str,
@@ -476,9 +576,7 @@ def build_why_line(
     The client body is not touched.
     """
     kind = str(kind_raw or "").strip().lower()
-    why = one_line(why_raw)
-    if not why.endswith("..."):
-        why = why.rstrip(" .!?")  # no ".," before the suffix
+    why = _why_clause_for_line(one_line(why_raw), kind)
     name = one_line(name_raw)
     ref = str(ref_raw or "").strip()
     date_text = str(date_raw or "").strip()

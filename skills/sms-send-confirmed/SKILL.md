@@ -132,9 +132,12 @@ Every `stage` needs why this text, why now, and where you read that. If
   `refused_why_generic`: the reason is too thin ("Pat") or only restates the request.
   `refused_why_circular`: the reason is the action or the draft ("Congratulate Pat");
   an action tail ("so congratulate Pat", "and deserves congratulations", "so a reminder
-  is timely") is trimmed off, so do not write one. A Why that only says the thing is
+  is timely") is trimmed off, so do not write one. A real cause that uses "so" or
+  "meaning" in the middle stays whole ("so the wire must go out this morning",
+  "meaning Dana needs a counter before 5"). A Why that only says the thing is
   "available now" is a status, not a cause (`refused_why_circular`): name what the client
-  asked or what happened ("Dana asked if the inspection report is in"). A source or date the model appends
+  asked or what happened ("Dana asked if the inspection report is in"). A cause plus a
+  status still stages. A source or date the model appends
   itself, such as "(owner text, 2026-10-15)", is stripped and never shown.
 - Wording: keep the owner's own words and facts. Only the recipient becomes "you"
   or "your" (the owner's "tell Dana to bring her signature" becomes "please bring
@@ -142,16 +145,17 @@ Every `stage` needs why this text, why now, and where you read that. If
   exactly as the owner gave them ("her" for a third person stays "her"). Do not add,
   drop, or reword facts, dates, amounts, or names. The script never edits the body.
 - Body quality: the draft is the text itself, to the recipient, in second person
-  (greet them by name: "Hi Dana, yes, the report is in." never a bare "Hi,"; use "you"
+  (greet them by name: "Hi Dana, yes, the report is in." or "Hi, Dana, ..."; never a bare
+  "Hi,", "Hello,", "Hey!", "Hi there,", or "Good morning,"; use "you"
   and "your"; answer the client's question, do not repeat "you asked ..." back to them).
   ALWAYS draft when the owner names a recipient and gives anything to say. A missing
   price, date or time is NEVER a reason to ask: stage the draft with a placeholder
   ("Hi Dana, the new price for 12 Oak St is [PRICE]."), and the owner fills it in before
   SEND. Placeholders: [PRICE], [DATE], [TIME]; never add facts the owner did not give.
-  `refused_body_no_greeting_name`: the draft opens "Hi," with no name.
+  `refused_body_no_greeting_name`: the draft greets with no name ("Hi,", "Hello,", "Hey!", "Hi there,", "Good morning,"). "Hi Dana,", "Hi, Dana,", and "Dear Dana," count.
   `refused_body_meta`: instructions like "Tell them ..." in the text.
   `refused_body_not_to_recipient`: not addressed to the recipient.
-  `refused_body_missing_placeholder`: price mentioned with no figure.
+  `refused_body_missing_placeholder`: price mentioned with no figure. A street number is not a figure; use [PRICE] or the amount.
   `refused_body_no_content`: filler ("just sending a note"); ask ONE short question
   (what should the note say?). With no recipient name, ask ONE short question
   ("Who should I text?") and do not stage.
@@ -179,7 +183,7 @@ The script folds curly quotes, dashes, and ellipses to ASCII, strips
 newlines, and refuses any other non-GSM character, a Why line over 120
 characters, and the tokens `SEND`, `/approve`, and `STOP`. The rendered
 line looks like `Why: Jane's offer deadline is 5 PM today (FUB note, Oct 7).`
-or, with no source, `Why: you asked me to text Sam today (no source).`
+or, with no source, `Why: Sam's offer is due today (no source).`
 
 `/approve` is the same confirm token as `SEND`. The attestation you show
 still asks for `SEND`.

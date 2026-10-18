@@ -1560,3 +1560,124 @@ test("QA run 7 AC9: owner_text Why says 'from your own text' once, even if the m
   assert.equal(fub.payload.outcome, "staged", fub.stdout);
   assert.equal(fub.payload.why_line, "Why: Dana's offer deadline is Friday (FUB note, Oct 15).");
 });
+
+test("owner-facing Why punctuation: no doubled comma or ellipsis-comma; ellipsis stays before a parenthesis", () => {
+  const question = stageWith("Hi Dana, yes, the inspection report is in.", "Dana asked if the inspection report is in?");
+  assert.equal(question.payload.why_line, "Why: Dana asked if the inspection report is in, from your own text.");
+  const bang = stageWith("Hi Pat, congratulations on closing today!", "Pat is closing today!");
+  assert.equal(bang.payload.why_line, "Why: Pat is closing today, from your own text.");
+  const comma = stageWith("Hi Pat, congratulations on closing today!", "Pat is closing today,");
+  assert.equal(comma.payload.why_line, "Why: Pat is closing today, from your own text.");
+  assert.equal(comma.payload.why_line.includes(",,"), false);
+  const dots = stageWith("Hi Dana, yes, the inspection report is in.", "Dana asked if the inspection report is in...");
+  assert.equal(dots.payload.why_line, "Why: Dana asked if the inspection report is in, from your own text.");
+  assert.equal(dots.payload.why_line.includes("...,"), false);
+  const folded = stageWith("Hi Dana, yes, the inspection report is in.", "Dana asked if the inspection report is in\u2026");
+  assert.equal(folded.payload.why_line, "Why: Dana asked if the inspection report is in, from your own text.");
+  const fub = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Dana, the offer is in.",
+    "--why", "Jane's deadline - today...", "--source-kind", "fub_note", "--source-date", "2026-10-07"]);
+  assert.equal(fub.payload.why_line, "Why: Jane's deadline - today... (FUB note, Oct 7).");
+  const none = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Sam, your offer is due today.",
+    "--why", "Sam's offer is due today...", "--source-kind", "none"]);
+  assert.equal(none.payload.why_line, "Why: Sam's offer is due today... (no source).");
+});
+
+test("a real cause that uses so, meaning, or deserves is not trimmed or refused", () => {
+  const cases = [
+    ["Hi Pat, the wire needs to go out this morning.", "Pat is closing today, so the wire must go out this morning"],
+    ["Hi Dana, a counter is ready before 5.", "Offers came in under asking, meaning Dana needs a counter before 5"],
+    ["Hi Dana, Oak St is at the new number.", "The price dropped, so the message is that Oak St is now at the new number"],
+    ["Hi Lee, bring the disclosure to the showing.", "Lee's showing is tomorrow at 10, so the note from Dana says to bring the disclosure"],
+    ["Hi Dana, a calm update is on the way.", "The buyer is nervous, meaning a calm update is appropriate before Friday"],
+    ["Hi Dana, the inspection failed and Friday is the deadline.", "The seller deserves a reply because the offer expires Friday"],
+    ["Hi Dana, the lender needs the documents before Friday.", "The lender calls for the documents before Friday's closing"],
+  ];
+  for (const [body, why] of cases) {
+    const r = stageWith(body, why);
+    assert.equal(r.payload.outcome, "staged", why + " " + r.stdout);
+    assert.equal(r.payload.why_line, "Why: " + why.replace(/[?!.]+$/, "") + ownerWhySuffix, why);
+  }
+  // The action tails from QA run 7 still trim.
+  const timely = stageWith("Hi Lee, a reminder that the showing is tomorrow at 10.", "Lee's showing is tomorrow at 10, so a reminder is timely.");
+  assert.equal(timely.payload.why_line, "Why: Lee's showing is tomorrow at 10" + ownerWhySuffix);
+  const deserves = stageWith("Hi Pat, congratulations on closing today!", "Pat is closing today and deserves congratulations.");
+  assert.equal(deserves.payload.why_line, "Why: Pat is closing today" + ownerWhySuffix);
+});
+
+test("status-only Why is refused; a cause that also mentions ready or available stages", () => {
+  const only = stageWith("Hi Dana, yes, the inspection report is in.", "The inspection report is available for Dana now.");
+  assert.equal(only.payload.outcome, "refused_why_circular");
+  assert.match(only.payload.reason, /status, not a cause/);
+  assert.equal(draftFiles(only.dir).length, 0);
+  for (const why of [
+    "The inspection report is now available",
+    "The inspection report is ready now",
+    "The inspection report is available now for Dana",
+    "The keys are now ready.",
+  ]) {
+    const r = stageWith("Hi Dana, yes, the inspection report is in.", why);
+    assert.equal(r.payload.outcome, "refused_why_circular", why + " " + r.stdout);
+    assert.match(r.payload.reason, /status, not a cause/);
+  }
+  const asked = stageWith("Hi Dana, yes, the inspection report is in.", "Dana asked this morning and the inspection report is now ready");
+  assert.equal(asked.payload.outcome, "staged", asked.stdout);
+  assert.equal(
+    asked.payload.why_line,
+    "Why: Dana asked this morning and the inspection report is now ready" + ownerWhySuffix,
+  );
+  const because = stageWith("Hi Dana, yes, the inspection report is in.", "The keys are now ready because Dana lands at 4");
+  assert.equal(because.payload.outcome, "staged", because.stdout);
+  assert.equal(
+    because.payload.why_line,
+    "Why: The keys are now ready because Dana lands at 4" + ownerWhySuffix,
+  );
+});
+
+test("greeting name: nameless forms refuse; a name after the comma or Dear counts", () => {
+  const why = "Dana asked if the inspection report is in";
+  for (const body of [
+    "Hello, the price on Oak St dropped to [PRICE].",
+    "Hey! the price on Oak St dropped to [PRICE].",
+    "Hi there, the price on Oak St dropped to [PRICE].",
+    "Good morning, the inspection report is in.",
+    "Hey! The inspection report is in.",
+  ]) {
+    const r = stageWith(body, why);
+    assert.equal(r.payload.outcome, "refused_body_no_greeting_name", body + " " + r.stdout);
+    assert.equal(draftFiles(r.dir).length, 0);
+  }
+  for (const body of [
+    "Dear Dana, the inspection report is in.",
+    "Hi, Dana, the inspection report is in.",
+    "Hello Dana, the inspection report is in.",
+    "Hey Dana, the inspection report is in.",
+    "Good morning Dana, the inspection report is in.",
+  ]) {
+    const r = stageWith(body, why);
+    assert.equal(r.payload.outcome, "staged", body + " " + r.stdout);
+    assert.equal(r.payload.attestation.split("\n")[1], body);
+  }
+});
+
+test("a street number is not a price figure; [PRICE] and a dollar amount are", () => {
+  const why = "Dana asked about the new Oak St price";
+  const street = stageWith("Hi Dana, the new price for 12 Oak St is set.", why);
+  assert.equal(street.payload.outcome, "refused_body_missing_placeholder", street.stdout);
+  assert.match(street.payload.reason, /street number is not a price/);
+  assert.equal(draftFiles(street.dir).length, 0);
+  const placeholder = stageWith("Hi Dana, the new price for 12 Oak St is [PRICE].", why);
+  assert.equal(placeholder.payload.outcome, "staged", placeholder.stdout);
+  const dollars = stageWith("Hi Dana, the new price for 12 Oak St is $450000.", why);
+  assert.equal(dollars.payload.outcome, "staged", dollars.stdout);
+  const bare = stageWith("Hi Dana, the new price for Oak St is 450000.", why);
+  assert.equal(bare.payload.outcome, "staged", bare.stdout);
+});
+
+test("from your own text is shown once when the model already wrapped or led with it", () => {
+  const paren = stageWith("Hi Sam, happy birthday!", "It's Sam's birthday today (from your own text)");
+  assert.equal(paren.payload.why_line, "Why: It's Sam's birthday today, from your own text.");
+  assert.equal(paren.payload.why_line.split("from your own text").length, 2);
+  const lead = stageWith("Hi Sam, happy birthday!", "From your own text, it's Sam's birthday today");
+  assert.equal(lead.payload.why_line, "Why: it's Sam's birthday today, from your own text.");
+  assert.equal(lead.payload.why_line.split("from your own text").length, 2);
+});
