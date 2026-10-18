@@ -1678,6 +1678,14 @@ test("from your own text is shown once when the model already wrapped or led wit
   assert.equal(paren.payload.why_line, "Why: It's Sam's birthday today, from your own text.");
   assert.equal(paren.payload.why_line.split("from your own text").length, 2);
   const lead = stageWith("Hi Sam, happy birthday!", "From your own text, it's Sam's birthday today");
-  assert.equal(lead.payload.why_line, "Why: it's Sam's birthday today, from your own text.");
+  assert.equal(lead.payload.why_line, "Why: It's Sam's birthday today, from your own text.");
   assert.equal(lead.payload.why_line.split("from your own text").length, 2);
+  const mid = stageWith(
+    "Hi Dana, your offer is due today.",
+    "Dana asked (from your own text) and the offer is due today.",
+  );
+  assert.equal(mid.payload.outcome, "staged", mid.stdout);
+  assert.equal(mid.payload.why_line, "Why: Dana asked and the offer is due today, from your own text.");
+  assert.equal(mid.payload.why_line.split("from your own text").length, 2);
+  assert.equal(mid.payload.attestation.includes("(from your own text)"), false);
 });

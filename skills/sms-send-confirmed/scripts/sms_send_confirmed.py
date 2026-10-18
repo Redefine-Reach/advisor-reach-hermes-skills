@@ -372,6 +372,16 @@ def _content_words(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9']+", text.lower()) if w not in _WHY_STOP and len(w) > 1}
 
 
+def _cap_sentence(text: str) -> str:
+    """Capitalize the first letter after a leading source label was removed."""
+    for index, char in enumerate(text):
+        if char.isalpha():
+            if char.islower():
+                return text[:index] + char.upper() + text[index + 1 :]
+            return text
+    return text
+
+
 def strip_why_provenance(why: str) -> str:
     """Drop a trailing '(owner text, 2026-10-15)' or '(your text, Oct 17)' tag the model added.
     Provenance is audit-only (--source-kind/--source-date)."""
@@ -379,19 +389,29 @@ def strip_why_provenance(why: str) -> str:
     stripped = re.sub(
         r"\s*\((?:owner[ _]text|your[ _]text|[^()]*\b20\d\d-\d\d-\d\d)[^()]*\)\s*$", "", flat, flags=re.I
     )
-    # The script adds ", from your own text." itself. A copy the model already wrote,
-    # including a leading one or "(from your own text)", would show the phrase twice.
-    stripped = re.sub(
+    # The script adds ", from your own text." itself. A copy the model already wrote
+    # (leading, trailing, or a parenthetical anywhere) would show the phrase twice.
+    lead = re.sub(
         r"(?i)^[\s,;]*\(?\s*from\s+your\s+own\s+text\s*\)?\s*[,:;.-]*\s*",
         "",
         stripped,
+        count=1,
     )
+    led = lead != stripped
+    stripped = lead
+    stripped = re.sub(r"(?i)\s*\(\s*from\s+your\s+own\s+text\s*\)", " ", stripped)
     stripped = re.sub(
         r"(?i)[\s,;]*\(?\s*from\s+your\s+own\s+text\s*\)?[\s.]*$",
         "",
         stripped,
     )
-    return stripped.rstrip(" .,;") if stripped != flat else flat
+    stripped = re.sub(r"\s{2,}", " ", stripped).strip()
+    if stripped == flat:
+        return flat
+    stripped = stripped.rstrip(" .,;")
+    if led:
+        stripped = _cap_sentence(stripped)
+    return stripped
 
 
 def why_is_generic(why: str) -> bool:
