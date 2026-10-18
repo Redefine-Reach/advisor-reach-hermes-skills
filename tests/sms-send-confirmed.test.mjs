@@ -1521,7 +1521,7 @@ test("QA run 7 item 4: a missing price stages with [PRICE]; a price word with no
   const bad = stageWith("Hi Dana, the new price for Oak St is set.", "Dana asked about the new Oak St price");
   assert.equal(bad.payload.outcome, "refused_body_missing_placeholder", bad.stdout);
   const skill = readFileSync(skillPath, "utf8");
-  assert.match(skill, /missing\s+price, date or time is NEVER a reason to ask/);
+  assert.match(skill, /Any missing\s+detail[\s\S]*?is\s+NEVER a reason to ask/);
   assert.match(skill, /\[PRICE\]/);
 });
 
@@ -1678,6 +1678,68 @@ test("from your own text is shown once when the model already wrapped or led wit
   assert.equal(paren.payload.why_line, "Why: It's Sam's birthday today, from your own text.");
   assert.equal(paren.payload.why_line.split("from your own text").length, 2);
   const lead = stageWith("Hi Sam, happy birthday!", "From your own text, it's Sam's birthday today");
-  assert.equal(lead.payload.why_line, "Why: it's Sam's birthday today, from your own text.");
+  assert.equal(lead.payload.why_line, "Why: It's Sam's birthday today, from your own text.");
   assert.equal(lead.payload.why_line.split("from your own text").length, 2);
+  const mid = stageWith(
+    "Hi Dana, your offer is due today.",
+    "Dana asked (from your own text) and the offer is due today.",
+  );
+  assert.equal(mid.payload.outcome, "staged", mid.stdout);
+  assert.equal(mid.payload.why_line, "Why: Dana asked and the offer is due today, from your own text.");
+  assert.equal(mid.payload.why_line.split("from your own text").length, 2);
+  assert.equal(mid.payload.attestation.includes("(from your own text)"), false);
+});
+
+function stageThenSend(body, why, confirm = "SEND") {
+  const dir = mkdtempSync(join(tmpdir(), "sms-ph-"));
+  const staged = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", body, "--why", why,
+    "--source-kind", "owner_text"], {}, dir);
+  assert.equal(staged.payload.outcome, "staged", staged.stdout);
+  const sent = run(["send", "--draft-id", staged.payload.draft_id, "--confirm", confirm, "--attest", "yes"], {}, dir);
+  return { dir, staged, sent };
+}
+
+test("send refuses a draft whose body still has a bracketed placeholder, and restage with the value sends", () => {
+  const why = "Dana asked about the new Oak St price";
+  for (const body of [
+    "Hi Dana, the new price for 12 Oak St is [PRICE].",
+    "Hi Dana, the showing is on [DATE].",
+    "Hi Dana, see you at [TIME].",
+    "Hi Dana, the new price for [ADDRESS] is $450,000.",
+    "Hi Dana, the walkthrough is at [ADDRESS] with [AGENT NAME] and [LOT_NO].",
+  ]) {
+    const { dir, sent } = stageThenSend(body, why);
+    assert.equal(sent.payload.outcome, "refused_unfilled_placeholder", sent.stdout);
+    assert.equal(sent.payload.provider_called, false);
+    assert.equal(sent.callLines.length, 0, body);
+    assert.ok(sent.payload.placeholders.length >= 1);
+    const files = draftFiles(dir).map((n) => JSON.parse(readFileSync(join(dir, "drafts", n), "utf8")));
+    assert.equal(files.length, 1);
+    assert.ok(files.every((d) => d.status === "cancelled" && d.body === ""), "draft is cancelled and body cleared");
+  }
+  const spaced = stageThenSend("Hi Dana, the showing is on [ DATE ].", why);
+  assert.equal(spaced.sent.payload.outcome, "refused_unfilled_placeholder", spaced.sent.stdout);
+  assert.deepEqual(spaced.sent.payload.placeholders, ["[DATE]"]);
+  const lower = stageThenSend("Hi Dana, the new price is [price].", why);
+  assert.equal(lower.sent.payload.outcome, "refused_unfilled_placeholder", lower.sent.stdout);
+  const filled = stageThenSend("Hi Dana, the new price for 12 Oak St is $450,000.", why);
+  assert.equal(filled.sent.payload.outcome, "sent", filled.sent.stdout);
+  assert.equal(filled.sent.callLines.length, 1);
+});
+
+test("the placeholder guard does not block ordinary brackets, and NO on a placeholder draft still just drops it", () => {
+  const why = "Dana asked about the new Oak St price";
+  const ok = stageThenSend("Hi Dana, the offer is in [1] and (see the attached) lot 4.", why);
+  assert.equal(ok.sent.payload.outcome, "sent", ok.sent.stdout);
+  const no = stageThenSend("Hi Dana, the new price is [PRICE].", why, "NO");
+  assert.equal(no.sent.payload.outcome, "refused_no_confirm", no.sent.stdout);
+  assert.equal(no.sent.callLines.length, 0);
+});
+
+test("SKILL.md: any missing detail gets a placeholder, restage after the value, never send a placeholder", () => {
+  const skill = readFileSync(skillPath, "utf8");
+  assert.match(skill, /Any missing\s+detail[\s\S]*?bracketed UPPERCASE placeholder/);
+  assert.match(skill, /stage the message AGAIN with the value filled in/);
+  assert.match(skill, /NEVER send a bracketed placeholder/);
+  assert.match(skill, /refused_unfilled_placeholder/);
 });

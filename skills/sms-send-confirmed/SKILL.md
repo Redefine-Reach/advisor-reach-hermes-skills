@@ -122,6 +122,11 @@ Every `stage` needs why this text, why now, and where you read that. If
   cites the owner's text and date is refused (`refused_why_trigger`). For
   `owner_text` the read-back names the source plainly:
   `Why: Dana asked if the inspection report is in, from your own text.`
+  If the model already wrote that phrase, including a leading `From your own text,`
+  or `(from your own text)` anywhere in the line, the script removes the copy
+  so the owner sees it once. When the label led the line, the remaining sentence
+  starts with a capital (`From your own text, it's Sam's birthday today` renders
+  `Why: It's Sam's birthday today, from your own text.`).
   `source_date` and `source_ref` on the draft are JSON null, not a date.
   Other kinds keep `(<source>, <Mon D>)` and require `--source-date`.
 - `--source-kind`: `fub_note`, `fub_record`, `ghl`, `gmail`, `calendar`,
@@ -148,13 +153,21 @@ Every `stage` needs why this text, why now, and where you read that. If
   (greet them by name: "Hi Dana, yes, the report is in." or "Hi, Dana, ..."; never a bare
   "Hi,", "Hello,", "Hey!", "Hi there,", or "Good morning,"; use "you"
   and "your"; answer the client's question, do not repeat "you asked ..." back to them).
-  ALWAYS draft when the owner names a recipient and gives anything to say. A missing
-  price, date or time is NEVER a reason to ask: stage the draft with a placeholder
-  ("Hi Dana, the new price for 12 Oak St is [PRICE]."), and the owner fills it in before
-  SEND. Placeholders: [PRICE], [DATE], [TIME]; never add facts the owner did not give.
+  ALWAYS draft when the owner names a recipient and gives anything to say. Any missing
+  detail (price, date, time, address, amount, name, anything the owner did not say) is
+  NEVER a reason to ask: stage the draft with a bracketed UPPERCASE placeholder where
+  the detail goes ("Hi Dana, the new price for 12 Oak St is [PRICE]."; also [DATE],
+  [TIME], or a short label such as [ADDRESS]). Never add facts the owner did not give.
+  Then ask the owner for the missing detail in the same reply as the read-back. When the
+  owner supplies it, stage the message AGAIN with the value filled in and show the new
+  read-back; never edit around the old draft. NEVER send a bracketed placeholder: a
+  `send` on a draft whose body still has `[PRICE]`, `[DATE]`, `[TIME]` or any
+  `[UPPERCASE]` token is refused (`refused_unfilled_placeholder`), the draft is
+  cancelled, and nothing is sent. Restage with the value filled in.
   `refused_body_no_greeting_name`: the draft greets with no name ("Hi,", "Hello,", "Hey!", "Hi there,", "Good morning,"). "Hi Dana,", "Hi, Dana,", and "Dear Dana," count.
   `refused_body_meta`: instructions like "Tell them ..." in the text.
   `refused_body_not_to_recipient`: not addressed to the recipient.
+  `refused_unfilled_placeholder` (at send): the body still has a bracketed placeholder; restage with the value.
   `refused_body_missing_placeholder`: price mentioned with no figure. A street number is not a figure; use [PRICE] or the amount.
   `refused_body_no_content`: filler ("just sending a note"); ask ONE short question
   (what should the note say?). With no recipient name, ask ONE short question
