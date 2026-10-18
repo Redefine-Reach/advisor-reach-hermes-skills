@@ -372,14 +372,14 @@ def _content_words(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9']+", text.lower()) if w not in _WHY_STOP and len(w) > 1}
 
 
-_PLACEHOLDER_RE = re.compile(r"\[(?:(?i:price|date|time)|[A-Z][A-Z0-9 _/-]*)\]")
+_PLACEHOLDER_RE = re.compile(r"\[\s*(?:(?i:price|date|time)|[A-Z][A-Z0-9 _/-]*?)\s*\]")
 
 
 def unfilled_placeholders(text: str) -> list[str]:
     """Bracketed fill-in tokens ([PRICE], [DATE], [TIME], any [UPPERCASE]) left in a body."""
     seen: list[str] = []
     for match in _PLACEHOLDER_RE.finditer(text or ""):
-        token = match.group(0).upper()
+        token = "[" + match.group(0)[1:-1].strip().upper() + "]"
         if token not in seen:
             seen.append(token)
     return seen

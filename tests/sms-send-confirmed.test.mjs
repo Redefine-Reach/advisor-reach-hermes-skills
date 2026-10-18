@@ -1717,6 +1717,9 @@ test("send refuses a draft whose body still has a bracketed placeholder, and res
     assert.equal(files.length, 1);
     assert.ok(files.every((d) => d.status === "cancelled" && d.body === ""), "draft is cancelled and body cleared");
   }
+  const spaced = stageThenSend("Hi Dana, the showing is on [ DATE ].", why);
+  assert.equal(spaced.sent.payload.outcome, "refused_unfilled_placeholder", spaced.sent.stdout);
+  assert.deepEqual(spaced.sent.payload.placeholders, ["[DATE]"]);
   const lower = stageThenSend("Hi Dana, the new price is [price].", why);
   assert.equal(lower.sent.payload.outcome, "refused_unfilled_placeholder", lower.sent.stdout);
   const filled = stageThenSend("Hi Dana, the new price for 12 Oak St is $450,000.", why);
