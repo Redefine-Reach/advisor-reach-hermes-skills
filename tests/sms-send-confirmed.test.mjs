@@ -1231,12 +1231,13 @@ test("stage refuses none with a date or ref and allows none alone", () => {
   assert.equal(none.payload.outcome, "staged");
   assert.equal(none.payload.why_line, "Why: Sam's offer is due today (no source).");
   assert.equal(none.payload.source_kind, "none");
-  assert.equal(none.payload.source_date, "");
-  assert.equal(none.payload.source_ref, undefined);
+  assert.equal(none.payload.source_date, null);
+  assert.equal(none.payload.source_ref ?? null, null);
   assert.doesNotMatch(none.payload.why_line, /\d{4}|Oct|Sep/);
   const draft = JSON.parse(readFileSync(join(none.dir, "drafts", `${none.payload.draft_id}.json`), "utf8"));
-  assert.equal(draft.source_date, "");
-  assert.equal(draft.source_ref, "");
+  // AC10: no source -> explicit JSON null for both audit fields, never "".
+  assert.equal(draft.source_date, null);
+  assert.equal(draft.source_ref, null);
   assert.equal(draft.body, BODY);
 });
 

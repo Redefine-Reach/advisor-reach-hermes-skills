@@ -503,8 +503,8 @@ def build_why_line(
         if date_text or ref:
             refuse_why("source-kind none cannot include a date or ref")
         line = f"Why: {why} (no source)."
-        stored_date = ""
-        stored_ref = ref
+        stored_date = None  # AC10: no source -> explicit nulls, never ""
+        stored_ref = None
     elif kind == "owner_text":
         if date_text or ref:
             refuse_why("source-kind owner_text cannot include a date or ref")
