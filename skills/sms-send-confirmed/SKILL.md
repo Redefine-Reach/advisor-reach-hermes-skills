@@ -103,9 +103,10 @@ Every `stage` needs why this text, why now, and where you read that. If
   Give a cause (what is due or happened, and why now), never the trigger.
   "You asked me to text Dana", "as requested", or any wording that only
   cites the owner's text and date is refused (`refused_why_trigger`). For
-  `owner_text` the owner sees no source suffix, so the line reads
-  `Why: Dana asked if the inspection report is in.`; the kind and date are
-  still stored for the audit record. Other kinds keep `(<source>, <Mon D>)`.
+  `owner_text` the read-back names the source plainly:
+  `Why: Dana asked if the inspection report is in (owner's own text).`
+  `source_date` and `source_ref` on the draft are JSON null, not a date.
+  Other kinds keep `(<source>, <Mon D>)` and require `--source-date`.
 - `--source-kind`: `fub_note`, `fub_record`, `ghl`, `gmail`, `calendar`,
   `owner_text`, `memory`, or `none`.
 - Why quality (script-enforced before any draft is written): give a client-specific
@@ -130,7 +131,8 @@ Every `stage` needs why this text, why now, and where you read that. If
   `refused_body_no_content`: filler ("just sending a note"); ask ONE short question
   (what should the note say?). With no recipient name, ask ONE short question
   ("Who should I text?") and do not stage.
-- `--source-date`: `YYYY-MM-DD`. Required unless the kind is `none`.
+- `--source-date`: `YYYY-MM-DD`. Required unless the kind is `none` or
+  `owner_text` (do not pass a date for `owner_text`).
 - `--source-name`: the Gmail sender's first name, or for `memory` the inner
   source. Required for `gmail` and `memory`. For a memory tag that is
   `none`, the inner source is `no source`. For a memory entry with no tag,

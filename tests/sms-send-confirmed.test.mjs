@@ -48,8 +48,6 @@ function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), o
           "Hendersons want the comparison before the 4 PM call",
           "--source-kind",
           "owner_text",
-          "--source-date",
-          "2026-10-08",
         ];
   const calls = join(dir, "calls.jsonl");
   const transport = join(dir, "transport.py");
@@ -858,15 +856,15 @@ gmail, _, gmail_day, _ = mod.build_why_line(
 )
 assert gmail == "Why: Mark asked about rates and has had no reply for 3 days (Gmail from Mark, Oct 5)."
 assert gmail_day == "2026-10-05"
-owner, _, owner_day, _ = mod.build_why_line(
+owner, _, owner_day, owner_ref = mod.build_why_line(
     "the showing was today and the buyer has not replied",
     "owner_text",
-    "2026-10-08",
+    "",
     "",
     "",
 )
-assert owner == "Why: the showing was today and the buyer has not replied."
-assert owner_day == "2026-10-08"
+assert owner == "Why: the showing was today and the buyer has not replied (owner's own text)."
+assert owner_day is None and owner_ref is None
 unknown, unknown_kind, _, _ = mod.build_why_line(
     "Sam's lease ends Nov 30",
     "memory",
@@ -978,8 +976,6 @@ test("stage refuses a non-GSM Why line and folds curly punctuation", () => {
     "the deadline is today \u{1F600}",
     "--source-kind",
     "owner_text",
-    "--source-date",
-    "2026-10-08",
   ]);
   assert.equal(emoji.payload.outcome, "refused_no_why");
   assert.match(emoji.payload.reason, /GSM-7/);
@@ -1020,8 +1016,6 @@ test("stage refuses confirm tokens in the Why line", () => {
       why,
       "--source-kind",
       "owner_text",
-      "--source-date",
-      "2026-10-08",
     ]);
     assert.equal(refused.payload.outcome, "refused_no_why", why);
     assert.match(refused.payload.reason, /SEND/);
@@ -1041,11 +1035,12 @@ test("stage refuses confirm tokens in the Why line", () => {
     "sending the packet today",
     "--source-kind",
     "owner_text",
-    "--source-date",
-    "2026-10-08",
   ]);
   assert.equal(allowed.payload.outcome, "staged");
-  assert.match(allowed.payload.why_line, /sending the packet today/);
+  assert.equal(
+    allowed.payload.why_line,
+    "Why: sending the packet today (owner's own text).",
+  );
 });
 
 test("stage refuses a Why line that is too long", () => {
@@ -1061,8 +1056,6 @@ test("stage refuses a Why line that is too long", () => {
     "a".repeat(200),
     "--source-kind",
     "owner_text",
-    "--source-date",
-    "2026-10-08",
   ]);
   assert.equal(longWhy.payload.outcome, "refused_no_why");
   assert.match(longWhy.payload.reason, /90/);
@@ -1080,8 +1073,6 @@ test("stage refuses a Why line that is too long", () => {
     "b".repeat(91),
     "--source-kind",
     "owner_text",
-    "--source-date",
-    "2026-10-08",
   ]);
   assert.equal(ninetyOne.payload.outcome, "refused_no_why");
   assert.equal(draftFiles(ninetyOne.dir).length, 0);
@@ -1231,7 +1222,7 @@ accepted = [
 for text in rejected:
     assert mod.restates_trigger(text), ("should reject", text)
     try:
-        mod.build_why_line(text, "owner_text", "2026-10-17", "", "")
+        mod.build_why_line(text, "owner_text", "", "", "")
     except mod.GateFailure as exc:
         assert exc.args[0] == "why restates the trigger (the owner's text or request) and gives no reason; state what is due or happened and why now" or True
         assert getattr(exc, "outcome", "") == "refused_why_trigger", (text, getattr(exc, "outcome", None))
@@ -1239,9 +1230,10 @@ for text in rejected:
         raise AssertionError(("not refused", text))
 for text in accepted:
     assert not mod.restates_trigger(text), ("should accept", text)
-    line, kind, day, _ = mod.build_why_line(text, "owner_text", "2026-10-17", "", "")
-    assert line == "Why: " + text + ".", line
-    assert "(your text" not in line and day == "2026-10-17" and kind == "owner_text"
+    line, kind, day, ref = mod.build_why_line(text, "owner_text", "", "", "")
+    assert line == "Why: " + text + " (owner's own text).", line
+    assert "(your text" not in line and "(no source)" not in line
+    assert day is None and ref is None and kind == "owner_text"
 # Other source kinds keep their label.
 line, *_ = mod.build_why_line("Jane's offer deadline is 5 PM today", "fub_note", "2026-10-07", "", "")
 assert line == "Why: Jane's offer deadline is 5 PM today (FUB note, Oct 7).", line
@@ -1254,7 +1246,7 @@ test("stage refuses a restating Why line and writes no draft", () => {
   const res = run([
     "stage", "--approver", OWNER, "--dest", DEST, "--body", BODY,
     "--why", "You asked me to text Dana about Sunday's open house",
-    "--source-kind", "owner_text", "--source-date", "2026-10-17",
+    "--source-kind", "owner_text",
   ]);
   assert.equal(res.payload.outcome, "refused_why_trigger");
   assert.equal(res.payload.provider_called, false);
@@ -1264,7 +1256,8 @@ test("stage refuses a restating Why line and writes no draft", () => {
 const BODY_TO = "Hi Dana, your listing packet is ready.";
 const stageWith = (body, why, extra = []) =>
   run(["stage", "--approver", OWNER, "--dest", DEST, "--body", body, "--why", why,
-    "--source-kind", "owner_text", "--source-date", "2026-10-17", ...extra]);
+    "--source-kind", "owner_text", ...extra]);
+const ownerWhySuffix = " (owner's own text).";
 
 test("0002/0003: generic or thin whys are refused (generic or trigger); client-specific whys stage", () => {
   for (const why of ["At your request", "Pat", "Send comparison per owner request", "Owner asked me to send it",
@@ -1279,10 +1272,17 @@ test("0002/0003: generic or thin whys are refused (generic or trigger); client-s
     "Mike went quiet after the Zillow inquiry last week"]) {
     const r = stageWith(BODY_TO, why);
     assert.equal(r.payload.outcome, "staged", why + " " + r.stdout);
-    assert.ok(r.payload.attestation.includes("\nWhy: " + why + ".\n"), r.payload.attestation);
+    const line = "Why: " + why + ownerWhySuffix;
+    assert.ok(r.payload.attestation.includes("\n" + line + "\n"), r.payload.attestation);
     assert.equal(r.payload.attestation.includes("(your text"), false);
+    assert.equal(r.payload.attestation.includes("(no source)"), false);
     assert.equal(r.payload.source_kind, "owner_text");
-    assert.equal(r.payload.source_date, "2026-10-17");
+    assert.equal(r.payload.source_date, null);
+    assert.equal(r.payload.why_line, line);
+    const ownerDraft = JSON.parse(
+      readFileSync(join(r.dir, "drafts", `${r.payload.draft_id}.json`), "utf8"),
+    );
+    assert.equal(ownerDraft.source_ref, null);
   }
 });
 
@@ -1290,7 +1290,10 @@ test("0003: a provenance suffix the model appends is stripped, never shown", () 
   for (const suffix of ["(owner text, 2026-10-15)", "(your text, Oct 17)"]) {
     const r = stageWith(BODY_TO, "Dana asked if the inspection report is in " + suffix);
     assert.equal(r.payload.outcome, "staged", r.stdout);
-    assert.ok(r.payload.attestation.includes("\nWhy: Dana asked if the inspection report is in.\n"), r.payload.attestation);
+    assert.ok(
+      r.payload.attestation.includes("\nWhy: Dana asked if the inspection report is in" + ownerWhySuffix + "\n"),
+      r.payload.attestation,
+    );
   }
 });
 
@@ -1309,7 +1312,7 @@ test("0004/0005: circular whys are refused; event-as-cause stages and the action
   ]) {
     const r = stageWith("Hi, the price on Oak St dropped to [PRICE].", why);
     assert.equal(r.payload.outcome, "staged", why + " " + r.stdout);
-    assert.ok(r.payload.attestation.includes("\nWhy: " + shown + ".\n"), r.payload.attestation);
+    assert.ok(r.payload.attestation.includes("\nWhy: " + shown + ownerWhySuffix + "\n"), r.payload.attestation);
   }
 });
 
@@ -1339,16 +1342,15 @@ test("QA expected format: Why line is one line, reason only, no suffix, not in t
   const r = stageWith("Hi Dana, yes, the inspection report is in.", "Dana asked if the inspection report is in");
   assert.equal(r.payload.outcome, "staged");
   const lines = r.payload.attestation.split("\n").filter((l) => l.startsWith("Why:"));
-  assert.deepEqual(lines, ["Why: Dana asked if the inspection report is in."]);
+  assert.deepEqual(lines, ["Why: Dana asked if the inspection report is in" + ownerWhySuffix]);
   assert.equal(r.payload.attestation.indexOf("Why:") < r.payload.attestation.indexOf("SEND"), true);
   const plain = stageWith("Hi Dana, yes, the inspection report is in.", "Sam's birthday is today");
   assert.equal(r.payload.body_hash, plain.payload.body_hash);
 });
 
 
-test("owner_text: stored source_date is the owner's local date (audit only); stored why_line equals the displayed one", () => {
-  const dir = mkdtempSync(join(tmpdir(), "sms-owner-date-"));
-  // 03:30 UTC on Oct 18 is still Oct 17 in Phoenix.
+test("owner_text: source_date and source_ref are null; stored why_line equals the displayed Why", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sms-owner-null-"));
   const staged = run(
     ["stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Dana, yes, the inspection report is in.",
       "--why", "Dana asked if the inspection report is in", "--source-kind", "owner_text"],
@@ -1359,26 +1361,41 @@ test("owner_text: stored source_date is the owner's local date (audit only); sto
   assert.equal(staged.payload.outcome, "staged", staged.proc.stdout);
   const draft = JSON.parse(readFileSync(join(dir, "drafts", `${staged.payload.draft_id}.json`), "utf8"));
   assert.equal(draft.source_kind, "owner_text");
-  assert.equal(draft.source_date, "2026-10-17");
-  assert.ok(draft.source_date.length > 0);
-  const shown = "Why: Dana asked if the inspection report is in.";
+  assert.equal(draft.source_date, null);
+  assert.equal(draft.source_ref, null);
+  const shown = "Why: Dana asked if the inspection report is in (owner's own text).";
   assert.equal(draft.why_line, shown);
   assert.equal(staged.payload.why_line, shown);
+  const attestationLines = staged.payload.attestation.split("\n");
+  assert.equal(attestationLines[2], shown);
   assert.ok(staged.payload.attestation.includes("\n" + shown + "\n"));
   for (const hidden of ["(no source)", "(your text", "2026-10-17", "Oct 17"]) {
     assert.equal(staged.payload.attestation.includes(hidden), false, hidden);
     assert.equal(draft.why_line.includes(hidden), false, hidden);
   }
-  // No zone: UTC date, still non-empty. An explicit date is kept as given.
-  const utc = run(
+  const withDate = run(
     ["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY, "--why", "Dana asked if the inspection report is in",
-      "--source-kind", "owner_text"],
-    { SMS_NOW: "2026-10-18T03:30:00+00:00" }, mkdtempSync(join(tmpdir(), "sms-owner-date2-")), { why: false });
-  assert.equal(utc.payload.source_date, "2026-10-18");
-  const given = run(
-    ["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY, "--why", "Dana asked if the inspection report is in",
-      "--source-kind", "owner_text", "--source-date", "2026-10-15"], {}, mkdtempSync(join(tmpdir(), "sms-owner-date3-")), { why: false });
-  assert.equal(given.payload.source_date, "2026-10-15");
+      "--source-kind", "owner_text", "--source-date", "2026-10-15"],
+    {},
+    mkdtempSync(join(tmpdir(), "sms-owner-date-refused-")),
+    { why: false },
+  );
+  assert.equal(withDate.payload.outcome, "refused_no_why");
+  assert.match(withDate.payload.reason, /owner_text cannot include a date/);
+  assert.equal(draftFiles(withDate.dir).length, 0);
+});
+
+test("non-owner source without source-date is refused", () => {
+  const refused = run(
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY,
+      "--why", "Jane's offer deadline is 5 PM today", "--source-kind", "fub_note"],
+    {},
+    mkdtempSync(join(tmpdir(), "sms-no-date-")),
+    { why: false },
+  );
+  assert.equal(refused.payload.outcome, "refused_no_why");
+  assert.match(refused.payload.reason, /source-date is required/);
+  assert.equal(draftFiles(refused.dir).length, 0);
 });
 
 test("the script never rewrites the draft body: pronouns and wording are stored and shown as given", () => {
