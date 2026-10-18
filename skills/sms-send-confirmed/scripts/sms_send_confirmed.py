@@ -108,7 +108,7 @@ SOURCE_LABELS = {
 }
 NAME_SOURCE_KINDS = frozenset({"gmail", "memory"})
 SOURCE_KINDS = frozenset(SOURCE_LABELS) | NAME_SOURCE_KINDS | {"none"}
-OWNER_TEXT_SUFFIX = "owner's own text"
+OWNER_TEXT_SUFFIX = "from your own text"  # RED-585 AC9: shown as "Why: <reason>, from your own text."
 SOURCE_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 WHY_TOKEN_RE = re.compile(r"(?i)(?:\b(?:send|stop)\b|/approve)")
 # GSM 03.38 basic text plus the extension characters that stay GSM-7.
@@ -295,6 +295,15 @@ _WHY_STOP = {
     "they", "their", "them", "he", "she", "his", "her", "about", "with", "has", "have", "had", "be", "as",
 }
 _ACTION_TAIL = re.compile(r"[,;:]?\s*\b(?:so|to|and\s+then|then|in\s+order\s+to)\s+" + _ACTION_VERBS + r"\b.*$", re.I)
+# RED-585 QA run 7 items 5-6: "..., and deserves congratulations", "..., so a reminder is timely" are action
+# tails, not causes. Trimmed off like "so congratulate Pat"; what is left must still be a real cause.
+_ACTION_TAIL_EXTRA = (
+    re.compile(r"[,;:]?\s*\b(?:and\s+)?(?:deserves?|warrants?|merits?|calls?\s+for)\b.*$", re.I),
+    re.compile(r"[,;:]?\s*\b(?:so|which\s+means|meaning)\s+(?:a|an|the)?\s*(?:[\w'-]+\s+){0,4}?(?:is|are|would\s+be|makes?\s+sense|seems?)\s+(?:\w+\s+)?(?:timely|appropriate|fitting|warranted|worthwhile|helpful|a\s+good\s+idea)\b.*$", re.I),
+    re.compile(r"[,;:]?\s*\bso\s+(?:a|an|the)\s+(?:congrat\w*|reminder|nudge|follow[- ]?up|check[- ]?in|note|text|message)\b.*$", re.I),
+)
+# A Why that only states the thing in the draft is available now is a status, not the cause (QA run 7 item 2).
+_STATUS_WHY = re.compile(r"\b(?:is|are)\s+(?:now\s+)?(?:available|ready)\b[^.]*\bnow[\s.]*$|\b(?:is|are)\s+now\s+(?:available|ready)\b", re.I)
 _WANT_TAIL = re.compile(r"\b(?:you|i|we|owner|they)?\s*(?:want|wants|need|needs|wish|wishes|would\s+like|'d\s+like)\s*$", re.I)
 _META_BODY = (
     r"(?:^|[.!?,:;-]\s*)(?:Tell|Let|Remind|Ask|Say|Inform|Notify|Congratulate|Thank)\s+(?:them|him|her|the\s+\w+|[A-Z][a-z]+)\b",
@@ -315,6 +324,7 @@ def strip_why_provenance(why: str) -> str:
     stripped = re.sub(
         r"\s*\((?:owner[ _]text|your[ _]text|[^()]*\b20\d\d-\d\d-\d\d)[^()]*\)\s*$", "", flat, flags=re.I
     )
+    stripped = re.sub(r"[\s,;]*\bfrom\s+your\s+own\s+text\b[\s.]*$", "", stripped, flags=re.I)
     return stripped.rstrip(" .,;") if stripped != flat else flat
 
 
@@ -340,7 +350,13 @@ def why_cause(why: str, body: str = "") -> str | None:
     if re.search(r"\b(?:a|the)\s+(?:quick\s+)?(?:note|text|message)\s*$", reason, re.I):
         return None
     cause = reason
+    if _STATUS_WHY.search(reason):
+        return None
     tail = _ACTION_TAIL.search(reason)
+    for extra in _ACTION_TAIL_EXTRA:
+        found = extra.search(cause)
+        if found and (tail is None or found.start() < tail.start()):
+            tail = found
     if tail:
         cause = reason[: tail.start()].strip(" ,;:")
         if _WANT_TAIL.search(cause):
@@ -367,6 +383,8 @@ def body_problem(body: str, why: str) -> tuple[str, str] | None:
         return ("refused_body_meta", "the draft contains an instruction to the owner (for example 'Tell them ...'). Write the text itself, in second person, to the recipient")
     if not re.search(_SECOND_PERSON, text, re.I):
         return ("refused_body_not_to_recipient", "the draft is not addressed to the recipient. Write it to them in second person (greet them, use 'you/your')")
+    if re.match(r"^\W*(?:hi|hello|hey|dear)(?:\s+there)?\s*[,.!:-]", text, re.I):
+        return ("refused_body_no_greeting_name", "the draft greets with no name. Start with the recipient's name, for example 'Hi Dana, ...'. If the owner gave no name, ask who the text is for")
     if re.search(r"\b(?:price|priced|pricing|cost)\b", text, re.I) and not re.search(r"[$\d\[]", text):
         return ("refused_body_missing_placeholder", "the draft mentions price but gives no figure. Put [PRICE] where the number goes; do not invent one")
     return None
@@ -459,6 +477,8 @@ def build_why_line(
     """
     kind = str(kind_raw or "").strip().lower()
     why = one_line(why_raw)
+    if not why.endswith("..."):
+        why = why.rstrip(" .!?")  # no ".," before the suffix
     name = one_line(name_raw)
     ref = str(ref_raw or "").strip()
     date_text = str(date_raw or "").strip()
@@ -488,7 +508,7 @@ def build_why_line(
     elif kind == "owner_text":
         if date_text or ref:
             refuse_why("source-kind owner_text cannot include a date or ref")
-        line = f"Why: {why} ({OWNER_TEXT_SUFFIX})."
+        line = f"Why: {why}, {OWNER_TEXT_SUFFIX}."
         stored_date = None
         stored_ref = None
     else:

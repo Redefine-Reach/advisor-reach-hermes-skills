@@ -121,7 +121,7 @@ Every `stage` needs why this text, why now, and where you read that. If
   "You asked me to text Dana", "as requested", or any wording that only
   cites the owner's text and date is refused (`refused_why_trigger`). For
   `owner_text` the read-back names the source plainly:
-  `Why: Dana asked if the inspection report is in (owner's own text).`
+  `Why: Dana asked if the inspection report is in, from your own text.`
   `source_date` and `source_ref` on the draft are JSON null, not a date.
   Other kinds keep `(<source>, <Mon D>)` and require `--source-date`.
 - `--source-kind`: `fub_note`, `fub_record`, `ghl`, `gmail`, `calendar`,
@@ -131,7 +131,10 @@ Every `stage` needs why this text, why now, and where you read that. If
   the client asked, or the event itself: "Pat is closing today"). Never invent one.
   `refused_why_generic`: the reason is too thin ("Pat") or only restates the request.
   `refused_why_circular`: the reason is the action or the draft ("Congratulate Pat");
-  a trailing "so congratulate Pat" is trimmed off. A source or date the model appends
+  an action tail ("so congratulate Pat", "and deserves congratulations", "so a reminder
+  is timely") is trimmed off, so do not write one. A Why that only says the thing is
+  "available now" is a status, not a cause (`refused_why_circular`): name what the client
+  asked or what happened ("Dana asked if the inspection report is in"). A source or date the model appends
   itself, such as "(owner text, 2026-10-15)", is stripped and never shown.
 - Wording: keep the owner's own words and facts. Only the recipient becomes "you"
   or "your" (the owner's "tell Dana to bring her signature" becomes "please bring
@@ -139,9 +142,13 @@ Every `stage` needs why this text, why now, and where you read that. If
   exactly as the owner gave them ("her" for a third person stays "her"). Do not add,
   drop, or reword facts, dates, amounts, or names. The script never edits the body.
 - Body quality: the draft is the text itself, to the recipient, in second person
-  (greet them by name; use "you" and "your"). ALWAYS draft when the owner names a
-  recipient and gives anything to say. Missing facts become placeholders such as
-  [PRICE], [DATE], or [TIME]; never add facts the owner did not give.
+  (greet them by name: "Hi Dana, yes, the report is in." never a bare "Hi,"; use "you"
+  and "your"; answer the client's question, do not repeat "you asked ..." back to them).
+  ALWAYS draft when the owner names a recipient and gives anything to say. A missing
+  price, date or time is NEVER a reason to ask: stage the draft with a placeholder
+  ("Hi Dana, the new price for 12 Oak St is [PRICE]."), and the owner fills it in before
+  SEND. Placeholders: [PRICE], [DATE], [TIME]; never add facts the owner did not give.
+  `refused_body_no_greeting_name`: the draft opens "Hi," with no name.
   `refused_body_meta`: instructions like "Tell them ..." in the text.
   `refused_body_not_to_recipient`: not addressed to the recipient.
   `refused_body_missing_placeholder`: price mentioned with no figure.

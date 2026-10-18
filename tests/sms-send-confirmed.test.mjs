@@ -940,7 +940,7 @@ owner, _, owner_day, owner_ref = mod.build_why_line(
     "",
     "",
 )
-assert owner == "Why: the showing was today and the buyer has not replied (owner's own text)."
+assert owner == "Why: the showing was today and the buyer has not replied, from your own text."
 assert owner_day is None and owner_ref is None
 unknown, unknown_kind, _, _ = mod.build_why_line(
     "Sam's lease ends Nov 30",
@@ -1116,7 +1116,7 @@ test("stage refuses confirm tokens in the Why line", () => {
   assert.equal(allowed.payload.outcome, "staged");
   assert.equal(
     allowed.payload.why_line,
-    "Why: sending the packet today (owner's own text).",
+    "Why: sending the packet today, from your own text.",
   );
 });
 
@@ -1308,7 +1308,7 @@ for text in rejected:
 for text in accepted:
     assert not mod.restates_trigger(text), ("should accept", text)
     line, kind, day, ref = mod.build_why_line(text, "owner_text", "", "", "")
-    assert line == "Why: " + text + " (owner's own text).", line
+    assert line == "Why: " + text + ", from your own text.", line
     assert "(your text" not in line and "(no source)" not in line
     assert day is None and ref is None and kind == "owner_text"
 # Other source kinds keep their label.
@@ -1334,7 +1334,7 @@ const BODY_TO = "Hi Dana, your listing packet is ready.";
 const stageWith = (body, why, extra = []) =>
   run(["stage", "--approver", OWNER, "--dest", DEST, "--body", body, "--why", why,
     "--source-kind", "owner_text", ...extra]);
-const ownerWhySuffix = " (owner's own text).";
+const ownerWhySuffix = ", from your own text.";
 
 test("0002/0003: generic or thin whys are refused (generic or trigger); client-specific whys stage", () => {
   for (const why of ["At your request", "Pat", "Send comparison per owner request", "Owner asked me to send it",
@@ -1387,7 +1387,7 @@ test("0004/0005: circular whys are refused; event-as-cause stages and the action
     ["The price dropped on the Oak St listing", "The price dropped on the Oak St listing"],
     ["Sam's birthday is today", "Sam's birthday is today"],
   ]) {
-    const r = stageWith("Hi, the price on Oak St dropped to [PRICE].", why);
+    const r = stageWith("Hi Dana, the price on Oak St dropped to [PRICE].", why);
     assert.equal(r.payload.outcome, "staged", why + " " + r.stdout);
     assert.ok(r.payload.attestation.includes("\nWhy: " + shown + ownerWhySuffix + "\n"), r.payload.attestation);
   }
@@ -1400,7 +1400,8 @@ test("0004: body must be the text itself, to the recipient; [PRICE] placeholder;
     ["Hi Hendersons, Tell them it's coming.", "refused_body_meta"],
     ["Dana asked if the inspection report is in. It is.", "refused_body_not_to_recipient"],
     ["The appraisal came in.", "refused_body_not_to_recipient"],
-    ["Hi, the price dropped on the Oak St listing.", "refused_body_missing_placeholder"],
+    ["Hi Dana, the price dropped on the Oak St listing.", "refused_body_missing_placeholder"],
+    ["Hi, the price on Oak St dropped to [PRICE].", "refused_body_no_greeting_name"],
     ["Hi Dana, just sending a quick note.", "refused_body_no_content"],
   ]) {
     const r = stageWith(body, why);
@@ -1409,7 +1410,7 @@ test("0004: body must be the text itself, to the recipient; [PRICE] placeholder;
     assert.equal(draftFiles(r.dir).length, 0);
   }
   for (const body of ["Hi Hendersons, the comparison will be with you before our 4 PM call.",
-    "Hi, the price on the Oak St listing dropped to [PRICE]. Want to take a look?",
+    "Hi Dana, the price on the Oak St listing dropped to [PRICE]. Want to take a look?",
     "Hi Garcias, the appraisal came in.", "Congrats Pat on closing today!"]) {
     assert.equal(stageWith(body, why).payload.outcome, "staged", body);
   }
@@ -1440,7 +1441,7 @@ test("owner_text: source_date and source_ref are null; stored why_line equals th
   assert.equal(draft.source_kind, "owner_text");
   assert.equal(draft.source_date, null);
   assert.equal(draft.source_ref, null);
-  const shown = "Why: Dana asked if the inspection report is in (owner's own text).";
+  const shown = "Why: Dana asked if the inspection report is in, from your own text.";
   assert.equal(draft.why_line, shown);
   assert.equal(staged.payload.why_line, shown);
   const attestationLines = staged.payload.attestation.split("\n");
@@ -1496,4 +1497,65 @@ test("the script never rewrites the draft body: pronouns and wording are stored 
 test("skill: keep the owner's wording and facts; only address the recipient; keep other people's pronouns", () => {
   assert.match(skill, /Only the recipient becomes "you"/);
   assert.match(skill, /keep every other person's pronouns/);
+});
+
+// --- RED-585 QA run 7 (Oct 18) draft fixes -------------------------------------------------
+test("QA run 7 items 1-2: a bare 'Hi,' greeting is refused; 'Hi Dana, ...' stages; a status Why is refused", () => {
+  const bare = stageWith("Hi, you asked if the inspection report is in. It is.", "Dana asked if the inspection report is in");
+  assert.equal(bare.payload.outcome, "refused_body_no_greeting_name", bare.stdout);
+  assert.equal(draftFiles(bare.dir).length, 0);
+  const named = stageWith("Hi Dana, yes, the inspection report is in.", "Dana asked if the inspection report is in");
+  assert.equal(named.payload.outcome, "staged", named.stdout);
+  assert.match(named.payload.body_hash, /./);
+  const status = stageWith("Hi Dana, yes, the inspection report is in.", "The inspection report is available for Dana now.");
+  assert.equal(status.payload.outcome, "refused_why_circular", status.stdout);
+  assert.equal(draftFiles(status.dir).length, 0);
+  const hen = stageWith("Hi Hendersons, the comparison is coming before our 4pm call.", "The Hendersons need the comparison before the 4pm call.");
+  assert.equal(hen.payload.outcome, "staged", hen.stdout);
+});
+
+test("QA run 7 item 4: a missing price stages with [PRICE]; a price word with no figure or placeholder is refused", () => {
+  const staged = stageWith("Hi Dana, the new price for 12 Oak St is [PRICE].", "Dana asked about the new Oak St price");
+  assert.equal(staged.payload.outcome, "staged", staged.stdout);
+  const bad = stageWith("Hi Dana, the new price for Oak St is set.", "Dana asked about the new Oak St price");
+  assert.equal(bad.payload.outcome, "refused_body_missing_placeholder", bad.stdout);
+  const skill = readFileSync(skillPath, "utf8");
+  assert.match(skill, /missing\s+price, date or time is NEVER a reason to ask/);
+  assert.match(skill, /\[PRICE\]/);
+});
+
+test("QA run 7 items 5-6: action tails are trimmed from the displayed Why; the cause stays", () => {
+  const cases = [
+    ["Hi Pat, congratulations on closing today!", "Pat is closing today and deserves congratulations.", "Why: Pat is closing today"],
+    ["Hi Lee, a reminder that the showing is tomorrow at 10.", "Lee's showing is tomorrow at 10, so a reminder is timely.", "Why: Lee's showing is tomorrow at 10"],
+    ["Hi Pat, congratulations on closing today!", "Pat is closing today, so congratulate Pat", "Why: Pat is closing today"],
+  ];
+  for (const [body, why, shown] of cases) {
+    const r = stageWith(body, why);
+    assert.equal(r.payload.outcome, "staged", why + " " + r.stdout);
+    assert.equal(r.payload.why_line, shown + ownerWhySuffix, why);
+    for (const tail of ["deserves", "timely", "so congratulate", "reminder is"]) {
+      assert.equal(r.payload.why_line.includes(tail), false, tail);
+    }
+  }
+  // Tails that leave no cause behind are still refused.
+  assert.equal(stageWith("Hi Pat, congratulations!", "Congratulate Pat and deserves congratulations").payload.outcome, "refused_why_circular");
+  // A real cause that merely contains "need" stays untouched.
+  const keep = stageWith("Hi Garcias, the appraisal came in.", "The Garcias' appraisal has come in and they need the update.");
+  assert.equal(keep.payload.why_line, "Why: The Garcias' appraisal has come in and they need the update" + ownerWhySuffix);
+});
+
+test("QA run 7 AC9: owner_text Why says 'from your own text' once, even if the model already wrote it; footer unchanged", () => {
+  const r = stageWith("Hi Sam, happy birthday!", "It's Sam's birthday today");
+  assert.equal(r.payload.why_line, "Why: It's Sam's birthday today, from your own text.");
+  const twice = stageWith("Hi Sam, happy birthday!", "It's Sam's birthday today, from your own text.");
+  assert.equal(twice.payload.why_line, "Why: It's Sam's birthday today, from your own text.");
+  assert.equal(twice.payload.why_line.split("from your own text").length, 2);
+  assert.match(r.payload.attestation, /Reply SEND to send, or NO to drop it\./);
+  assert.ok(r.payload.why_line.length <= 120);
+  // Non-owner kinds keep their own label and still carry a real date.
+  const fub = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Dana, the offer is in.",
+    "--why", "Dana's offer deadline is Friday", "--source-kind", "fub_note", "--source-date", "2026-10-15"]);
+  assert.equal(fub.payload.outcome, "staged", fub.stdout);
+  assert.equal(fub.payload.why_line, "Why: Dana's offer deadline is Friday (FUB note, Oct 15).");
 });
