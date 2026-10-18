@@ -122,6 +122,11 @@ Every `stage` needs why this text, why now, and where you read that. If
   cites the owner's text and date is refused (`refused_why_trigger`). For
   `owner_text` the read-back names the source plainly:
   `Why: Dana asked if the inspection report is in, from your own text.`
+  If the model already wrote that phrase, including a leading `From your own text,`
+  or `(from your own text)` anywhere in the line, the script removes the copy
+  so the owner sees it once. When the label led the line, the remaining sentence
+  starts with a capital (`From your own text, it's Sam's birthday today` renders
+  `Why: It's Sam's birthday today, from your own text.`).
   `source_date` and `source_ref` on the draft are JSON null, not a date.
   Other kinds keep `(<source>, <Mon D>)` and require `--source-date`.
 - `--source-kind`: `fub_note`, `fub_record`, `ghl`, `gmail`, `calendar`,
