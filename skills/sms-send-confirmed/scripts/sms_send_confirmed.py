@@ -372,6 +372,19 @@ def _content_words(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9']+", text.lower()) if w not in _WHY_STOP and len(w) > 1}
 
 
+_PLACEHOLDER_RE = re.compile(r"\[(?:(?i:price|date|time)|[A-Z][A-Z0-9 _/-]*)\]")
+
+
+def unfilled_placeholders(text: str) -> list[str]:
+    """Bracketed fill-in tokens ([PRICE], [DATE], [TIME], any [UPPERCASE]) left in a body."""
+    seen: list[str] = []
+    for match in _PLACEHOLDER_RE.finditer(text or ""):
+        token = match.group(0).upper()
+        if token not in seen:
+            seen.append(token)
+    return seen
+
+
 def _cap_sentence(text: str) -> str:
     """Capitalize the first letter after a leading source label was removed."""
     for index, char in enumerate(text):
@@ -1572,6 +1585,20 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                     if dropped
                     else "confirm was not SEND; the draft was not sent",
                     extra={"draft_id": draft_id, "dest": dest},
+                )
+            left = unfilled_placeholders(body)
+            if left:
+                draft["status"] = "cancelled"
+                draft["cancelled_reason"] = "unfilled placeholder"
+                draft["body"] = ""
+                write_draft(path, draft)
+                raise GateFailure(
+                    "refused_unfilled_placeholder",
+                    "the draft still has a bracketed placeholder ("
+                    + ", ".join(left)
+                    + "); it was not sent. Ask the owner for the value, then stage the message again with it filled in",
+                    field="body",
+                    extra={"draft_id": draft_id, "dest": dest, "placeholders": left},
                 )
             if not is_attest(attest):
                 raise GateFailure(
