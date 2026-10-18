@@ -120,9 +120,10 @@ Every `stage` needs why this text, why now, and where you read that. If
   Give a cause (what is due or happened, and why now), never the trigger.
   "You asked me to text Dana", "as requested", or any wording that only
   cites the owner's text and date is refused (`refused_why_trigger`). For
-  `owner_text` the owner sees no source suffix, so the line reads
-  `Why: Dana asked if the inspection report is in.`; the kind and date are
-  still stored for the audit record. Other kinds keep `(<source>, <Mon D>)`.
+  `owner_text` the read-back names the source plainly:
+  `Why: Dana asked if the inspection report is in (owner's own text).`
+  `source_date` and `source_ref` on the draft are JSON null, not a date.
+  Other kinds keep `(<source>, <Mon D>)` and require `--source-date`.
 - `--source-kind`: `fub_note`, `fub_record`, `ghl`, `gmail`, `calendar`,
   `owner_text`, `memory`, or `none`.
 - Why quality (script-enforced before any draft is written): give a client-specific
@@ -132,6 +133,11 @@ Every `stage` needs why this text, why now, and where you read that. If
   `refused_why_circular`: the reason is the action or the draft ("Congratulate Pat");
   a trailing "so congratulate Pat" is trimmed off. A source or date the model appends
   itself, such as "(owner text, 2026-10-15)", is stripped and never shown.
+- Wording: keep the owner's own words and facts. Only the recipient becomes "you"
+  or "your" (the owner's "tell Dana to bring her signature" becomes "please bring
+  your signature" in a text TO Dana); keep every other person's pronouns and names
+  exactly as the owner gave them ("her" for a third person stays "her"). Do not add,
+  drop, or reword facts, dates, amounts, or names. The script never edits the body.
 - Body quality: the draft is the text itself, to the recipient, in second person
   (greet them by name; use "you" and "your"). ALWAYS draft when the owner names a
   recipient and gives anything to say. Missing facts become placeholders such as
@@ -142,7 +148,8 @@ Every `stage` needs why this text, why now, and where you read that. If
   `refused_body_no_content`: filler ("just sending a note"); ask ONE short question
   (what should the note say?). With no recipient name, ask ONE short question
   ("Who should I text?") and do not stage.
-- `--source-date`: `YYYY-MM-DD`. Required unless the kind is `none`.
+- `--source-date`: `YYYY-MM-DD`. Required unless the kind is `none` or
+  `owner_text` (do not pass a date for `owner_text`).
 - `--source-name`: the Gmail sender's first name, or for `memory` the inner
   source. Required for `gmail` and `memory`. For a memory tag that is
   `none`, the inner source is `no source`. For a memory entry with no tag,

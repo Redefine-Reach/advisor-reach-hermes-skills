@@ -107,11 +107,8 @@ SOURCE_LABELS = {
     "owner_text": "your text",
 }
 NAME_SOURCE_KINDS = frozenset({"gmail", "memory"})
-# Sources the owner reads as "this is just what I told you": no source suffix
-# is shown for these (it only restates the trigger). The kind and date are
-# still stored on the draft for the audit record.
-HIDDEN_SOURCE_LABEL_KINDS = frozenset({"owner_text"})
 SOURCE_KINDS = frozenset(SOURCE_LABELS) | NAME_SOURCE_KINDS | {"none"}
+OWNER_TEXT_SUFFIX = "owner's own text"
 SOURCE_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 WHY_TOKEN_RE = re.compile(r"(?i)(?:\b(?:send|stop)\b|/approve)")
 # GSM 03.38 basic text plus the extension characters that stay GSM-7.
@@ -453,10 +450,11 @@ def build_why_line(
     date_raw: str,
     name_raw: str,
     ref_raw: str,
-) -> tuple[str, str, str, str]:
+) -> tuple[str, str, str | None, str | None]:
     """Render the owner Why line. Returns line, kind, ISO date, and ref.
 
-    ``none`` is the only kind allowed without a date, and only with no ref.
+    ``none`` and ``owner_text`` do not take a date or ref. ``owner_text`` stores
+    null for both; every other kind (except ``none``) requires a source-date.
     The client body is not touched.
     """
     kind = str(kind_raw or "").strip().lower()
@@ -486,9 +484,16 @@ def build_why_line(
             refuse_why("source-kind none cannot include a date or ref")
         line = f"Why: {why} (no source)."
         stored_date = ""
+        stored_ref = ref
+    elif kind == "owner_text":
+        if date_text or ref:
+            refuse_why("source-kind owner_text cannot include a date or ref")
+        line = f"Why: {why} ({OWNER_TEXT_SUFFIX})."
+        stored_date = None
+        stored_ref = None
     else:
         if not date_text:
-            refuse_why("source-date is required unless source-kind is none")
+            refuse_why("source-date is required unless source-kind is none or owner_text")
         shown_date = format_source_date(date_text)
         if kind in NAME_SOURCE_KINDS:
             if not name:
@@ -501,19 +506,18 @@ def build_why_line(
                 label = f"ARIN memory: {name}"
             else:
                 refuse_why("source-name is not used for this source-kind")
-        elif kind in HIDDEN_SOURCE_LABEL_KINDS:
-            label = ""
         else:
             label = SOURCE_LABELS[kind]
-        line = f"Why: {why}." if not label else f"Why: {why} ({label}, {shown_date})."
+        line = f"Why: {why} ({label}, {shown_date})."
         stored_date = date_text
+        stored_ref = ref
     if any(char not in GSM7_CHARS for char in line):
         refuse_why("Why line must be GSM-7")
     if WHY_TOKEN_RE.search(line):
         refuse_why("Why line must not contain SEND, /approve, or STOP")
     if len(line) > WHY_LINE_MAX:
         refuse_why(f"Why line is {len(line)} characters; the limit is {WHY_LINE_MAX}")
-    return line, kind, stored_date, ref
+    return line, kind, stored_date, stored_ref
 
 
 def classify_phone(raw: str) -> tuple[str, str | None]:
