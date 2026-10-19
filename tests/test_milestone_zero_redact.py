@@ -682,3 +682,45 @@ class NoFixtureFitting(_ExportHelpers, unittest.TestCase):
                                          ["--owner-name", "David"])
             self.assertEqual(proc.returncode, EXIT_EXCLUDED, (text, proc.stderr))
             self.assertIsNone(case)
+
+
+class NameShapesRound3(_ExportHelpers, unittest.TestCase):
+    """Vault re-test of 029b63a, items 3-4. Synthetic names only."""
+
+    def _reply(self, text: str, owner: str = "status?") -> dict:
+        proc, case, _ = self._export({"messages": [_msg("user", owner), _msg("assistant", text)]}, ["--owner-name", "David"])
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        return case
+
+    def test_lowercase_surname_after_text(self) -> None:
+        sess = {"messages": [_msg("user", "text bartholomew grindle about the deed"), _msg("assistant", "Drafted."),
+                             _msg("user", "?"), _msg("assistant", "Grindle replied, Bartholomew is in.")]}
+        proc, case, _ = self._export(sess, ["--owner-name", "David"])
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        blob = json.dumps(case).lower()
+        self.assertNotIn("grindle", blob)
+        self.assertNotIn("bartholomew", blob)
+        self.assertIn("about the deed", blob)
+        case = self._reply("Ok.", owner="text dana im running late")
+        self.assertIn("im running late", case["input"]["owner_text"])
+
+    def test_sentence_start_comma_colon_adverb_alone_and_list(self) -> None:
+        for text, name in (("Percival, can you send the disclosures?", "Percival"),
+                           ("Cornelius: fine with Friday.", "Cornelius"),
+                           ("Thaddeus definitely called back.", "Thaddeus"),
+                           ("Ignatius probably wants the condo.", "Ignatius"),
+                           ("Checked the list.\nOctavia\nThat's the only one.", "Octavia"),
+                           ("Grace, Bill, and Ann are coming to the open house.", "Grace")):
+            case = self._reply(text)
+            self.assertNotIn(name, json.dumps(case), text)
+
+    def test_ordinary_starters_still_kept(self) -> None:
+        text = "Closing is Friday. Sure, I can. Thanks, noted. Done: staged the draft."
+        self.assertEqual(self._reply(text)["fixture"]["assistant_text"], text)
+
+    def test_known_names_any_case_anywhere(self) -> None:
+        # known_names.txt has "Zelda Clientfake": every case and position is a name.
+        for text in ("ZELDA, call me.", "zelda probably wants it", "Thanks.\nzelda\n", "Spoke to clientfake: fine."):
+            case = self._reply(text)
+            self.assertNotIn("zelda", json.dumps(case).lower(), text)
+            self.assertNotIn("clientfake", json.dumps(case).lower(), text)

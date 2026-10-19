@@ -102,7 +102,19 @@ agent agents team office meeting call calls text texts email emails draft drafts
 update updates status payment invoice rent lease deposit earnest docs documents paperwork report reports
 morning afternoon evening weekend week month year noon midnight
 sent saved staged scheduled booked moved cancelled canceled confirmed done finished ready set added updated
-left signed approved declined received called asked said says told wants needs""".split())
+left signed approved declined received called asked said says told wants needs
+noted understood thanks thank awesome cool nice sorry yep yup nah right agreed absolutely definitely correct exactly
+heads fyi reminder update hey hi hello morning evening dear regards cheers best""".split())
+
+_ADVERBS = frozenset("""also just still already probably definitely maybe really finally actually never always
+apparently basically clearly obviously supposedly reportedly honestly literally seriously totally""".split())
+
+# Ordinary lowercase words that can follow "text <name>" and are not a surname.
+_NOT_SURNAME = frozenset("""
+i im i'm ill i'll id i'd ive i've we were she he they you your u ur pls please asap now later soon tonight today tomorrow
+that this about to and or but so if when re saying asking telling letting running coming going leaving heading
+back again first quick real hey hi hello thanks ok okay yes no not just also still really the a an for from with
+on at in of by my our his her their its it is are was were be been will would can could should may might""".split())
 
 _PERSON_VERBS = frozenset("""
 asked asks called calls said says texted texts emailed emails replied replies confirmed confirms wants wanted needs
@@ -432,16 +444,18 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
             return m.group(0)
         ctx.bump("name")
         out_s = m.group(0).replace(first, ph(first), 1)
-        if last and last.lower() not in allow and last.lower() not in _TEXT_TARGET_SKIP:
+        if last and last.lower() not in allow and last.lower() not in _TEXT_TARGET_SKIP and (
+            last[0].isupper() or last.lower() not in _NOT_SURNAME
+        ):
             ctx.bump("name")
             out_s = out_s[: out_s.rfind(last)] + ph(last) + out_s[out_s.rfind(last) + len(last):]
         return out_s
 
     # One name token after "text" (any case: texting-style lowercase names count), plus an
-    # optional CAPITALIZED surname. Each token gets its own placeholder, so the cross-turn
+    # optional surname (capitalized, or lowercase unless it is an ordinary word). Each token gets its own placeholder, so the cross-turn
     # pass replaces the name alone later ("<Name> confirmed Friday").
     out = re.sub(
-        r"\b(?i:text)\s+([A-Za-z][a-z]+)(?:\s+([A-Z][a-z]+)\b)?",
+        r"\b(?i:text)\s+([A-Za-z][a-z]+)(?:\s+([A-Za-z][a-z]+)\b(?!'))?",
         replace_text_target,
         out,
     )
@@ -484,7 +498,13 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
                 nxt_cap = re.match(r"\s+([A-Z][a-z]+)\b", rest)
                 nxt_word = re.match(r"\s+([a-z']+)\b", rest)
                 possessive = rest.startswith("'s")
-                person = (nxt_word and nxt_word.group(1) in _PERSON_VERBS) or possessive or (
+                # Vault 029b63a: also comma, colon, end of line / alone, or an adverb next
+                # ("Percival, can you", "Cornelius: fine", "Octavia", "Thaddeus definitely called",
+                # "Grace, Bill, ..." as a list's first item).
+                punct_or_end = re.match(r"\s*(?:[,:;]|$|[.!?]\s*$)", rest) is not None
+                adverb = bool(nxt_word and (nxt_word.group(1) in _ADVERBS or
+                                            (nxt_word.group(1).endswith("ly") and len(nxt_word.group(1)) > 4)))
+                person = (nxt_word and nxt_word.group(1) in _PERSON_VERBS) or possessive or punct_or_end or adverb or (
                     nxt_cap and nxt_cap.group(1).lower() not in allow
                     and nxt_cap.group(1).lower() not in _COMMON_STARTERS
                 )
