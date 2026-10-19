@@ -729,15 +729,37 @@ def post_export_safety_flags(text: str) -> list[str]:
     return post_redact_unsafe(text)
 
 
+# JSON structure is never redacted (Vault, Oct 19): keys stay verbatim, and a role value from this
+# vocabulary stays verbatim, so a known-names token such as "messages", "user", "content" or "role"
+# can never rename a key or blank a turn's role. Keys still go into every residue/safety scan
+# (collect_session_text), so a key holding a phone, email or credential blocks the export.
+STRUCTURAL_ROLE_KEYS = frozenset({"role"})
+STRUCTURAL_ROLE_VALUES = frozenset(
+    {"user", "owner", "human", "assistant", "arin", "agent", "tool", "system", "function", "developer"}
+)
+
+
+def is_structural_value(key: object, value: object) -> bool:
+    """True for a role field whose value is a known role name (kept as structure, not text)."""
+    return (
+        isinstance(key, str)
+        and key.strip().lower() in STRUCTURAL_ROLE_KEYS
+        and isinstance(value, str)
+        and value.strip().lower() in STRUCTURAL_ROLE_VALUES
+    )
+
+
 def redact_key(key: str, ctx: RedactionContext) -> str:
-    if _SENSITIVE_KEY.search(key):
-        ctx.bump("json_key")
-        return PLACEHOLDER_KEY
-    cleaned, _ = redact_text(key, ctx)
-    if cleaned != key:
-        ctx.bump("json_key")
-        return PLACEHOLDER_KEY
+    """Keys are structure: always returned unchanged (see STRUCTURAL_ROLE_KEYS)."""
     return key
+
+
+def _sensitive_scalar(value: object, ctx: RedactionContext) -> object:
+    """Scalar under a sensitive key ("phone", "password", ...): the whole value is replaced."""
+    if value is None or isinstance(value, bool) or (isinstance(value, str) and not value.strip()):
+        return value
+    ctx.bump("json_key")
+    return PLACEHOLDER_KEY
 
 
 def redact_object(
@@ -756,7 +778,13 @@ def redact_object(
             codes_all: list[str] = []
             ok_all = True
             for key, value in obj.items():
-                new_key = redact_key(str(key), local)
+                new_key = redact_key(key, local) if isinstance(key, str) else key
+                if is_structural_value(key, value):
+                    out[new_key] = value
+                    continue
+                if isinstance(key, str) and _SENSITIVE_KEY.search(key) and not isinstance(value, (dict, list)):
+                    out[new_key] = _sensitive_scalar(value, local)
+                    continue
                 new_val, codes, ok, res = redact_object(value, local)
                 out[new_key] = new_val
                 codes_all.extend(codes)

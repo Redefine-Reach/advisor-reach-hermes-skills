@@ -373,15 +373,16 @@ class ExportKeepsContextAndReply(_ExportHelpers, unittest.TestCase):
         self.assertEqual(proc.returncode, EXIT_BLOCKED)
         self.assertIsNone(case)
 
-    def test_section_ending_on_owner_has_no_reply(self) -> None:
+    def test_section_ending_on_owner_has_no_reply_is_blocked(self) -> None:
+        # Vault, Oct 19: a case with no ARIN reply is never written; exit 1 with the id, no text.
         sess = {"messages": [_msg("user", "can you check the showing time"), _msg("assistant", "Which one?"),
                              _msg("user", "the Saturday one")]}
         proc, case, _ = self._export(sess)
-        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
-        self.assertEqual(case["input"]["owner_text"], "the Saturday one")
-        self.assertEqual(case["fixture"]["assistant_text"], "")
-        self.assertFalse(case["export_meta"]["recorded_reply_present"])
-        self.assertEqual(len(case["input"]["context_turns"]), 2)
+        self.assertEqual(proc.returncode, EXIT_BLOCKED, proc.stderr)
+        self.assertIsNone(case)
+        self.assertIn("export_blocked: empty_case id=syn-01 parts=reply", proc.stderr)
+        self.assertNotIn("Saturday", proc.stderr + proc.stdout)
+
 
     def test_context_and_reply_are_redacted_before_write(self) -> None:
         sess = {"messages": [_msg("user", "Zelda Clientfake cell is 602-555-0142"),
@@ -532,6 +533,118 @@ class ExportVaultRequirements(_ExportHelpers, unittest.TestCase):
                                                 "recorded_reply_present", "redaction_counts"})
         for frag in ("owner turn", "arin turn", "running late", "Why:"):
             self.assertNotIn(frag, res.stdout)
+
+
+class ExportStructureNeverRedacted(_ExportHelpers, unittest.TestCase):
+    """Vault (Oct 19, Keel void run 1): known-names tokens must never redact JSON keys or role values,
+    and a case with an empty owner message or ARIN reply exits 1 (synthetic only)."""
+
+    STRUCT_TOKENS = ("messages", "user", "content", "role", "assistant")
+
+    def _names_file(self, extra: tuple[str, ...]) -> Path:
+        tmp = Path(tempfile.mkdtemp()); os.chmod(tmp, 0o700)
+        f = tmp / "known_names.txt"
+        f.write_text("\n".join([*(FIX_MAIN / "known_names.txt").read_text(encoding="utf-8").splitlines(), *extra]) + "\n",
+                     encoding="utf-8")
+        os.chmod(f, 0o600)
+        return f
+
+    def _export_names(self, session: dict, names: Path, extra: list[str] | None = None):
+        tmp = Path(tempfile.mkdtemp()); os.chmod(tmp, 0o700)
+        sess = tmp / "session.json"
+        sess.write_text(json.dumps(session), encoding="utf-8")
+        out = tmp / "redacted" / "cases-export.jsonl"
+        proc = subprocess.run(
+            [sys.executable, str(MZ / "export_session_to_case.py"), "--session", str(sess), "--id", "syn-02",
+             "--category", "send_draft", "--known-names", str(names), "--out", str(out),
+             "--manifest", str(tmp / "m.json"), "--source", "cli", *(extra or [])],
+            capture_output=True, text=True, cwd=str(MZ),
+        )
+        text = out.read_text(encoding="utf-8").strip() if out.exists() else ""
+        return proc, (json.loads(text.splitlines()[-1]) if text else None)
+
+    def test_structural_tokens_in_names_list_keep_the_case(self) -> None:
+        names = self._names_file(self.STRUCT_TOKENS + ("Dana Fakeperson",))
+        proc, case = self._export_names(self._long_session(), names)
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        self.assertRegex(case["input"]["owner_text"], r"^text \S+ I am running late$")
+        self.assertTrue(case["fixture"]["assistant_text"].strip())
+        self.assertEqual(len(case["input"]["context_turns"]), 10)
+        self.assertEqual({t["role"] for t in case["input"]["context_turns"]}, {"owner", "arin"})
+        self.assertTrue(case["export_meta"]["recorded_reply_present"])
+        self.assertNotIn("Dana", json.dumps(case))
+
+    def test_structural_tokens_redacted_as_words_inside_text(self) -> None:
+        # The same tokens are still names when they appear inside a message (over-redaction is safe).
+        names = self._names_file(self.STRUCT_TOKENS)
+        sess = {"messages": [_msg("user", "forward the user content to me"), _msg("assistant", "Sent the messages role list.")]}
+        proc, case = self._export_names(sess, names)
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        self.assertNotRegex(case["input"]["owner_text"], r"\b(user|content)\b")
+        self.assertNotRegex(case["fixture"]["assistant_text"], r"\b(messages|role)\b")
+
+    def test_keys_never_renamed_role_values_kept(self) -> None:
+        from redact import RedactionContext, redact_object
+        ctx = RedactionContext(known_names=list(self.STRUCT_TOKENS) + ["Dana"])
+        raw = {"messages": [{"role": "user", "content": "text Dana now"}, {"role": "assistant", "content": "ok user"}],
+               "Dana": "x", "phone": "602-555-0142", "user": {"content": "Dana"}}
+        red, _c, _ok, _r = redact_object(raw, ctx)
+        self.assertEqual(list(red.keys()), list(raw.keys()))
+        self.assertEqual([m["role"] for m in red["messages"]], ["user", "assistant"])
+        self.assertEqual(list(red["messages"][0].keys()), ["role", "content"])
+        self.assertNotIn("Dana", red["messages"][0]["content"])
+        self.assertEqual(red["phone"], "[REDACTED_KEY]")  # sensitive key: whole scalar value replaced
+        self.assertNotIn("Dana", red["user"]["content"])
+
+    def test_unknown_role_value_is_still_redacted(self) -> None:
+        from redact import RedactionContext, redact_object
+        red, *_ = redact_object({"role": "Dana Fakeperson"}, RedactionContext(known_names=["Dana Fakeperson"]))
+        self.assertNotIn("Dana", red["role"])
+
+    def test_empty_owner_message_is_blocked(self) -> None:
+        sess = {"messages": [_msg("user", "   "), _msg("assistant", "Which listing?")], "assistant_text": "Which listing?"}
+        proc, case, _ = self._export(sess)
+        self.assertEqual(proc.returncode, EXIT_BLOCKED, proc.stderr)
+        self.assertIsNone(case)
+        self.assertIn("empty_case id=syn-01 parts=owner", proc.stderr)
+        self.assertNotIn("listing", proc.stderr + proc.stdout)
+
+    def test_structure_change_guard_blocks(self) -> None:
+        # A role value that is not a known role gets redacted -> structure changed -> exit 1, no case.
+        names = self._names_file(("Zorblax",))
+        sess = {"messages": [_msg("user", "hi there"), {"role": "Zorblax", "content": "x"}, _msg("assistant", "Hello.")]}
+        proc, case = self._export_names(sess, names)
+        self.assertEqual(proc.returncode, EXIT_BLOCKED, proc.stderr)
+        self.assertIsNone(case)
+        self.assertIn("export_blocked: structure_changed", proc.stderr)
+        self.assertNotIn("Zorblax", proc.stderr + proc.stdout)
+
+    def test_sensitive_key_number_value_is_not_a_structure_change(self) -> None:
+        names = self._names_file(())
+        sess = {"phone": 6025550142, "messages": [_msg("user", "check the listing"), _msg("assistant", "On it.")]}
+        proc, case = self._export_names(sess, names)
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+
+    def test_verify_cases_counts_and_ids_only(self) -> None:
+        tmp = Path(tempfile.mkdtemp()); os.chmod(tmp, 0o700)
+        f = tmp / "cases.jsonl"
+        rows = [
+            {"id": "ok-1", "input": {"owner_text": "secretword one"}, "fixture": {"assistant_text": "secretword reply"}},
+            {"id": "no-reply", "input": {"owner_text": "secretword two"}, "fixture": {"assistant_text": " "}},
+            {"id": "no-owner", "input": {"owner_text": ""}, "fixture": {"assistant_text": "secretword"}},
+        ]
+        f.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(MZ / "export_session_to_case.py"), "--verify-cases", str(f)],
+                              capture_output=True, text=True, cwd=str(MZ))
+        self.assertEqual(proc.returncode, EXIT_BLOCKED)
+        rep = json.loads(proc.stdout)
+        self.assertEqual((rep["cases"], rep["empty_owner"], rep["empty_reply"]), (3, 1, 1))
+        self.assertEqual((rep["empty_owner_ids"], rep["empty_reply_ids"]), (["no-owner"], ["no-reply"]))
+        self.assertNotIn("secretword", proc.stdout + proc.stderr)
+        f.write_text(json.dumps(rows[0]) + "\n", encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(MZ / "export_session_to_case.py"), "--verify-cases", str(f)],
+                              capture_output=True, text=True, cwd=str(MZ))
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stdout)
 
 
 if __name__ == "__main__":
@@ -922,3 +1035,4 @@ class VaultDf95Followups(_ExportHelpers, unittest.TestCase):
         self.assertTrue(_r._rule_name_hit("Let mentioned on Friday", "Let morning calls"))
         self.assertEqual(self._reply("Let's go. Here's the draft.")["fixture"]["assistant_text"],
                          "Let's go. Here's the draft.")
+
