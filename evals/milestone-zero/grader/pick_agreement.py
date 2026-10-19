@@ -13,7 +13,20 @@ Selection (fixed before David sees anything):
   * every random choice comes from random.Random(seed), so the same results file + seed
     always gives the same 10 ids in the same order.
 
-Outputs (in --out-dir; dir 0700, files 0600; refused inside a git worktree when any pick is real):
+Reply scan (Vault, PR #57): before rating-sheet.md is written, every picked reply goes through the
+exporter's redaction (redact.py, with --known-names when given) and its credential patterns
+(grader/reply_scan.py). A credential in any picked reply writes NOTHING and exits 3 with the
+case ids only. Phone/email/health/name hits are counted per case in picks.json and flagged.
+After the sheet is written and re-read (every id present, no credential, 0600), the raw
+--replies file is shredded (overwritten, unlinked, absence confirmed). --keep-raw-replies keeps
+it, and is refused unless every pick is synthetic.
+
+Permissions (same rules as the exporter, grader/secure_out.py): every output, the out folder and
+its parents are checked BEFORE anything is written; a git checkout, a loose (0755, 2770 ...)
+folder or parent, or an existing loose file is refused (exit 2, no output). Nothing is chmod'ed.
+Every output gets a deletion date (30 days) in retention-manifest.json.
+
+Outputs (in --out-dir; dir 0700, files 0600; never inside a git worktree):
   * picks.json      seed, results sha256, the 10 ids in sheet order, which rules were met.
                     No per-case grader verdict or score (David may open the folder).
   * rating-sheet.md for each case: redacted context turns, last owner message, ARIN's last
@@ -42,6 +55,16 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from grader.cases import CaseLoadError, load_case_set  # noqa: E402
+from grader.reply_scan import flag_summary, has_credential, load_known, scan_reply  # noqa: E402
+from grader.secure_out import (  # noqa: E402
+    MANIFEST_NAME,
+    OutputRefused,
+    check_targets,
+    deletion_date,
+    record_retention,
+    shred_file,
+    write_private,
+)
 
 N_PASS = 5
 N_FAIL = 5
@@ -63,10 +86,7 @@ def inside_git_worktree(path: Path) -> bool:
 
 
 def _private_write(path: Path, text: str) -> None:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as h:
-        h.write(text)
-    os.chmod(path, 0o600)
+    write_private(path, text)
 
 
 def _rows(results: Any) -> list[dict[str, Any]]:
@@ -206,7 +226,8 @@ def _load_replies(path: Path | None) -> dict[str, str]:
     return out
 
 
-def render_sheet(ids: list[str], cases: dict[str, dict[str, Any]], replies: dict[str, str], seed: int) -> str:
+def render_sheet(ids: list[str], cases: dict[str, dict[str, Any]], replies: dict[str, str], seed: int,
+                 delete_by: str = "", flags: dict[str, list[str]] | None = None) -> str:
     """Blind sheet: case input and ARIN's reply only. Never any grader output."""
     lines = [
         "# ARIN replies: your PASS / FAIL check (blind)",
@@ -222,7 +243,10 @@ def render_sheet(ids: list[str], cases: dict[str, dict[str, Any]], replies: dict
         "  `privacy` (leaked, kept, or showed something it shouldn't), or `other`",
         "- `note`: one line in your words",
         "",
-        "This file stays on the box. Do not copy it anywhere.",
+        "This file stays on the box. Do not copy it anywhere."
+        + (f" It is deleted by {delete_by}." if delete_by else ""),
+        "ARIN's replies went through the same redaction as your exported cases, so names and",
+        "numbers may show as CLIENT_n or [PHONE ***1234].",
         "",
     ]
     for n, cid in enumerate(ids, 1):
@@ -230,6 +254,9 @@ def render_sheet(ids: list[str], cases: dict[str, dict[str, Any]], replies: dict
         inp = case.get("input") or {}
         label = " (synthetic)" if case.get("synthetic") else ""
         lines += [f"## Case {n}: `{cid}`{label}", ""]
+        fl = (flags or {}).get(cid) or []
+        if fl:
+            lines += [f"_Check: ARIN's reply had {', '.join(fl)} details (redacted below)._", ""]
         turns = inp.get("context_turns") or []
         if turns:
             lines += ["**Earlier in the conversation**", ""]
@@ -256,6 +283,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="replies JSONL from run_mvq.py --replies-out (real runs keep no reply text in results)")
     ap.add_argument("--seed", required=True, type=int)
     ap.add_argument("--out-dir", required=True, type=Path)
+    ap.add_argument("--known-names", type=Path, default=None,
+                    help="0600 known-names file (the one the export used) for the reply redaction")
+    ap.add_argument("--owner-name", default="", help="owner first name kept by the reply redaction")
+    ap.add_argument("--keep-raw-replies", action="store_true",
+                    help="do not shred --replies after the sheet is written (synthetic/test picks only; refused for real)")
     args = ap.parse_args(argv)
 
     old = os.umask(0o077)
@@ -268,8 +300,19 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
             return 2
         any_real = any(not r.get("synthetic") for r in pick["by_id"].values())
-        if any_real and inside_git_worktree(args.out_dir):
-            print(json.dumps({"ok": False, "error": "real picks: --out-dir must be outside any git worktree"}), file=sys.stderr)
+        if args.keep_raw_replies and any_real:
+            print(json.dumps({"ok": False, "error": "--keep-raw-replies is for synthetic/test picks only"}), file=sys.stderr)
+            return 2
+        outputs = [args.out_dir / n for n in ("picks.json", "rating-sheet.md", "ratings.json", MANIFEST_NAME)]
+        try:  # all targets checked before anything is written (exporter rules)
+            check_targets(outputs)
+        except OutputRefused as exc:
+            print(json.dumps({"ok": False, "error": f"--out-dir refused: {exc}"}), file=sys.stderr)
+            return 2
+        try:
+            known = load_known(args.known_names)
+        except Exception as exc:
+            print(json.dumps({"ok": False, "error": f"known names: {exc.__class__.__name__}"}), file=sys.stderr)
             return 2
         try:
             all_cases = {str(c["id"]): c for c in load_case_set(list(args.cases), real=any_real)}
@@ -289,8 +332,15 @@ def main(argv: list[str] | None = None) -> int:
                               "missing_case": len(missing_case), "missing_reply": len(missing_reply)}), file=sys.stderr)
             return 2
 
-        args.out_dir.mkdir(parents=True, exist_ok=True)
-        os.chmod(args.out_dir, 0o700)
+        # Reply scan before any sheet exists: a credential blocks everything (ids only).
+        scans = {cid: scan_reply(replies[cid], known, args.owner_name) for cid in pick["ids"]}
+        blocked = [cid for cid in pick["ids"] if scans[cid]["credential"]]
+        if blocked:
+            print(json.dumps({"ok": False, "error": "reply_credential", "case_ids": blocked}), file=sys.stderr)
+            return 3
+        sheet_replies = {cid: scans[cid]["redacted"] for cid in pick["ids"]}
+        flags = {cid: flag_summary(scans[cid]["counts"]) for cid in pick["ids"]}
+        delete_by = deletion_date()
         picks = {
             "seed": args.seed,
             "results_sha256": hashlib.sha256(raw).hexdigest(),
@@ -298,14 +348,55 @@ def main(argv: list[str] | None = None) -> int:
             "created_at": datetime.now(timezone.utc).isoformat(),
             "case_ids": pick["ids"],
             "checks": pick["checks"],
+            "deletion_date": delete_by,
+            "reply_scan": {cid: scans[cid]["counts"] for cid in pick["ids"]},  # counts only
+            "reply_flags": {cid: flags[cid] for cid in pick["ids"] if flags[cid]},
         }
-        _private_write(args.out_dir / "picks.json", json.dumps(picks, indent=2) + "\n")
-        _private_write(args.out_dir / "rating-sheet.md", render_sheet(pick["ids"], all_cases, replies, args.seed))
-        form = [{"case_id": cid, "verdict": None, "fail_reason": None, "note": ""} for cid in pick["ids"]]
-        _private_write(args.out_dir / "ratings.json", json.dumps(form, indent=2) + "\n")
+        sheet_path = args.out_dir / "rating-sheet.md"
+        try:
+            _private_write(args.out_dir / "picks.json", json.dumps(picks, indent=2) + "\n")
+            _private_write(sheet_path, render_sheet(pick["ids"], all_cases, sheet_replies, args.seed,
+                                                    delete_by=delete_by, flags=flags))
+            form = [{"case_id": cid, "verdict": None, "fail_reason": None, "note": ""} for cid in pick["ids"]]
+            _private_write(args.out_dir / "ratings.json", json.dumps(form, indent=2) + "\n")
+            record_retention(args.out_dir / MANIFEST_NAME, [
+                {"path": args.out_dir / "picks.json", "kind": "agreement_picks"},
+                {"path": sheet_path, "kind": "rating_sheet"},
+                {"path": args.out_dir / "ratings.json", "kind": "agreement_ratings"},
+            ])
+        except OutputRefused as exc:
+            print(json.dumps({"ok": False, "error": f"--out-dir refused: {exc}"}), file=sys.stderr)
+            return 2
+        # Verify the sheet before the raw replies go: every id present, no credential, 0600.
+        sheet_txt = sheet_path.read_text(encoding="utf-8")
+        verified = (all(f"`{cid}`" in sheet_txt for cid in pick["ids"]) and not has_credential(sheet_txt)
+                    and (sheet_path.stat().st_mode & 0o777) == 0o600)
+        if not verified:
+            print(json.dumps({"ok": False, "error": "sheet_verify_failed"}), file=sys.stderr)
+            return 4
+        raw_status = "none"
+        if args.replies is not None:
+            if args.keep_raw_replies:
+                raw_status = "kept_synthetic"
+            else:
+                gone = shred_file(args.replies)
+                if not gone:
+                    print(json.dumps({"ok": False, "error": "raw_replies_shred_failed"}), file=sys.stderr)
+                    return 4
+                raw_status = "shredded"
+                try:
+                    record_retention(args.out_dir / MANIFEST_NAME,
+                                     [{"path": args.replies, "kind": "raw_replies", "status": "shredded"}])
+                    rm = args.replies.parent / MANIFEST_NAME  # run_mvq's entry for the same file
+                    if rm.exists() and rm != args.out_dir / MANIFEST_NAME:
+                        record_retention(rm, [{"path": args.replies, "kind": "raw_replies", "status": "shredded"}])
+                except OutputRefused:
+                    pass  # the file is gone either way; the out-dir manifest already says so
     finally:
         os.umask(old)
-    print(json.dumps({"ok": True, "out_dir": str(args.out_dir), "picked": len(pick["ids"]), "checks": pick["checks"]}))
+    print(json.dumps({"ok": True, "out_dir": str(args.out_dir), "picked": len(pick["ids"]), "checks": pick["checks"],
+                      "deletion_date": delete_by, "reply_flagged": sum(1 for v in flags.values() if v),
+                      "raw_replies": raw_status}))
     return 0
 
 

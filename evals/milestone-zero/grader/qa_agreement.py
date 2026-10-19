@@ -23,6 +23,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 
 def compare_samples(
     human: list[dict[str, Any]],
@@ -241,10 +245,9 @@ def render_side_by_side(human_rows: list[dict[str, Any]], grader: list[dict[str,
 
 
 def _write_private(path: Path, text: str) -> None:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as h:
-        h.write(text)
-    os.chmod(path, 0o600)
+    from grader.secure_out import write_private  # exporter permission rules, checked before and after
+
+    write_private(path, text)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -280,8 +283,21 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"ok": False, "mode": "verdict", "error": str(exc)}), file=sys.stderr)
             return 2
         if args.side_by_side is not None:
+            from grader.secure_out import MANIFEST_NAME, OutputRefused, check_targets, record_retention
+
+            try:  # git checkout or loose file/folder/parent: refused before anything is written
+                check_targets([args.side_by_side, args.side_by_side.parent / MANIFEST_NAME])
+            except OutputRefused as exc:
+                print(json.dumps({"ok": False, "mode": "verdict", "error": f"--side-by-side refused: {exc}"}), file=sys.stderr)
+                return 2
             rows = validate_ratings(human, expected)
-            _write_private(args.side_by_side, render_side_by_side(rows, grader, vres))
+            try:
+                _write_private(args.side_by_side, render_side_by_side(rows, grader, vres))
+                record_retention(args.side_by_side.parent / MANIFEST_NAME,
+                                 [{"path": args.side_by_side, "kind": "side_by_side"}])
+            except OutputRefused as exc:
+                print(json.dumps({"ok": False, "mode": "verdict", "error": f"--side-by-side refused: {exc}"}), file=sys.stderr)
+                return 2
             vres["side_by_side"] = str(args.side_by_side)
         print(json.dumps(vres, indent=2))
         return 0 if vres["ok"] else 1

@@ -103,7 +103,8 @@ test("end to end: blind sheet shows input + reply, never grader scores; files 06
     assert.ok(form.every((r) => r.verdict === null));
     for (const cid of picks.case_ids) assert.ok(sheet.includes("`" + cid + "`"));
     assert.match(sheet, /ARIN's reply/);
-    assert.match(sheet, /Why: Dana is waiting/); // raw reply text is on the sheet
+    assert.match(sheet, /Why: \S+ is waiting/); // reply text is on the sheet (after the exporter's redaction)
+    assert.doesNotMatch(sheet, /555-010-0200/); // phone numbers in replies are masked
     // No grader output anywhere David can see before rating:
     const body = sheet.slice(sheet.indexOf("## Case 1"));
     assert.match(sheet, /\(synthetic\)/); // synthetic picks are labelled
@@ -116,7 +117,8 @@ test("end to end: blind sheet shows input + reply, never grader scores; files 06
     assert.doesNotMatch(pickOut, /Dana|Why:/); // stdout: counts only
     assert.equal(statSync(join(dir, "pick")).mode & 0o777, 0o700);
     for (const f of ["picks.json", "rating-sheet.md", "ratings.json"]) assert.equal(statSync(join(dir, "pick", f)).mode & 0o777, 0o600);
-    assert.equal(statSync(join(dir, "replies.jsonl")).mode & 0o777, 0o600);
+    assert.ok(!existsSync(join(dir, "replies.jsonl"))); // raw replies shredded once the sheet is verified
+    assert.equal(JSON.parse(pickOut).raw_replies, "shredded");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -231,9 +233,11 @@ test("lines mode is unchanged (QA sample still agrees)", () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("run_mvq --real refuses --replies-out inside a git worktree", () => {
-  const res = run(["run_mvq.py", "--real", "--evidence-dir", "/tmp/x-mvq-never", "--replies-out", join(mz, "replies.jsonl")]);
-  assert.equal(res.status, 2);
-  assert.match(res.stderr, /replies-out must be outside/);
-  assert.ok(!existsSync(join(mz, "replies.jsonl")));
+test("run_mvq refuses --replies-out inside a git worktree, with or without --real", () => {
+  for (const extra of [["--real", "--evidence-dir", "/tmp/x-mvq-never"], []]) {
+    const res = run(["run_mvq.py", ...extra, "--replies-out", join(mz, "replies.jsonl")]);
+    assert.equal(res.status, 2, res.stdout + res.stderr);
+    assert.match(res.stderr, /replies-out refused: inside_git_worktree/);
+    assert.ok(!existsSync(join(mz, "replies.jsonl")));
+  }
 });
