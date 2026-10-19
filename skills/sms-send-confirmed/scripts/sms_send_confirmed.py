@@ -255,15 +255,28 @@ def body_hash(body: str) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
-def attestation_text(from_number: str, dest: str, body: str, why_line: str) -> str:
-    return (
-        f"You're about to send this text from ARIN's number ({from_number}) to {dest}.\n"
-        f"{body}\n"
-        f"{why_line}\n"
-        "Reply SEND to confirm you authorize this one message and that the recipient may receive it.\n"
-        "Reply SEND to send, or NO to drop it.\n"
-        "The recipient can still opt out with their carrier."
+def attestation_text(
+    from_number: str,
+    dest: str,
+    body: str,
+    why_line: str,
+    missing_line: str = "",
+) -> str:
+    lines = [
+        f"You're about to send this text from ARIN's number ({from_number}) to {dest}.",
+        body,
+        why_line,
+    ]
+    if missing_line:
+        lines.append(missing_line)
+    lines.extend(
+        [
+            "Reply SEND to confirm you authorize this one message and that the recipient may receive it.",
+            "Reply SEND to send, or NO to drop it.",
+            "The recipient can still opt out with their carrier.",
+        ]
     )
+    return "\n".join(lines)
 
 
 def refuse_why(reason: str) -> NoReturn:
@@ -373,6 +386,104 @@ def _content_words(text: str) -> set[str]:
 
 
 _PLACEHOLDER_RE = re.compile(r"\[\s*(?:(?i:price|date|time)|[A-Z][A-Z0-9 _/-]*?)\s*\]")
+_GREETING_START = re.compile(
+    r"^\W*(?:hi|hello|hey|dear|good\s+(?:morning|afternoon|evening))(?:\s+there)?\b",
+    re.I,
+)
+_NAME_ROLE_TOKENS = frozenset(
+    {
+        "buyer",
+        "seller",
+        "client",
+        "agent",
+        "recipient",
+        "customer",
+        "homeowner",
+        "tenant",
+    }
+)
+# RED-585 RUN 10: consequence tails on the Why line are refused, not silently trimmed.
+_WHY_CONSEQUENCE_TAIL = re.compile(
+    r"[,;:]?\s*\bso\s+(?:the\s+)?(?:[\w'’-]+(?:\s+[\w'’-]+){0,5}\s+)?(?:should|need(?:s)? to)\s+know\b.*$",
+    re.I,
+)
+_WHY_SO_THEY_KNOW = re.compile(r"[,;:]?\s*\bso\s+(?:they|he|she|we|you)\s+know\b.*$", re.I)
+_WHY_SO_CAN = re.compile(r"[,;:]?\s*\bso\s+[\w'’-]+(?:\s+[\w'’-]+){0,4}\s+can\s+\w+.*$", re.I)
+_PLACEHOLDER_MISSING_LABELS = {
+    "price": "new price",
+    "date": "date",
+    "time": "time",
+    "address": "address",
+}
+
+
+def is_name_placeholder_token(token: str) -> bool:
+    """True for [NAME], [BUYER NAME], [BUYER], and other recipient role placeholders."""
+    inner = str(token or "").strip()
+    if inner.startswith("[") and inner.endswith("]"):
+        inner = inner[1:-1]
+    key = re.sub(r"\s+", " ", inner.strip().upper())
+    if not key:
+        return False
+    if key == "NAME" or " NAME" in key or key.endswith(" NAME"):
+        return True
+    return key.lower() in _NAME_ROLE_TOKENS
+
+
+def greeting_name_placeholders(text: str) -> list[str]:
+    """Bracketed tokens in the greeting slot mean there is no named recipient yet."""
+    flat = str(text or "").strip()
+    match = _GREETING_START.match(flat)
+    if match:
+        rest = flat[match.end() :].lstrip()
+        bracket = re.match(r"\[\s*([^\]]+)\s*\]", rest)
+        if bracket:
+            token = "[" + bracket.group(1).strip().upper() + "]"
+            if is_name_placeholder_token(token):
+                return [token]
+    punct = _GREETING_PUNCT.match(flat)
+    if punct:
+        rest = flat[punct.end() :].lstrip()
+        bracket = re.match(r"\[\s*([^\]]+)\s*\]", rest)
+        if bracket:
+            token = "[" + bracket.group(1).strip().upper() + "]"
+            if is_name_placeholder_token(token):
+                return [token]
+    return []
+
+
+def content_placeholders(text: str) -> list[str]:
+    """Fill-in placeholders that are not a missing recipient name in the greeting."""
+    return [token for token in unfilled_placeholders(text) if not is_name_placeholder_token(token)]
+
+
+def placeholder_missing_label(token: str) -> str:
+    inner = token.strip("[]").strip().lower()
+    return _PLACEHOLDER_MISSING_LABELS.get(inner, inner.replace("_", " "))
+
+
+def format_missing_line(placeholders: list[str]) -> str:
+    if not placeholders:
+        return ""
+    labels = [placeholder_missing_label(token) for token in placeholders]
+    if len(labels) == 1:
+        detail = labels[0]
+    elif len(labels) == 2:
+        detail = f"{labels[0]} and {labels[1]}"
+    else:
+        detail = ", ".join(labels[:-1]) + f", and {labels[-1]}"
+    return f"Missing: {detail}. Reply SEND to send, DROP to discard."
+
+
+def why_has_consequence_action_tail(why: str) -> bool:
+    reason = " ".join(str(why or "").split())
+    if not reason:
+        return False
+    return bool(
+        _WHY_CONSEQUENCE_TAIL.search(reason)
+        or _WHY_SO_THEY_KNOW.search(reason)
+        or _WHY_SO_CAN.search(reason)
+    )
 
 
 def unfilled_placeholders(text: str) -> list[str]:
@@ -494,8 +605,19 @@ def body_problem(body: str, why: str) -> tuple[str, str] | None:
         return ("refused_body_meta", "the draft contains an instruction to the owner (for example 'Tell them ...'). Write the text itself, in second person, to the recipient")
     if not re.search(_SECOND_PERSON, text, re.I):
         return ("refused_body_not_to_recipient", "the draft is not addressed to the recipient. Write it to them in second person (greet them, use 'you/your')")
+    if greeting_name_placeholders(text):
+        return (
+            "refused_no_recipient",
+            "no named recipient (a bracketed name or role in the greeting counts as missing). "
+            "Ask the owner exactly one recipient question and do not stage: "
+            "'Who should I text?' or, when a role is clear, 'Which buyer should I text?'",
+        )
     if _greets_without_name(text):
-        return ("refused_body_no_greeting_name", "the draft greets with no name. Start with the recipient's name, for example 'Hi Dana, ...' or 'Hi, Dana, ...'. If the owner gave no name, ask who the text is for")
+        return (
+            "refused_no_recipient",
+            "no named recipient. Ask the owner exactly one recipient question and do not stage: "
+            "'Who should I text?' or, when a role is clear, 'Which buyer should I text?'",
+        )
     if re.search(r"\b(?:price|priced|pricing|cost)\b", text, re.I) and not _has_price_figure(text):
         return ("refused_body_missing_placeholder", "the draft mentions price but gives no figure. Put [PRICE] where the number goes; a street number is not a price. Do not invent one")
     return None
@@ -519,6 +641,13 @@ def gate_why_and_body(why_raw: str, body: str) -> str:
             "refused_why_circular",
             "why is a status, not a cause. Name what the client asked or what happened, "
             "not that it is available or ready now",
+            field="why",
+        )
+    if why_has_consequence_action_tail(why):
+        raise GateFailure(
+            "refused_why_action_tail",
+            "why has a trailing consequence (for example 'so the buyer should know'). "
+            "State the reason and source only; rewrite without that tail",
             field="why",
         )
     cause = why_cause(why, body)
@@ -1468,30 +1597,30 @@ def stage(
                 "expires_at": iso(expires),
             }
             write_draft(draft_path(ctx["store"]["drafts"], draft_id), record)
-        shown = attestation_text(ctx["from"], dest, body, why_line)
-        return emit(
-            {
-                "ok": True,
-                "outcome": "staged",
-                "draft_id": draft_id,
-                "dest": dest,
-                "from": ctx["from"],
-                "body_len": len(body),
-                "body_hash": record["body_hash"],
-                "why": why,
-                "source_kind": source_kind,
-                "source_date": source_date,
-                "source_name": source_name,
-                "attestation_version": ATTESTATION_VERSION,
-                "source_kind": source_kind,
-                "source_date": source_date,
-                "why_line": why_line,
-                "expires_at": record["expires_at"],
-                "attestation": shown,
-                "provider_called": False,
-            },
-            EXIT_OK,
-        )
+        missing_line = format_missing_line(content_placeholders(body))
+        shown = attestation_text(ctx["from"], dest, body, why_line, missing_line)
+        staged_payload = {
+            "ok": True,
+            "outcome": "staged",
+            "draft_id": draft_id,
+            "dest": dest,
+            "from": ctx["from"],
+            "body_len": len(body),
+            "body_hash": record["body_hash"],
+            "why": why,
+            "source_kind": source_kind,
+            "source_date": source_date,
+            "source_name": source_name,
+            "attestation_version": ATTESTATION_VERSION,
+            "why_line": why_line,
+            "expires_at": record["expires_at"],
+            "attestation": shown,
+            "provider_called": False,
+        }
+        if missing_line:
+            staged_payload["missing_line"] = missing_line
+            staged_payload["content_placeholders"] = content_placeholders(body)
+        return emit(staged_payload, EXIT_OK)
     except GateFailure as failure:
         approver = ""
         dest = ""

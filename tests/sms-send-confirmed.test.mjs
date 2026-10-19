@@ -1402,7 +1402,7 @@ test("0004: body must be the text itself, to the recipient; [PRICE] placeholder;
     ["Dana asked if the inspection report is in. It is.", "refused_body_not_to_recipient"],
     ["The appraisal came in.", "refused_body_not_to_recipient"],
     ["Hi Dana, the price dropped on the Oak St listing.", "refused_body_missing_placeholder"],
-    ["Hi, the price on Oak St dropped to [PRICE].", "refused_body_no_greeting_name"],
+    ["Hi, the price on Oak St dropped to [PRICE].", "refused_no_recipient"],
     ["Hi Dana, just sending a quick note.", "refused_body_no_content"],
   ]) {
     const r = stageWith(body, why);
@@ -1503,7 +1503,7 @@ test("skill: keep the owner's wording and facts; only address the recipient; kee
 // --- RED-585 QA run 7 (Oct 18) draft fixes -------------------------------------------------
 test("QA run 7 items 1-2: a bare 'Hi,' greeting is refused; 'Hi Dana, ...' stages; a status Why is refused", () => {
   const bare = stageWith("Hi, you asked if the inspection report is in. It is.", "Dana asked if the inspection report is in");
-  assert.equal(bare.payload.outcome, "refused_body_no_greeting_name", bare.stdout);
+  assert.equal(bare.payload.outcome, "refused_no_recipient", bare.stdout);
   assert.equal(draftFiles(bare.dir).length, 0);
   const named = stageWith("Hi Dana, yes, the inspection report is in.", "Dana asked if the inspection report is in");
   assert.equal(named.payload.outcome, "staged", named.stdout);
@@ -1521,7 +1521,7 @@ test("QA run 7 item 4: a missing price stages with [PRICE]; a price word with no
   const bad = stageWith("Hi Dana, the new price for Oak St is set.", "Dana asked about the new Oak St price");
   assert.equal(bad.payload.outcome, "refused_body_missing_placeholder", bad.stdout);
   const skill = readFileSync(skillPath, "utf8");
-  assert.match(skill, /Any missing\s+detail[\s\S]*?is\s+NEVER a reason to ask/);
+  assert.match(skill, /missing[\s\S]*?content[\s\S]*?is NEVER a reason to ask instead of staging/);
   assert.match(skill, /\[PRICE\]/);
 });
 
@@ -1643,7 +1643,7 @@ test("greeting name: nameless forms refuse; a name after the comma or Dear count
     "Hey! The inspection report is in.",
   ]) {
     const r = stageWith(body, why);
-    assert.equal(r.payload.outcome, "refused_body_no_greeting_name", body + " " + r.stdout);
+    assert.equal(r.payload.outcome, "refused_no_recipient", body + " " + r.stdout);
     assert.equal(draftFiles(r.dir).length, 0);
   }
   for (const body of [
@@ -1738,8 +1738,95 @@ test("the placeholder guard does not block ordinary brackets, and NO on a placeh
 
 test("SKILL.md: any missing detail gets a placeholder, restage after the value, never send a placeholder", () => {
   const skill = readFileSync(skillPath, "utf8");
-  assert.match(skill, /Any missing\s+detail[\s\S]*?bracketed UPPERCASE placeholder/);
+  assert.match(skill, /bracketed UPPERCASE placeholder/);
   assert.match(skill, /stage the message AGAIN with the value filled in/);
   assert.match(skill, /NEVER send a bracketed placeholder/);
   assert.match(skill, /refused_unfilled_placeholder/);
+  assert.match(skill, /refused_no_recipient/);
+  assert.match(skill, /Who should I text/);
+  assert.match(skill, /Reply SEND to send, DROP to discard/);
+});
+
+// --- RED-585 QA RUN 10 (Oct 19) -----------------------------------------------------------
+test("RUN 10 item 9: [NAME] in the greeting is refused_no_recipient; no draft", () => {
+  const r = stageWith("Hi [NAME], just following up.", "The prior conversation needs a follow-up now");
+  assert.equal(r.payload.outcome, "refused_no_recipient", r.stdout);
+  assert.match(r.payload.reason, /Who should I text/i);
+  assert.equal(draftFiles(r.dir).length, 0);
+  assert.equal(r.payload.provider_called, false);
+});
+
+test("RUN 10 item 4: [BUYER NAME] in the greeting is who-first refused, not a content placeholder draft", () => {
+  const r = stageWith(
+    "Hi [BUYER NAME], the price dropped to [PRICE] on the Oak St listing.",
+    "The price dropped on Oak St",
+  );
+  assert.equal(r.payload.outcome, "refused_no_recipient", r.stdout);
+  assert.equal(draftFiles(r.dir).length, 0);
+});
+
+test("RUN 10 item 4 rule: real named recipient with [PRICE] stages, Missing line, and carrier opt-out last", () => {
+  const body = "Hi Dana, the price dropped to [PRICE] on the Oak St listing.";
+  const why = "The price dropped on the Oak St listing";
+  const r = stageWith(body, why);
+  assert.equal(r.payload.outcome, "staged", r.stdout);
+  assert.equal(
+    r.payload.missing_line,
+    "Missing: new price. Reply SEND to send, DROP to discard.",
+  );
+  const lines = r.payload.attestation.split("\n");
+  const whyIdx = lines.findIndex((l) => l.startsWith("Why:"));
+  const missingIdx = lines.findIndex((l) => l.startsWith("Missing:"));
+  const authIdx = lines.findIndex((l) => l.startsWith("Reply SEND to confirm"));
+  const dropIdx = lines.findIndex((l) => l === "Reply SEND to send, or NO to drop it.");
+  const optIdx = lines.findIndex((l) => l === "The recipient can still opt out with their carrier.");
+  assert.ok(whyIdx > 1 && missingIdx > whyIdx && authIdx > missingIdx && dropIdx > authIdx && optIdx === lines.length - 1);
+  assert.match(r.payload.attestation, /The recipient can still opt out with their carrier\./);
+});
+
+test("RUN 10 item 8: Why consequence tail is refused_why_action_tail", () => {
+  const r = stageWith("Hi Garcias, the appraisal came in.", "The appraisal came in, so the Garcias should know");
+  assert.equal(r.payload.outcome, "refused_why_action_tail", r.stdout);
+  assert.equal(draftFiles(r.dir).length, 0);
+  const buyer = stageWith(
+    "Hi Dana, the price dropped to [PRICE] on the Oak St listing.",
+    "The price dropped, so the buyer should know",
+  );
+  assert.equal(buyer.payload.outcome, "refused_why_action_tail", buyer.stdout);
+});
+
+test("RUN 10 negative controls: items 1-3 and 5-7 style drafts still stage unchanged", () => {
+  const cases = [
+    ["Hi Hendersons, the comparison is coming before our 4 PM call.", "The Hendersons need the comparison before the 4 PM call"],
+    ["Hi Dana, yes, the inspection report is in.", "Dana asked if the inspection report is in"],
+    ["Hi Mike, just checking in since things have gone quiet on your end.", "Mike from Zillow went quiet on the listing"],
+    ["Hi Pat, congratulations on closing today.", "Pat is closing today"],
+    ["Hi Lee, a reminder that the showing is tomorrow at 10.", "Lee's showing is tomorrow at 10"],
+    ["Hi Sam, happy birthday!", "Sam's birthday is today"],
+  ];
+  for (const [body, why] of cases) {
+    const r = stageWith(body, why);
+    assert.equal(r.payload.outcome, "staged", body + " " + r.stdout);
+    assert.equal(r.payload.missing_line, undefined);
+    assert.match(r.payload.attestation, /The recipient can still opt out with their carrier\./);
+  }
+});
+
+test("who-first: role placeholder [BUYER] in greeting refuses; known real name with [PRICE] stages", () => {
+  const role = stageWith("Hi [BUYER], the appraisal came in.", "The appraisal came in");
+  assert.equal(role.payload.outcome, "refused_no_recipient", role.stdout);
+  const named = stageWith("Hi Dana, the new price for 12 Oak St is [PRICE].", "Dana asked about the new Oak St price");
+  assert.equal(named.payload.outcome, "staged", named.stdout);
+  assert.ok(named.payload.missing_line);
+});
+
+test("attestation with multiple content placeholders lists Missing once before standard footer", () => {
+  const r = stageWith(
+    "Hi Dana, the showing is on [DATE] at [TIME].",
+    "Dana asked to confirm the showing time",
+  );
+  assert.equal(r.payload.outcome, "staged", r.stdout);
+  assert.match(r.payload.missing_line, /^Missing: date and time\. Reply SEND to send, DROP to discard\.$/);
+  assert.ok(r.payload.attestation.indexOf(r.payload.missing_line) < r.payload.attestation.indexOf("Reply SEND to confirm"));
+  assert.ok(r.payload.attestation.endsWith("The recipient can still opt out with their carrier."));
 });
