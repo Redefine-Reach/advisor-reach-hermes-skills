@@ -108,9 +108,19 @@ def main() -> int:
     ap.add_argument("--build-image", default=os.environ.get("ARIN_MVQ_BUILD_IMAGE", "synthetic-fixture"))
     ap.add_argument("--qa-human", type=Path, default=None)
     ap.add_argument("--skip-behavior-checks", action="store_true")
+    ap.add_argument(
+        "--replies-out",
+        type=Path,
+        default=None,
+        help="also write each scored case's raw last reply to this JSONL (0600, outside git) for "
+        "David's blind sheet (grader/pick_agreement.py). Results stay text-free.",
+    )
     args = ap.parse_args()
 
     judge = (os.environ.get(ENV_ROUTE) or "").strip()
+    if args.real and args.replies_out is not None and inside_git_worktree(args.replies_out):
+        print(json.dumps({"ok": False, "error": "--replies-out must be outside any git worktree"}), file=sys.stderr)
+        return 2
     if args.real:
         if args.evidence_dir is None:
             print(json.dumps({"ok": False, "error": "--real needs --evidence-dir outside git"}), file=sys.stderr)
@@ -226,10 +236,23 @@ def main() -> int:
     if args.qa_human and args.qa_human.is_file():
         payload["qa"] = compare_samples(json.loads(args.qa_human.read_text(encoding="utf-8")), scored)
 
+    if args.replies_out is not None:  # reply text only; no scores, so the blind sheet can't leak them
+        reply_rows = [
+            json.dumps({"case_id": case["id"], "assistant_text": run.get("assistant_text") or ""})
+            for case, run, g in zip(cases, runs, graded)
+            if g.get("status") == "scored"
+        ]
+        args.replies_out.parent.mkdir(parents=True, exist_ok=True)
+        secure_write(args.replies_out, "\n".join(reply_rows) + ("\n" if reply_rows else ""), True)
+        out_replies = len(reply_rows)
+    else:
+        out_replies = None
+
     results_path = evidence_dir / "mvq-results.json"
     secure_write(results_path, json.dumps(payload, indent=2) + "\n", args.real)
     out = {"ok": guard_ok, "evidence": str(results_path), "summary": payload["summary"], "counts": counts,
            "counts_real": score_counts([g for g in graded if not g.get("synthetic")]),
+           "replies_written": out_replies,
            "selection_sha256": selection_sha, "set_report": set_report, "context_replay": meta.get("context_replay")}
     if not args.real:  # scorecard carries reply text; synthetic only
         sc = evidence_dir / "mvq-scorecard.md"

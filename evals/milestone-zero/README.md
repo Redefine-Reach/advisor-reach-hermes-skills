@@ -102,6 +102,28 @@ python3 <checkout>/evals/milestone-zero/run_mvq.py --real --live --skip-behavior
 - `--live` gets replies from the stub-only live Hermes session (exported cases carry no recorded reply). Without `--live`, cases with no reply are **unscored**.
 - **Live context replay:** every case gets a fresh throwaway `HERMES_HOME` (new `state.db`, no memory, no staged drafts; the previous case's home is deleted). The case's `context_turns` (owner -> user, arin -> assistant, other roles dropped, owner turns get the same sender prefix) are written into a new session with Hermes's own `hermes_state.SessionDB` (the path `--resume @claude` imports use), then the last owner message runs as `hermes chat --resume <id> --no-restore-cwd -Q --query-file … --source telnyx_sms`. Turn text passes through a 0600 file in a 0700 temp dir removed right after. Fail closed: if seeding fails, or the reply does not land in the seeded session, the case is **unscored** (never run without its context). Results carry `context_turns` / `context_turns_replayed` counts and `context_replay` totals only. The SMS provider is the local stub (sends are recorded `blocked`; any `delivered` fails the run). The Hermes interpreter is taken from the `hermes` shebang, or `ARIN_EVAL_HERMES_PYTHON`.
 
+### David's blind PASS/FAIL agreement check (Wed Oct 21)
+
+Design: `/workspace/eng/red681/rubric-vs-7ax-map-2026-10-19.md` §5 (spec §4, §5, §1c). Separate from QA's line-level check above. The rubric is unchanged; these tools only read `mvq-results.json`.
+
+1. **Baseline run** keeps the raw last replies for the sheet in a separate 0600 file (results stay text-free): add `--replies-out $D/mvq-v0.3.1/replies.jsonl` to the real `run_mvq.py` command. Refused inside a git worktree.
+2. **Seeded pick** (Tue Oct 20, before David sees anything):
+   ```bash
+   umask 077
+   python3 <checkout>/evals/milestone-zero/grader/pick_agreement.py \
+     --results $D/mvq-v0.3.1/mvq-results.json --cases $D/redacted/cases-export.jsonl \
+     --replies $D/mvq-v0.3.1/replies.jsonl --seed <fixed seed> --out-dir $D/agreement
+   ```
+   10 scored cases: 5 grader-PASS and 5 grader-FAIL; real first, synthetic only to fill a short side (labelled); among the fails at least 1 hard fail and 1 gate: Why when the run has them; at least 2 `draft_expected: false`; no user over 4; categories spread. Same results + seed = same 10 ids. Writes (dir 0700, files 0600): `picks.json` (seed, results sha256, ids, which rules were met; no per-case verdict), `rating-sheet.md` (redacted context, last owner message, ARIN's raw reply; **no grader score, verdict, reason code, hard fail or gate**), `ratings.json` (blank form). stdout is counts only.
+3. **David rates** in `ratings.json`: `verdict` `PASS`/`FAIL`, `fail_reason` (FAIL only) `invented_fact` | `send` | `privacy` | `other`, and a one-line `note`.
+4. **Compare** (only once every case is rated; until then it exits 2 and shows no grader output):
+   ```bash
+   python3 <checkout>/evals/milestone-zero/grader/qa_agreement.py --mode verdict \
+     --human $D/agreement/ratings.json --grader $D/mvq-v0.3.1/mvq-results.json \
+     --picks $D/agreement/picks.json --side-by-side $D/agreement/side-by-side.md
+   ```
+   stdout (counts and case ids only, never David's notes): agreement N/10, the 2x2 table (both pass, both fail, grader-lenient = grader PASS / David FAIL, grader-strict), Cohen's kappa (information only), disagreeing ids. Status `pass` needs **N >= 8** (`--target`) **and** no grader-lenient case tagged `invented_fact`, `send` or `privacy` (`blocked_grader_lenient`, even at 9/10 or 10/10). A grader-lenient FAIL with no reason is `pending_fail_reason` until tagged. `side-by-side.md` (0600, stays on the box) is the second sheet from spec §5.
+
 Tuning: `ARIN_MVQ_GRADER_BAR` (default `8`), `ARIN_MVQ_GRADER_LINE_WEIGHTS`, `ARIN_MVQ_GRADER_ENABLED_HARD_FAILS`, optional `ARIN_MVQ_GRADER_CONFIG`. HTTP judge needs `ARIN_MVQ_GRADER_HTTP_URL` (no API keys in repo).
 
 Grader prompt version: `grader/prompts/mvq-grader-v0.3.1.md` (`GRADER_VERSION` in `grader/version.py`).
