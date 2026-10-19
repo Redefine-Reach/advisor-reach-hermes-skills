@@ -66,22 +66,40 @@ Credential vars cleared in the child process include Composio, GHL, FUB, and Gma
 
 For harness CI without a binary: `ARIN_EVAL_STUB_HERMES=1` exercises live path + outbound stub using fixture text.
 
-## MVQ grader (RED-681)
+## MVQ grader (RED-681), v0.2.0
 
-Synthetic cases only (`cases_mvq_synthetic.jsonl`, `synthetic: true`). Stub-only; **any delivered SMS in the outbound log fails the whole MVQ run**.
+Two layers, scored **after selection** (case list hashed and frozen, behavior checks run, then every selected case is scored; behavior failures are recorded, not dropped):
+
+1. **Deterministic (always):** `grader/routes/deterministic.py` regex rubric (R1-R5, fixed reason codes) + `grader/hard_fail.py` H1-H4. No model, nothing leaves the process.
+2. **Judge (optional):** `ARIN_MVQ_GRADER_MODEL_ROUTE` (`fixture` in CI, `http`, or `grader/routes/<name>.py`). Unset / `deterministic` / `none` = deterministic only. A judge that errors or returns malformed output makes the case **unscored**, never a fail; `det_*` fields keep the deterministic result. Hard fails are OR'd; H1/H2 force R4 = 0.
+
+Stub-only; **any delivered SMS in the outbound log fails the whole run** (exit 3).
+
+Synthetic (CI):
 
 ```bash
-export ARIN_MVQ_GRADER_MODEL_ROUTE=fixture   # required; fail closed if unset
-python3 evals/milestone-zero/run_mvq.py --limit 12
-# evidence/mvq-results.json, evidence/mvq-scorecard.md
+ARIN_MVQ_GRADER_MODEL_ROUTE=fixture python3 evals/milestone-zero/run_mvq.py --evidence-dir /tmp/mvq-ev
 python3 evals/milestone-zero/grader/qa_agreement.py \
-  --human evals/milestone-zero/grader/fixtures/qa_human_sample.json \
-  --grader evals/milestone-zero/evidence/mvq-results.json
+  --human evals/milestone-zero/grader/fixtures/qa_human_sample.json --grader /tmp/mvq-ev/mvq-results.json
 ```
 
-Tuning: `ARIN_MVQ_GRADER_BAR` (default `8`), `ARIN_MVQ_GRADER_LINE_WEIGHTS`, `ARIN_MVQ_GRADER_ENABLED_HARD_FAILS`, optional `ARIN_MVQ_GRADER_CONFIG` JSON path. HTTP model route: `ARIN_MVQ_GRADER_MODEL_ROUTE=http` + `ARIN_MVQ_GRADER_HTTP_URL` (no API keys in repo).
+Real redacted cases (**ARIN TEST e23fjkv6 only**, run by Keel as `hermes`):
 
-Grader prompt version: `grader/prompts/mvq-grader-v0.1.0.md` (`GRADER_VERSION` in `grader/version.py`).
+```bash
+umask 077
+D=/opt/data/eval-export/red667-20261017
+python3 <checkout>/evals/milestone-zero/run_mvq.py --real --live --skip-behavior-checks \
+  --cases $D/redacted/cases-export.jsonl --evidence-dir $D/mvq-v0.2.0 \
+  --build-image arin-v1.5-5ce17af
+```
+
+- `--real` refuses: evidence or cases inside a git worktree; any judge route not named in `ARIN_MVQ_REAL_JUDGE_ALLOWED` (set only after Vault + David approve that route).
+- Evidence dir 0700, `mvq-results.json` 0600, holding scores, reason codes and flags only: no case text, no reply text, no judge reasons. No scorecard is written in real mode. stdout is counts only.
+- `--live` gets replies from the stub-only live Hermes session (exported cases carry no recorded reply). Without `--live`, cases with no reply are **unscored**.
+
+Tuning: `ARIN_MVQ_GRADER_BAR` (default `8`), `ARIN_MVQ_GRADER_LINE_WEIGHTS`, `ARIN_MVQ_GRADER_ENABLED_HARD_FAILS`, optional `ARIN_MVQ_GRADER_CONFIG`. HTTP judge needs `ARIN_MVQ_GRADER_HTTP_URL` (no API keys in repo).
+
+Grader prompt version: `grader/prompts/mvq-grader-v0.2.0.md` (`GRADER_VERSION` in `grader/version.py`).
 
 ## Model grader policy
 

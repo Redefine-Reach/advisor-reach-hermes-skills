@@ -1,4 +1,4 @@
-# MVQ grader prompt (version: mvq-grader-v0.1.0)
+# MVQ grader prompt (version: mvq-grader-v0.2.0)
 
 You grade one ARIN assistant turn for conversation quality. Input is JSON with:
 - `case`: id, user, category, owner_text, context_available (optional)

@@ -2,7 +2,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdtempSync, writeFileSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -88,10 +89,11 @@ print("ok")`,
 });
 
 test("run_mvq writes scorecard and results on synthetic fixture route", () => {
-  const res = py(["run_mvq.py", "--limit", "12", "--skip-behavior-checks"]);
+  const ev = mkdtempSync(join(tmpdir(), "mvq-ev-"));
+  const res = py(["run_mvq.py", "--limit", "12", "--skip-behavior-checks", "--evidence-dir", ev]);
   assert.equal(res.status, 0, res.stdout + res.stderr);
-  const results = JSON.parse(readFileSync(join(mz, "evidence", "mvq-results.json"), "utf8"));
-  const md = readFileSync(join(mz, "evidence", "mvq-scorecard.md"), "utf8");
+  const results = JSON.parse(readFileSync(join(ev, "mvq-results.json"), "utf8"));
+  const md = readFileSync(join(ev, "mvq-scorecard.md"), "utf8");
   assert.equal(results.meta.synthetic_only, true);
   assert.ok(md.includes("Per-case table"));
   assert.ok(md.includes("10 raw replies for David"));
@@ -99,13 +101,14 @@ test("run_mvq writes scorecard and results on synthetic fixture route", () => {
 });
 
 test("qa agreement script meets 80% line / 100% hard-fail on sample", () => {
-  py(["run_mvq.py", "--limit", "12", "--skip-behavior-checks"]);
+  const ev = mkdtempSync(join(tmpdir(), "mvq-ev-"));
+  py(["run_mvq.py", "--limit", "12", "--skip-behavior-checks", "--evidence-dir", ev]);
   const res = py([
     "grader/qa_agreement.py",
     "--human",
     "grader/fixtures/qa_human_sample.json",
     "--grader",
-    "evidence/mvq-results.json",
+    join(ev, "mvq-results.json"),
   ]);
   assert.equal(res.status, 0, res.stdout + res.stderr);
   const body = JSON.parse(res.stdout);
@@ -125,4 +128,69 @@ assert case_pass(9.0, {"H1":False,"H2":False,"H3":False,"H4":False}, cfg) is Tru
 print("ok")`,
   ]);
   assert.equal(res.status, 0, res.stderr);
+});
+
+test("failed judge marks case unscored, never fail", () => {
+  const res = py([
+    "-c",
+    `from grader.scorer import grade_case
+g = grade_case({"id":"j1","input":{"owner_text":"hi"}}, {"assistant_text":"Done."}, route_name="does_not_exist")
+assert g["status"] == "unscored" and g["ok"] is False and "pass" not in g, g
+assert g["det_line_scores"] == [2,2,2,2,2]
+print("ok")`,
+  ]);
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+});
+
+test("deterministic layer runs with no judge route set", () => {
+  const res = py(
+    ["-c", `from grader.scorer import grade_case
+g = grade_case({"id":"d1","input":{"owner_text":"Remind me at 3 to call Ryan"}}, {"assistant_text":"Reminder set for 3:00 PM MST to call Ryan."})
+assert g["status"] == "scored" and g["route"] == "deterministic", g
+assert g["hard_fails"]["H1"] is False, g
+print("ok")`],
+    { ARIN_MVQ_GRADER_MODEL_ROUTE: "" },
+  );
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+});
+
+test("invented time still hard-fails when hour is not in context", () => {
+  const res = py(["-c", `from grader.hard_fail import detect_hard_fails
+assert detect_hard_fails({"input":{"owner_text":"Remind me at 3"}}, {"assistant_text":"Set for 4 pm."})["H1"]
+print("ok")`]);
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+});
+
+test("behavior-failed cases are still scored (score after selection)", () => {
+  const ev = mkdtempSync(join(tmpdir(), "mvq-ev-"));
+  const res = py(["run_mvq.py", "--evidence-dir", ev]);
+  const results = JSON.parse(readFileSync(join(ev, "mvq-results.json"), "utf8"));
+  assert.equal(results.summary.total, 12);
+  assert.equal(results.summary.graded + results.summary.unscored, 12);
+  assert.match(results.meta.selection_sha256, /^[0-9a-f]{64}$/);
+  assert.ok([0, 1].includes(res.status), res.stderr);
+});
+
+test("real mode: refuses evidence inside git, writes 0600 counts-only output", () => {
+  const caseDir = mkdtempSync(join(tmpdir(), "mvq-real-"));
+  const cases = join(caseDir, "cases-export.jsonl");
+  const row = (id, reply) => JSON.stringify({ id, suite: "regression", category: "no_answer", box: "e23fjkv6",
+    input: { channel: "sms", owner_text: "SECRETOWNERTEXT" }, fixture: { assistant_text: reply, tool_calls: [] }, expect: {} });
+  writeFileSync(cases, [row("rt-01", "SECRETREPLY drafted. Why: Client A asked."), row("rt-02", "")].join("\n") + "\n");
+  const bad = py(["run_mvq.py", "--real", "--cases", cases, "--evidence-dir", join(mz, "evidence", "tmp-real")], { ARIN_MVQ_GRADER_MODEL_ROUTE: "" });
+  assert.equal(bad.status, 2);
+  const judge = py(["run_mvq.py", "--real", "--cases", cases, "--evidence-dir", join(caseDir, "ev")], { ARIN_MVQ_GRADER_MODEL_ROUTE: "http" });
+  assert.equal(judge.status, 2);
+  const ev = join(caseDir, "ev");
+  const ok = py(["run_mvq.py", "--real", "--skip-behavior-checks", "--cases", cases, "--evidence-dir", ev], { ARIN_MVQ_GRADER_MODEL_ROUTE: "" });
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.ok(!ok.stdout.includes("SECRET"));
+  const body = readFileSync(join(ev, "mvq-results.json"), "utf8");
+  assert.ok(!body.includes("SECRET"));
+  assert.equal(statSync(join(ev, "mvq-results.json")).mode & 0o777, 0o600);
+  assert.equal(statSync(ev).mode & 0o777, 0o700);
+  assert.ok(!existsSync(join(ev, "mvq-scorecard.md")));
+  const out = JSON.parse(ok.stdout);
+  assert.equal(out.summary.unscored, 1);
+  assert.equal(out.summary.graded, 1);
 });

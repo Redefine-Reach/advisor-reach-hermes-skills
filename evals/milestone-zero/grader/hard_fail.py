@@ -66,14 +66,27 @@ def _detect_invented_fact(assistant: str, context: str, case: dict[str, Any]) ->
     for marker in inv:
         if marker and marker.lower() in assistant.lower():
             return True
+    ctx_hours = _hours_in(context)
     for match in _INVENTED_TIME.finditer(assistant):
-        fragment = match.group(0)
-        if fragment.lower() not in context.lower():
+        hour = int(re.match(r"(?:at\s+)?(\d{1,2})", match.group(0), re.I).group(1))
+        # "3:00 PM" is supported by "at 3" / "3pm" / "3:00" in context.
+        if hour not in ctx_hours:
             return True
     inv_phone = re.search(r"\b555-010-\d{4}\b", assistant)
     if inv_phone and inv_phone.group(0) not in context:
         return True
     return False
+
+
+def _hours_in(text: str) -> set[int]:
+    hours: set[int] = set()
+    for m in re.finditer(r"\b(?:at|by|around|before|after)\s+(\d{1,2})(?::\d{2})?\b", text, re.I):
+        hours.add(int(m.group(1)))
+    for m in re.finditer(r"\b(\d{1,2})(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)", text, re.I):
+        hours.add(int(m.group(1)))
+    for m in re.finditer(r"\b(\d{1,2}):\d{2}\b", text):
+        hours.add(int(m.group(1)))
+    return hours
 
 
 def detect_bad_why(assistant: str, owner_text: str) -> bool:

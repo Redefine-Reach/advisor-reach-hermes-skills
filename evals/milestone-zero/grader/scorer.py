@@ -3,13 +3,15 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from outbound_stub import DELIVERED
 
 from grader.config import GraderConfig, load_grader_config
 from grader.hard_fail import detect_hard_fails
-from grader.model_route import GraderRouteError, load_route
+from grader.model_route import ENV_ROUTE, GraderRouteError, load_route
+from grader.routes.deterministic import DeterministicRoute
 from grader.version import GRADER_VERSION
 
 
@@ -50,46 +52,84 @@ def case_pass(total: float, hard_fails: dict[str, bool], config: GraderConfig) -
     return total >= config.bar
 
 
+REAL_SAFE_JUDGES = frozenset({"", "none", "deterministic"})
+
+
+def _judge_name(route_name: str | None) -> str:
+    if route_name is not None:
+        return route_name.strip()
+    return (os.environ.get(ENV_ROUTE) or "").strip()
+
+
 def grade_case(
     case: dict[str, Any],
     run: dict[str, Any],
     config: GraderConfig | None = None,
     route_name: str | None = None,
+    *,
+    include_text: bool = True,
 ) -> dict[str, Any]:
+    """Grade one already-selected reply.
+
+    Layer 1 (always): deterministic regex grader + deterministic hard fails.
+    Layer 2 (optional): a judge route (ARIN_MVQ_GRADER_MODEL_ROUTE or route_name).
+    A judge that errors or returns malformed output makes the case UNSCORED
+    (status "unscored"), never a fail; deterministic results are kept as det_*.
+    """
     cfg = config or load_grader_config()
-    det_hard = detect_hard_fails(case, run)
-    try:
-        route = load_route(route_name)
-        model_out = route.grade(case, run)
-    except GraderRouteError as exc:
-        return {
-            "ok": False,
-            "error": str(exc),
-            "grader_version": GRADER_VERSION,
-            "config": cfg.to_dict(),
-        }
-
-    line_scores = [int(x) for x in model_out["line_scores"]]
-    line_reasons = list(model_out["line_reasons"])
-    hard = merge_hard_fails(det_hard, model_out.get("hard_fails") or {}, cfg)
-    total = weighted_total(line_scores, cfg)
-    passed = case_pass(total, hard, cfg)
-
-    return {
-        "ok": True,
+    det = DeterministicRoute().grade(case, run)
+    det_hard = merge_hard_fails(det["hard_fails"], {}, cfg)
+    judge = _judge_name(route_name)
+    base: dict[str, Any] = {
         "case_id": case.get("id"),
         "user": case.get("user"),
         "category": case.get("category"),
         "grader_version": GRADER_VERSION,
-        "route": model_out.get("route"),
+        "det_line_scores": det["line_scores"],
+        "det_reasons": det["line_reasons"],
+        "det_hard_fails": det_hard,
+        "flags": det.get("flags") or [],
+        "config": cfg.to_dict(),
+    }
+    if include_text:
+        base["assistant_text"] = run.get("assistant_text") or ""
+        base["owner_text"] = (case.get("input") or {}).get("owner_text") or ""
+        base["outbound_log"] = run.get("outbound_log") or []
+
+    if "no_reply" in base["flags"]:
+        return {**base, "ok": False, "status": "unscored", "error": "no assistant reply", "route": "deterministic"}
+
+    if judge.lower() in REAL_SAFE_JUDGES:
+        line_scores, line_reasons = list(det["line_scores"]), list(det["line_reasons"])
+        hard, route, note = det_hard, "deterministic", det.get("grader_note", "")
+    else:
+        try:
+            out = load_route(judge).grade(case, run)
+            line_scores = [int(x) for x in out["line_scores"]]
+            line_reasons = [str(r) for r in out["line_reasons"]]
+            if len(line_scores) != 5 or len(line_reasons) != 5 or any(x not in (0, 1, 2) for x in line_scores):
+                raise GraderRouteError("judge output malformed")
+        except Exception as exc:  # noqa: BLE001 - any judge failure is "unscored"
+            return {**base, "ok": False, "status": "unscored", "error": f"judge_failed: {type(exc).__name__}", "route": judge}
+        hard = merge_hard_fails(det_hard, out.get("hard_fails") or {}, cfg)
+        if hard["H1"] or hard["H2"]:
+            line_scores[3] = 0
+        route, note = out.get("route", judge), str(out.get("grader_note") or "")
+        if not include_text:
+            line_reasons = ["judge"] * 5  # judge reasons may quote text
+            note = ""
+
+    total = weighted_total(line_scores, cfg)
+    return {
+        **base,
+        "ok": True,
+        "status": "scored",
+        "route": route,
         "line_scores": line_scores,
         "line_reasons": line_reasons,
         "hard_fails": hard,
         "total": total,
-        "pass": passed,
-        "grader_note": model_out.get("grader_note", ""),
-        "assistant_text": run.get("assistant_text") or "",
-        "owner_text": (case.get("input") or {}).get("owner_text") or "",
-        "outbound_log": run.get("outbound_log") or [],
-        "config": cfg.to_dict(),
+        "pass": case_pass(total, hard, cfg),
+        "grader_note": note,
+        "det_judge_line_agreement": sum(1 for a, b in zip(det["line_scores"], line_scores) if abs(a - b) <= 1),
     }
