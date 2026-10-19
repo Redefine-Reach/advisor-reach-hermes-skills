@@ -845,3 +845,80 @@ class AllCapsNonDictionary(_ExportHelpers, unittest.TestCase):
         self.assertEqual(self._reply(text)["fixture"]["assistant_text"], text)
         case = self._reply("Call 602-555-0142 OK")
         self.assertIn("[PHONE ***0142] OK", case["fixture"]["assistant_text"])
+
+
+class VaultDf95Followups(_ExportHelpers, unittest.TestCase):
+    """Vault df95508 non-blocking follow-ups (1)-(4). Synthetic data only."""
+
+    LINT = MZ.parents[1] / ".github" / "workflows" / "lint.yml"
+
+    def _reply(self, text: str) -> dict:
+        proc, case, _ = self._export({"messages": [_msg("user", "status?"), _msg("assistant", text)]},
+                                     ["--owner-name", "David"])
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        return case
+
+    # (1) lint.yml's leak step passes --source cli and pins the same ids as the unittest gate.
+    def test_lint_leak_step_has_source_and_matching_pins(self) -> None:
+        import re as _re
+        text = self.LINT.read_text()
+        steps = _re.findall(r"check_leaks\.py --label (\w+).*?--expect-over-ids '([^']*)' \\\n\s+--cmd '([^']+)'", text)
+        self.assertEqual(sorted(s[0] for s in steps), ["heldout", "heldout2", "main"])
+        for label, ids, cmd in steps:
+            self.assertIn("--source cli", cmd, label)
+            want = CheckLeaksCI.PINNED_CONTROLS[label][2]
+            self.assertEqual(set(x for x in ids.split(",") if x), want, label)
+
+    # (2) any redactor crash or timeout fails check_leaks (exit 4), it is not just an exclusion.
+    def _check(self, cmd: str, *extra: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, str(MZ / "check_leaks.py"), "--label", "t", "--cwd", str(MZ),
+                               "--sessions", str(MZ / "fixtures" / "fake_sessions_heldout"), "--cmd", cmd, *extra],
+                              capture_output=True, text=True, cwd=str(MZ))
+
+    def test_check_leaks_crash_fails(self) -> None:
+        proc = self._check(f"{sys.executable} -c \"raise SystemExit(__import__('sys').exit(70))\"")
+        self.assertEqual(proc.returncode, 4, proc.stdout)
+        self.assertIn("CRASHES:", proc.stdout)
+        proc = self._check(f"{sys.executable} -c \"raise RuntimeError('boom')\"")
+        self.assertEqual(proc.returncode, 4, proc.stdout)
+
+    def test_check_leaks_timeout_fails(self) -> None:
+        proc = self._check(f"{sys.executable} -c \"import time; time.sleep(5)\"", "--timeout", "0.2")
+        self.assertEqual(proc.returncode, 4, proc.stdout)
+
+    def test_check_leaks_clean_drop_exit_is_not_a_crash(self) -> None:
+        # exit 2 (dropped) from the redactor is an exclusion, not a crash.
+        proc = self._check(f"{sys.executable} -c \"raise SystemExit(2)\"")
+        self.assertNotIn("CRASHES:", proc.stdout)
+        self.assertNotEqual(proc.returncode, 4)
+
+    def test_expect_over_ids_mismatch_fails(self) -> None:
+        cmd = ("python3 export_session_to_case.py --session {in} --redacted-text-out {out} --known-names {known} "
+               "--rules {rules} --forgotten {forgotten} --owner-name Alex --source cli")
+        ok = self._check(cmd, "--strict-drop", "--fail-on-overredaction", "--expect-over-ids", "")
+        self.assertEqual(ok.returncode, 0, ok.stdout)
+        bad = self._check(cmd, "--strict-drop", "--fail-on-overredaction", "--expect-over-ids", "zz999")
+        self.assertEqual(bad.returncode, 2, bad.stdout)
+        self.assertIn("gone=zz999", bad.stdout)
+
+    # (3) non-ASCII and Mc/Mac names mid-sentence (and at a sentence start).
+    def test_non_ascii_and_mc_mac_names(self) -> None:
+        for text, name in (("I spoke with Zo\u00eb about the patio.", "Zo\u00eb"),
+                           ("Send it to Siobh\u00e1n and the lender.", "Siobh\u00e1n"),
+                           ("We met \u0141ukasz at the condo.", "\u0141ukasz"),
+                           ("The agent for McAllister countered.", "McAllister"),
+                           ("Ask MacKenzie's lender for the letter.", "MacKenzie"),
+                           ("Zo\u00eb wants Friday.", "Zo\u00eb")):
+            self.assertNotIn(name, json.dumps(self._reply(text), ensure_ascii=False), text)
+
+    def test_lowercase_non_ascii_words_kept(self) -> None:
+        text = "The cr\u00e8me-colored trim looks great, na\u00efve pricing aside."
+        self.assertEqual(self._reply(text)["fixture"]["assistant_text"], text)
+
+    # (4) "let" is not on the starter list the do-not-keep rule check reads; "Let's" still kept.
+    def test_let_off_starter_list_and_lets_kept(self) -> None:
+        import redact as _r
+        self.assertNotIn("let", _r._COMMON_STARTERS)
+        self.assertTrue(_r._rule_name_hit("Let mentioned on Friday", "Let morning calls"))
+        self.assertEqual(self._reply("Let's go. Here's the draft.")["fixture"]["assistant_text"],
+                         "Let's go. Here's the draft.")

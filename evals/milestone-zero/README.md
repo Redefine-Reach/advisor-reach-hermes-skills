@@ -9,7 +9,7 @@ Inspect-based regression checker for ARIN text sessions on **ARIN TEST only** (`
 | `cases.jsonl` | 20 cases with `suite`: `regression` \| `capability` |
 | `redact.py` | Redaction library (import only; no CLI) |
 | `export_session_to_case.py` | **Only** supported box export / redaction entrypoint |
-| `check_leaks.py` | Synthetic leak checker over `fixtures/fake_sessions*`. The exporter command it runs **must include `--source cli`** (and `--known-names {known}`), or every session is blocked: `--cmd 'python3 export_session_to_case.py --session {in} --redacted-text-out {out} --known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex --source cli'` |
+| `check_leaks.py` | Synthetic leak checker over `fixtures/fake_sessions*`. The exporter command it runs **must include `--source cli`** (and `--known-names {known}`), or every session is blocked: `--cmd 'python3 export_session_to_case.py --session {in} --redacted-text-out {out} --known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex --source cli'` Exits: 0 clean, 1 leak, 2 over-redaction (or, with `--expect-over-ids`, control ids differ from the pin), 3 setup error, **4 any redactor crash or timeout**. |
 | `BOX-EXPORT.md` | Operator procedure for TEST exports |
 | `outbound_stub.py` | Stub Telnyx base URL; outbound JSONL log |
 | `hermes_bridge.py` | Hermes **0.21.0** live invoke + fixture replay |
