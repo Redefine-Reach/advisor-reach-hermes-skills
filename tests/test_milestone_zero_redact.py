@@ -246,13 +246,14 @@ class CheckLeaksCI(unittest.TestCase):
                     "--cmd",
                     cmd,
                     "--strict-drop",
-                    "--fail-on-overredaction",
                 ],
                 capture_output=True,
                 text=True,
                 cwd=str(MZ),
             )
-            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            # Over-dropping/over-redacting a control is the safe failure (Vault, Oct 19): no
+            # benign holds, so clean controls need not pass. Leaks must still be zero.
+            self.assertIn(proc.returncode, (0, 2), proc.stdout + proc.stderr)
             self.assertIn("LEAKS TOTAL: 0", proc.stdout)
 
 
@@ -552,11 +553,11 @@ class ExportVaultRound2(_ExportHelpers, unittest.TestCase):
                                                    _msg("assistant", "Done, David.")]}, ["--owner-name", "David"])
         self.assertIn("David", self._blob(case))
         self.assertNotIn("Frank", self._blob(case))
-        # benign phrases are still held whole (no keep-list needed)
+        # no fixture-fitted benign holds: brand phrases that look like names are redacted (safe side)
         proc, case, _ = self._export({"messages": [_msg("user", "Hunter Douglas blinds stay; order Mason jar centerpieces"),
                                                    _msg("assistant", "Noted.")]}, ["--owner-name", "David"])
-        self.assertIn("Hunter Douglas", case["input"]["owner_text"])
-        self.assertIn("Mason jar", case["input"]["owner_text"])
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        self.assertNotIn("Hunter", case["input"]["owner_text"])
 
     def test_t1_top_level_tool_calls_dropped(self) -> None:
         sess = self._long_session()
@@ -655,3 +656,29 @@ class ExportVaultRound2(_ExportHelpers, unittest.TestCase):
         subprocess.run(["bash", "-c", block], env={**os.environ, "D": str(d), "X": str(x)}, capture_output=True, check=False)
         self.assertEqual(sorted(p.name for p in d.iterdir()), ["redacted"])
         self.assertFalse(x.exists())
+
+
+class NoFixtureFitting(_ExportHelpers, unittest.TestCase):
+    """Vault re-test of 029b63a: no fixture names or benign holds that hide health/legal words."""
+
+    def test_guard_has_no_fixture_names(self) -> None:
+        src = (MZ / "conservative_guard.py").read_text(encoding="utf-8").lower()
+        for word in ("fakerton", "fakeman", "samplesworth", "placeholder"):
+            self.assertNotIn(word, src)
+
+    def test_no_benign_holds_for_health_or_legal_words(self) -> None:
+        for path in (MZ / "conservative_guard.py", MZ / "redact.py"):
+            src = path.read_text(encoding="utf-8").lower()
+            for hold in ("custody of the", "chapter 7 of the", "therapy dog", "medical office lease",
+                         "office building", "hospital-district", "hunter douglas", "mason jar"):
+                self.assertNotIn(hold, src, (path.name, hold))
+
+    def test_custody_and_chapter_7_wording_now_drops(self) -> None:
+        for text in ("custody of the kids and the house keys are with his ex",
+                     "they are filing chapter 7 of the code next month",
+                     "bring the therapy dog to the showing",
+                     "the medical office lease renews in May"):
+            proc, case, _ = self._export({"messages": [_msg("user", text), _msg("assistant", "Ok.")]},
+                                         ["--owner-name", "David"])
+            self.assertEqual(proc.returncode, EXIT_EXCLUDED, (text, proc.stderr))
+            self.assertIsNone(case)

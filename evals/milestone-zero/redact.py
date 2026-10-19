@@ -61,9 +61,7 @@ _BENIGN_PHRASES = re.compile(
     r"(?:"
     r"\b(?:call|meeting with|text|see) (?:Mon|Tues?|Wed(?:nes)?|Thu(?:rs)?|Fri|Sat(?:ur)?|Sun)(?:day)?\b|"
     r"(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|"
-    r"Mon|Tues?|Wed(?:nesday)?|Thu(?:rsday)?|Fri|Sat(?:urday)?|Sun(?:day)?)'s\b|"
-    r"therapy dog|custody of the [a-z ]*keys|chapter 7 of the|doctor'?s office building|hospital-district|"
-    r"medical office lease|Hunter Douglas|Mason jar"
+    r"Mon|Tues?|Wed(?:nesday)?|Thu(?:rsday)?|Fri|Sat(?:urday)?|Sun(?:day)?)'s\b"
     r")",
     re.I,
 )
@@ -83,7 +81,7 @@ Client Mr Mrs Ms Dr Why Version Meeting List Fill Wifi FYI MLS PDF LLC DOB SSN E
 }
 # No real first names here (Vault N3): the only name ever kept is --owner-name.
 
-# Words after "text" that are not a person (Vault N1: "text Rosalind about" must map "Rosalind" only).
+# Words after "text" that are not a person (Vault N1: "text <Name> about" must map "<Name>" only).
 _TEXT_TARGET_SKIP = frozenset("""
 a an the about to for from with when if and or but so on at in into by of now later soon tomorrow today tonight again
 first back me him her them us you it its that this these those everyone everybody someone somebody anyone all both
@@ -355,7 +353,7 @@ def session_drop_reason(
 
 
 def _rule_name_hit(blob: str, phrase: str) -> bool:
-    """A do-not-keep rule naming a person ("Fakeman morning calls") drops any session that
+    """A do-not-keep rule naming a person ("<Surname> morning calls") drops any session that
     mentions that name, even when the rest of the wording differs (conservative)."""
     for tok in re.findall(r"\b[A-Z][a-z]{2,}\b", phrase):
         low = tok.lower()
@@ -441,7 +439,7 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
 
     # One name token after "text" (any case: texting-style lowercase names count), plus an
     # optional CAPITALIZED surname. Each token gets its own placeholder, so the cross-turn
-    # pass replaces "Rosalind" alone later ("Rosalind confirmed Friday").
+    # pass replaces the name alone later ("<Name> confirmed Friday").
     out = re.sub(
         r"\b(?i:text)\s+([A-Za-z][a-z]+)(?:\s+([A-Z][a-z]+)\b)?",
         replace_text_target,
@@ -556,8 +554,7 @@ def redact_text(text: str, ctx: RedactionContext) -> tuple[str, list[str]]:
     out = _sub(_RE_ROUTING_BARE, PLACEHOLDER_ROUTING, "routing", out, ctx)
     out = _sub(_RE_DOB_LABEL, PLACEHOLDER_DOB, "dob", out, ctx)
     out = _sub(_RE_DIGITS_LONG, PLACEHOLDER_DIGITS, "long_digits", out, ctx)
-    # Benign phrases ("Hunter Douglas", "Mason jar", ...) stay held through name redaction,
-    # so no real first name needs a keep-list entry (Vault N3).
+    # Benign holds (weekday phrases) stay held through name redaction.
     out = redact_names(out, ctx)
     out = re.sub("\u2063(\\d+)\u2063", lambda m: hold[int(m.group(1))], out)
     return out, list(ctx.class_counts.keys())

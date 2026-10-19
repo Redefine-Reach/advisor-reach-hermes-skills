@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import re
 
-# Benign holds for audit/drop (wording differs from redact._BENIGN_PHRASES).
+# Benign holds: weekday wording only. No phrase that hides a health/legal word, no fixture names.
 _BENIGN = re.compile(
     r"(?:"
     r"(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|"
-    r"Mon|Tues?|Wed(?:nesday)?|Thu(?:rsday)?|Fri|Sat(?:urday)?|Sun(?:day)?)'s\b|"
-    r"Hunter Douglas|Mason jar|therapy dog|custody of the [a-z ]*keys|chapter 7 of the|"
-    r"hospital-district|medical office lease|doctor'?s office building"
+    r"Mon|Tues?|Wed(?:nesday)?|Thu(?:rsday)?|Fri|Sat(?:urday)?|Sun(?:day)?)'s\b"
     r")",
     re.I,
 )
@@ -40,7 +38,7 @@ _POST_PHONE_DIGITS = re.compile(r"(?<!\d)(?:\d[\s\-.)]{0,2}){9,14}\d(?!\d)")
 _POST_ROUTING = re.compile(r"\b0\d{8}\b")
 _POST_SENSITIVE_WORD = re.compile(
     r"\b(?:spine|ablation|miscarriage|hospice|insulin|prenup|probation|green\s+card|"
-    r"ghp_|client_secret|fakerton|fakeman|samplesworth|placeholder)\b",
+    r"ghp_|client_secret)\b",
     re.I,
 )
 _POST_CRED_LABEL = re.compile(
@@ -69,12 +67,12 @@ def post_redact_unsafe(text: str) -> list[str]:
     if not text:
         return []
     scrubbed = scrub_benign(text)
-    for placeholder in (
+    for marker in (
         "[REDACTED_",
         "[PHONE ***",
         "CLIENT_",
     ):
-        scrubbed = scrubbed.replace(placeholder, " ")
+        scrubbed = scrubbed.replace(marker, " ")
     found: list[str] = []
     if _POST_AT_SIGN.search(scrubbed) or re.search(
         r"\b[a-z0-9._%+-]+\s+at\s+[a-z0-9._%+-]+\s+dot\s+(?:com|org|net)\b",
