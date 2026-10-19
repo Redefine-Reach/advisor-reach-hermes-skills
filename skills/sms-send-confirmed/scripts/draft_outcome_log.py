@@ -337,10 +337,11 @@ def refresh_edit_distance_from_first(draft: dict, body: str) -> None:
         draft["edit_distance"] = edit_distance(first, body)
 
 
-def strip_plaintext_fields(data: dict) -> None:
+def strip_plaintext_fields(data: dict, *, keep_chain_baseline: bool = False) -> None:
     """Drop staged message body from disk; keep why_line for RED-585 reuse guards."""
     data["body"] = ""
-    data.pop("chain_body_first", None)
+    if not keep_chain_baseline:
+        data.pop("chain_body_first", None)
 
 
 def mark_superseded(path: Path, data: dict) -> None:

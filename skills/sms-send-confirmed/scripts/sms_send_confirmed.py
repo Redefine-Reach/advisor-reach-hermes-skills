@@ -1879,8 +1879,63 @@ def finalize_script_refused_draft(
     )
     draft["status"] = "refused"
     draft["refuse_reason"] = refuse_reason
-    _draft_outcomes.strip_plaintext_fields(draft)
+    _draft_outcomes.strip_plaintext_fields(draft, keep_chain_baseline=True)
     write_draft(path, draft)
+
+
+def resolve_box_sms_turn_owner() -> str | None:
+    raw = str(os.environ.get("SMS_TURN_OWNER_E164", "")).strip()
+    if not raw:
+        return None
+    kind, number = classify_phone(raw)
+    if kind == "ok" and number:
+        return number
+    normalized = normalize_identity_token(raw)
+    return normalized or None
+
+
+def assert_actor_is_box_sms_turn(
+    actor: str,
+    ctx: dict,
+    *,
+    draft_id: str = "",
+    dest: str = "",
+) -> None:
+    """RED-700: SEND and re-stage only on the box-resolved SMS text-turn owner."""
+    normalized = normalize_identity_token(actor)
+    if TELEGRAM_ID_RE.fullmatch(normalized):
+        raise GateFailure(
+            "refused_not_owner",
+            "SEND and re-stage require the owner's SMS text thread until RED-700",
+            field="actor",
+            extra={"draft_id": draft_id, "dest": dest},
+        )
+    kind, number = classify_phone(actor)
+    if kind != "ok" or not number or number not in ctx["phones"]:
+        raise GateFailure(
+            "refused_not_owner",
+            "SEND and re-stage require the owner's SMS number on this turn",
+            field="actor",
+            extra={"draft_id": draft_id, "dest": dest},
+        )
+    turn_owner = resolve_box_sms_turn_owner()
+    if turn_owner is None:
+        if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
+            return
+        raise GateFailure(
+            "error",
+            "send and re-stage are only available on the owner's SMS text turn",
+            field="actor",
+            status=EXIT_ERROR,
+            extra={"draft_id": draft_id, "dest": dest},
+        )
+    if normalized != turn_owner:
+        raise GateFailure(
+            "refused_not_owner",
+            "SEND and re-stage require the box-resolved SMS owner for this turn",
+            field="actor",
+            extra={"draft_id": draft_id, "dest": dest},
+        )
 
 
 def stage(
@@ -1955,6 +2010,12 @@ def stage(
                         status=EXIT_ERROR,
                     )
                 actor = resolve_turn_actor(actor_raw, field="actor")
+                assert_actor_is_box_sms_turn(
+                    actor,
+                    ctx,
+                    draft_id=replaces_id,
+                    dest=str(previous.get("dest") or ""),
+                )
                 assert_actor_is_draft_approver(
                     previous,
                     actor,
@@ -2132,6 +2193,7 @@ def send(draft_id: str, confirm: str, attest: str, actor_raw: str = "") -> int:
                     extra={"draft_id": draft_id, "dest": dest},
                 )
             actor = resolve_turn_actor(actor_raw, field="actor")
+            assert_actor_is_box_sms_turn(actor, ctx, draft_id=draft_id, dest=dest)
             assert_actor_is_draft_approver(
                 draft,
                 actor,

@@ -100,9 +100,12 @@ pass the destination as the approver.
 
 `ARIN_OWNER_IDENTITIES` (optional) links one owner's channels: comma-separated
 groups of `|`-joined ids, for example `+17145550100|tg:424242`. Phones are
-normalized to E.164. On `send`, `cancel`, and `stage --replaces`, `--actor`
-must match the draft approver or share a group with them. Identity comes only
-from `--actor` and this map, never from the message body.
+normalized to E.164. On `cancel`, `--actor` must match the draft approver or
+share a group with them. **SEND and re-stage (RED-700):** only on the owner's
+SMS text thread — the box sets `SMS_TURN_OWNER_E164` and the plugin passes that
+identity; do not call `send` or `stage --replaces` from the app, Telegram, or
+`execute_code` with a model-chosen `--actor`. Identity never comes from the
+message body.
 
 ## Turn 1 — stage, then stop
 
@@ -245,22 +248,25 @@ Reply SEND to send, DROP to discard.
 Before you act, call `learning_loop` op `next` with this draft's `kind` so
 style notes apply. Do not announce that you recorded anything.
 
-- If it is exactly `SEND` or `/approve` (after trimming; either case), and
-  you showed that draft's attestation, run `send` once with that
-  `--draft-id`, `--confirm` set to their message, `--attest yes`, and
-  `--actor` set to this turn's owner id (E.164 or Telegram user id). When
-  the outcome is `sent`, call `learning_loop` op `record` with
-  `action="send"` and the same `kind`. Do not pass a note or the body.
+- If it is exactly `SEND` or `/approve` (after trimming; either case) **on an
+  SMS text turn**, and you showed that draft's attestation, call
+  `sms_stage(action="send", draft_id=<id>)` once. The box supplies the SMS
+  owner identity; do not pass `--actor` in the tool call and do not invoke
+  `send` from the app or `execute_code` until RED-700. When the outcome is
+  `sent`, call `learning_loop` op `record` with `action="send"` and the same
+  `kind`. Do not pass a note or the body.
 - If the owner replies with an **edit** (a shorter wording, tone change, or
   other revision — not DROP/NO/skip and not SEND), do **not** cancel. Call
   `learning_loop` op `record` with `action="edit"` and a `note` that states
   the change in plain words ("shorter, no exclamation"), never the draft body.
-  Then re-stage with `replaces` set to that `draft_id`, the updated body, a
-  **new** Why line (the guard refuses a reused Why whenever the body changes),
-  and `--actor` for this turn. Show the new attestation and wait again for SEND or DROP.
+  Then re-stage on the **same SMS text thread** with `replaces` set to that
+  `draft_id`, the updated body, and a **new** Why line (the guard refuses a
+  reused Why whenever the body changes). Use `sms_stage` on texts; do not
+  re-stage from the app or `execute_code` until RED-700. Show the new
+  attestation and wait again for SEND or DROP.
 - After a fixable script refusal (`unfilled_placeholder`, `opted_out`, or
-  `over_length`), re-stage with `--replaces <refused draft id>`, the fixed body,
-  a new Why, and `--actor`. A refused draft can be the source of only one re-stage.
+  `over_length`), re-stage with `--replaces` on the SMS text thread only. A
+  refused draft can be the source of only one re-stage.
 - If it is `DROP`, `NO`, or `skip` (after trimming; either case), run
   `cancel` with `--draft-id` and `--actor`, then `learning_loop` op
   `record` with `action="skip"` and the same `kind` (no note). Tell them it
@@ -297,21 +303,17 @@ missing: stop, and do not invent one. A `field` of `attest` means you may
 run `send` one more time with `--attest yes` only if the attestation was
 actually shown.
 
-### Script examples (`--actor` required)
+### Script examples (cancel only off the SMS text thread)
 
-Non-text sessions run the script directly. Replace placeholders; identity is
-only `--actor` (and `ARIN_OWNER_IDENTITIES` when set), never the message body.
+Until RED-700, do **not** run `send` or `stage --replaces` from `execute_code`,
+the app, or Telegram. SEND and re-stage happen only on the owner's SMS text
+turn via `sms_stage`, with `SMS_TURN_OWNER_E164` set by the box.
+
+App or Telegram may still **cancel** when `ARIN_OWNER_IDENTITIES` links the
+channel to the approver:
 
 ```bash
-python3 /opt/data/skills/sms-send-confirmed/scripts/sms_send_confirmed.py send --draft-id DRAFT_ID --confirm SEND --attest yes --actor +17145550100
 python3 /opt/data/skills/sms-send-confirmed/scripts/sms_send_confirmed.py cancel --draft-id DRAFT_ID --actor +17145550100
-python3 /opt/data/skills/sms-send-confirmed/scripts/sms_send_confirmed.py stage --approver +17145550100 --dest +15555550199 --body "Hi Dana, see you at noon." --why "Dana asked to confirm the time" --source-kind owner_text --replaces DRAFT_ID --actor +17145550100
-```
-
-Telegram confirm uses the numeric user id (or `tg:` form in `ARIN_OWNER_IDENTITIES`):
-
-```bash
-python3 /opt/data/skills/sms-send-confirmed/scripts/sms_send_confirmed.py send --draft-id DRAFT_ID --confirm SEND --attest yes --actor 424242
 ```
 
 ## Refuses (fail closed)

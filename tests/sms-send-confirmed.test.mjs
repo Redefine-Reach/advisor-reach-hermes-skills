@@ -90,6 +90,7 @@ function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), o
     SMS_EVENT_DIR: join(dir, "events"),
     DRAFT_OUTCOMES_PATH: join(dir, "draft-outcomes.jsonl"),
     SMS_SEND_TRANSPORT: transport,
+    SMS_TURN_OWNER_E164: OWNER,
     CALLS: calls,
     ...extra,
   };
@@ -801,7 +802,7 @@ test("REVOKE, OPTOUT, and STOP ALL refuse before any provider call", () => {
   }
 });
 
-test("a Telegram approver can confirm and cannot be the destination", () => {
+test("a Telegram approver can stage but cannot SEND until RED-700", () => {
   const dir = mkdtempSync(join(tmpdir(), "sms-tg-"));
   const staged = run(
     ["stage", "--approver", "424242", "--dest", DEST, "--body", BODY],
@@ -824,14 +825,14 @@ test("a Telegram approver can confirm and cannot be the destination", () => {
     { TELEGRAM_ALLOWED_USERS: "424242" },
     dir,
   );
-  assert.equal(sent.payload.outcome, "sent");
+  assert.equal(sent.payload.outcome, "refused_not_owner");
   const same = run(
     ["stage", "--approver", "15555550199", "--dest", DEST, "--body", BODY],
     { TELEGRAM_ALLOWED_USERS: "15555550199" },
     dir,
   );
   assert.equal(same.payload.outcome, "refused_not_third_party");
-  assert.equal(same.callLines.length, 1);
+  assert.equal(same.callLines.length, 0);
   const stranger = run(
     ["stage", "--approver", "99999", "--dest", "+15555550123", "--body", BODY],
     { TELEGRAM_ALLOWED_USERS: "424242" },
@@ -1798,59 +1799,28 @@ test("SKILL.md: any missing detail gets a placeholder, restage after the value, 
   assert.match(skill, /Reply SEND to send, DROP to discard/);
 });
 
-test("SKILL.md script examples with --actor run send, cancel, and stage --replaces", () => {
+test("SKILL.md cancel script example runs with --actor", () => {
   const skill = readFileSync(skillPath, "utf8");
   const blocks = [...skill.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1]);
   const lines = blocks
     .flatMap((b) => b.split("\n"))
     .map((l) => l.trim())
     .filter((l) => l.startsWith("python3 ") && l.includes("sms_send_confirmed.py"));
-  assert.ok(lines.length >= 3, "expected documented script examples");
+  assert.ok(lines.length >= 1, "expected documented cancel example");
+  assert.ok(!lines.some((l) => l.includes(" send ")), "SKILL must not document direct send");
+  assert.ok(!lines.some((l) => l.includes("--replaces")), "SKILL must not document direct re-stage");
   const script = join(root, "skills", "sms-send-confirmed", "scripts", "sms_send_confirmed.py");
-  function argsFromSkillLine(line) {
-    const cmd = line
-      .replace("/opt/data/skills/sms-send-confirmed/scripts/sms_send_confirmed.py", script)
-      .replace("+17145550100", OWNER)
-      .replace("+15555550199", DEST);
-    const rest = cmd.replace(/^python3\s+\S+\s+/, "");
-    const args = [];
-    let cur = "";
-    let inQuote = false;
-    for (const ch of rest) {
-      if (ch === '"') {
-        inQuote = !inQuote;
-        continue;
-      }
-      if (ch === " " && !inQuote) {
-        if (cur) args.push(cur);
-        cur = "";
-        continue;
-      }
-      cur += ch;
-    }
-    if (cur) args.push(cur);
-    return args;
-  }
-  const sendLine = lines.find((l) => l.includes(" send ") && l.includes("+17145550100"));
-  const cancelLine = lines.find((l) => l.includes(" cancel ") && l.includes("+17145550100"));
-  const stageLine = lines.find((l) => l.includes(" stage ") && l.includes("--replaces") && l.includes("+17145550100"));
-  assert.ok(sendLine && cancelLine && stageLine);
-  const sendDir = mkdtempSync(join(tmpdir(), "sms-skill-send-"));
-  const sendDraft = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {}, sendDir);
-  const sendArgs = argsFromSkillLine(sendLine).map((a) => (a === "DRAFT_ID" ? sendDraft.payload.draft_id : a));
-  const sent = run(sendArgs, { SMS_SEND_STUB_PROVIDER: "1" }, sendDir);
-  assert.equal(sent.payload.outcome, "sent");
+  const cancelLine = lines.find((l) => l.includes(" cancel "));
+  assert.ok(cancelLine);
+  const cmd = cancelLine
+    .replace("/opt/data/skills/sms-send-confirmed/scripts/sms_send_confirmed.py", script)
+    .replace("+17145550100", OWNER);
+  const args = cmd.replace(/^python3\s+\S+\s+/, "").split(/\s+/).map((a) => (a === "DRAFT_ID" ? "DRAFT_ID" : a));
   const cancelDir = mkdtempSync(join(tmpdir(), "sms-skill-cancel-"));
   const cancelDraft = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {}, cancelDir);
-  const cancelArgs = argsFromSkillLine(cancelLine).map((a) => (a === "DRAFT_ID" ? cancelDraft.payload.draft_id : a));
+  const cancelArgs = args.map((a) => (a === "DRAFT_ID" ? cancelDraft.payload.draft_id : a));
   const cancelled = run(cancelArgs, {}, cancelDir);
   assert.equal(cancelled.payload.outcome, "cancelled");
-  const replaceDir = mkdtempSync(join(tmpdir(), "sms-skill-replace-"));
-  const first = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {}, replaceDir);
-  const stageArgs = argsFromSkillLine(stageLine).map((a) => (a === "DRAFT_ID" ? first.payload.draft_id : a));
-  const replaced = run(stageArgs, {}, replaceDir);
-  assert.equal(replaced.payload.outcome, "staged");
-  assert.ok(stageArgs.includes("--actor"));
 });
 
 // --- RED-585 QA RUN 10 (Oct 19) -----------------------------------------------------------

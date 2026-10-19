@@ -55,6 +55,7 @@ function runSms(dir, args, extra = {}) {
     SMS_EVENT_DIR: join(dir, "events"),
     DRAFT_OUTCOMES_PATH: join(dir, "draft-outcomes.jsonl"),
     SMS_SEND_TRANSPORT: transport,
+    SMS_TURN_OWNER_E164: OWNER,
     CALLS: calls,
     ...extra,
   };
@@ -263,16 +264,24 @@ test("item7 AC18 cross-channel actor map and three refusal classes", () => {
     ["send", "--draft-id", id, "--confirm", "SEND", "--attest", "yes", "--actor", OWNER_TG],
     { ...envExtra, SMS_SEND_STUB_PROVIDER: "1" },
   );
-  assert.equal(tgSend.payload.outcome, "sent", tgSend.proc.stderr);
+  assert.equal(tgSend.payload.outcome, "refused_not_owner");
   const dir2 = home();
-  const s2 = stage(dir2, "Hi Dana, app path should still send.", envExtra);
+  const s2 = stage(dir2, "Hi Dana, SMS text path should still send.", envExtra);
   const id2 = s2.payload.draft_id;
-  const appSend = runSms(
+  const smsSend = runSms(
     dir2,
     ["send", "--draft-id", id2, "--confirm", "SEND", "--attest", "yes", "--actor", OWNER],
     { ...envExtra, SMS_SEND_STUB_PROVIDER: "1" },
   );
-  assert.equal(appSend.payload.outcome, "sent");
+  assert.equal(smsSend.payload.outcome, "sent");
+  const dirTgCancel = home();
+  const stagedTg = stage(dirTgCancel, "Hi Dana, cancel path via telegram.", envExtra);
+  const tgCancel = runSms(
+    dirTgCancel,
+    ["cancel", "--draft-id", stagedTg.payload.draft_id, "--actor", OWNER_TG],
+    envExtra,
+  );
+  assert.equal(tgCancel.payload.outcome, "cancelled");
   const dir3 = home();
   const s3 = stage(dir3, "Hi Dana, refusal path for you.", envExtra);
   const id3 = s3.payload.draft_id;
@@ -778,6 +787,71 @@ test("closing double-send guard recheck refuses send before provider", () => {
   assert.equal(callLog.length, 0);
   const after = JSON.parse(readFileSync(path, "utf8"));
   assert.equal(after.status, "pending");
+});
+
+test("closing AC8 edit_distance survives send refused then re-stage and send", () => {
+  const dir = home();
+  const a = "Hi Dana, first draft [PRICE] here.";
+  const b = "Hi Dana, second draft beta text here.";
+  const s = stage(dir, a);
+  const refused = runSms(dir, ["send", "--draft-id", s.payload.draft_id, "--confirm", "SEND", "--attest", "yes"]);
+  assert.equal(refused.payload.outcome, "refused_unfilled_placeholder");
+  const dist = spawnSync(
+    "python3",
+    ["-c", "import draft_outcome_log as m, sys; print(m.edit_distance(sys.argv[1], sys.argv[2]))", a, b],
+    { encoding: "utf8", env: { ...process.env, PYTHONPATH: dirname(outcomeModPath) } },
+  );
+  const expected = Number(dist.stdout.trim());
+  const s2 = stage(dir, b, {
+    replaces: s.payload.draft_id,
+    why: "They supplied the missing detail before we lock the slot",
+  });
+  assert.equal(s2.payload.outcome, "staged");
+  runSms(dir, ["send", "--draft-id", s2.payload.draft_id, "--confirm", "SEND", "--attest", "yes"], {
+    SMS_SEND_STUB_PROVIDER: "1",
+  });
+  const line = outcomeLines(dir).find((row) => row.outcome === "sent_as_is" || row.outcome === "sent_after_edit" || row.outcome === "sent");
+  assert.ok(line);
+  assert.equal(line.edit_distance, expected);
+});
+
+test("closing RED-700 send and re-stage refuse wrong box SMS turn owner", () => {
+  const envExtra = { TELNYX_SMS_ALLOWED_USERS: `${OWNER},${OWNER2}`, SMS_TURN_OWNER_E164: OWNER };
+  const dirSend = home();
+  const s = stage(dirSend, "Hi Dana, turn owner binding for send.", envExtra);
+  const wrongSend = runSms(
+    dirSend,
+    ["send", "--draft-id", s.payload.draft_id, "--confirm", "SEND", "--attest", "yes", "--actor", OWNER2],
+    envExtra,
+  );
+  assert.equal(wrongSend.payload.outcome, "refused_not_owner");
+  const dirRestage = home();
+  const ph = stage(dirRestage, "Hi Dana, meet at [TIME] today.", {
+    why: "They need the time before we lock the slot",
+  });
+  runSms(dirRestage, ["send", "--draft-id", ph.payload.draft_id, "--confirm", "SEND", "--attest", "yes"]);
+  const badRestage = runSms(
+    dirRestage,
+    [
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      DEST,
+      "--body",
+      "Hi Dana, meet at noon today.",
+      "--why",
+      "Noon works before we lock the slot",
+      "--source-kind",
+      "owner_text",
+      "--replaces",
+      ph.payload.draft_id,
+      "--actor",
+      OWNER2,
+    ],
+    envExtra,
+  );
+  assert.equal(badRestage.payload.outcome, "refused_not_owner");
 });
 
 test("closing error-only provider payloads arm the guard (503 timeout partial)", () => {
