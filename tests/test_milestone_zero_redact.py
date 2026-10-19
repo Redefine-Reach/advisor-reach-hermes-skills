@@ -763,3 +763,28 @@ class NameShapesRound3(_ExportHelpers, unittest.TestCase):
             case = self._reply(text)
             self.assertNotIn("zelda", json.dumps(case).lower(), text)
             self.assertNotIn("clientfake", json.dumps(case).lower(), text)
+
+
+class WeekdayNamedPerson(_ExportHelpers, unittest.TestCase):
+    """Vault re-test of b984cba (c): no "text <weekday>" hold. Synthetic names only."""
+
+    def test_text_weekday_surname_is_a_person_everywhere(self) -> None:
+        sess = {"messages": [_msg("user", "text Sunday Quillfeather that the offer is in"), _msg("assistant", "Drafted."),
+                             _msg("user", "?"), _msg("assistant", "Sunday confirmed. Quillfeather signed.")]}
+        proc, case, _ = self._export(sess, ["--owner-name", "David"])
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        blob = json.dumps(case)
+        self.assertNotIn("Sunday", blob)
+        self.assertNotIn("Quillfeather", blob)
+        self.assertIn("that the offer is in", blob)
+
+    def test_weekday_dates_still_kept(self) -> None:
+        proc, case, _ = self._export({"messages": [_msg("user", "see Sunday about the walkthrough, text Monday morning"),
+                                                   _msg("assistant", "Ok.")]}, ["--owner-name", "David"])
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        self.assertIn("see Sunday about the walkthrough", case["input"]["owner_text"])
+
+    def test_text_weekday_hold_cannot_hide_legal_word(self) -> None:
+        proc, _, _ = self._export({"messages": [_msg("user", "text Mon re custody papers"), _msg("assistant", "Ok.")]},
+                                  ["--owner-name", "David"])
+        self.assertNotEqual(proc.returncode, EXIT_OK)

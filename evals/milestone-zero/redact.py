@@ -59,7 +59,8 @@ _LEGAL_DROP = re.compile(
 )
 _BENIGN_PHRASES = re.compile(
     r"(?:"
-    r"\b(?:call|meeting with|text|see) (?:Mon|Tues?|Wed(?:nes)?|Thu(?:rs)?|Fri|Sat(?:ur)?|Sun)(?:day)?\b|"
+    # No "text <weekday>" hold (Vault b984cba w03): "text Sunday Reyes" is a person, not a day.
+    r"\b(?:call|meeting with|see) (?:Mon|Tues?|Wed(?:nes)?|Thu(?:rs)?|Fri|Sat(?:ur)?|Sun)(?:day)?\b|"
     r"(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|"
     r"Mon|Tues?|Wed(?:nesday)?|Thu(?:rsday)?|Fri|Sat(?:urday)?|Sun(?:day)?)'s\b"
     r")",
@@ -79,6 +80,8 @@ Aug August Sep Sept September Oct October Nov November Dec December Phoenix Ariz
 Remember Summarize Make Set Use Got Reply Schedule Pick Order Sign Add Call Text Remind Forward Open Show Wire Lender Her His The It Link Card Routing
 Client Mr Mrs Ms Dr Why Version Meeting List Fill Wifi FYI MLS PDF LLC DOB SSN EIN AZ Jar""".split()
 }
+_DATE_WORDS = frozenset("""monday tuesday wednesday thursday friday saturday sunday january february march
+april may june july august september october november december""".split())
 # No real first names here (Vault N3): the only name ever kept is --owner-name.
 
 # Words after "text" that are not a person (Vault N1: "text <Name> about" must map "<Name>" only).
@@ -440,7 +443,13 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
 
     def replace_text_target(m: re.Match[str]) -> str:
         first, last = m.group(1), m.group(2)
-        if first.lower() in allow or first.lower() in _TEXT_TARGET_SKIP:
+        # A weekday/month word after "text" followed by a capitalized surname is a person
+        # ("text Sunday Reyes", "text April Moss"), so it is not kept as a date word.
+        date_person = (
+            first.lower() in _DATE_WORDS and first[0].isupper() and bool(last) and last[0].isupper()
+            and last.lower() not in allow and last.lower() not in _TEXT_TARGET_SKIP
+        )
+        if (first.lower() in allow or first.lower() in _TEXT_TARGET_SKIP) and not date_person:
             return m.group(0)
         ctx.bump("name")
         out_s = m.group(0).replace(first, ph(first), 1)
@@ -487,7 +496,7 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
             w = g.group(1)
             tail = g.group(0)[len(w) :]
             start = g.start(1)
-            if w.lower() in allow or w.startswith("CLIENT_"):
+            if (w.lower() in allow and w.lower() not in name_map) or w.startswith("CLIENT_"):
                 return w + tail
             before = body[:start].rstrip()
             sentence_start = before == "" or before[-1:] in ".!?:"
