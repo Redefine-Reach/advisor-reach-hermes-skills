@@ -64,9 +64,9 @@ DEFAULT_DRAFT_TTL_SECONDS = 1800
 DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
 DOUBLE_SEND_GUARD_HOURS = 24
 RECENT_PROVIDER_FAILURE_REASON = (
-    "That text may already have gone out a moment ago. I won't resend it automatically."
+    "Your last text to this person may still go through, so I didn't queue a duplicate"
 )
-DEFINITIVE_PROVIDER_FAIL_STATUSES = frozenset({"failed", "rejected"})
+DOUBLE_SEND_GUARD_EXEMPT_STATUSES = frozenset({"rejected", "not_sent"})
 CONFIRM_TOKENS = frozenset({"send", "/approve"})
 DROP_TOKENS = frozenset({"no", "skip", "drop"})
 ATTEST_YES = frozenset({"yes", "y", "true", "1"})
@@ -1473,10 +1473,15 @@ def parse_provider_stdout(stdout: str, stderr: str, code: int) -> dict:
             "error": "",
         }
     error = payload.get("error") or stderr.strip() or f"send exit {code}"
+    raw_status = str(payload.get("provider_status") or "").strip().lower()
+    if raw_status in DOUBLE_SEND_GUARD_EXEMPT_STATUSES:
+        provider_status = raw_status
+    else:
+        provider_status = raw_status if raw_status else "error"
     return {
         "success": False,
         "message_id": str(payload.get("message_id") or ""),
-        "provider_status": str(payload.get("provider_status") or "error"),
+        "provider_status": provider_status,
         "error": str(error).replace("\n", " ")[:500],
     }
 
@@ -1491,15 +1496,23 @@ def normalize_sender_result(result: object) -> dict:
         }
     error = ""
     message_id = ""
+    provider_status = "error"
     if isinstance(result, dict):
         error = str(result.get("error") or "")
         message_id = str(result.get("message_id") or "")
+        raw_status = str(result.get("provider_status") or "").strip().lower()
+        if raw_status in DOUBLE_SEND_GUARD_EXEMPT_STATUSES:
+            provider_status = raw_status
+        elif raw_status:
+            provider_status = raw_status
+        elif error:
+            provider_status = "rejected"
     if not error:
         error = "provider rejected the send"
     return {
         "success": False,
         "message_id": message_id,
-        "provider_status": "error",
+        "provider_status": provider_status,
         "error": error.replace("\n", " ")[:500],
     }
 
@@ -1565,7 +1578,7 @@ def deliver(dest: str, body: str) -> dict:
             return {
                 "success": False,
                 "message_id": "",
-                "provider_status": "error",
+                "provider_status": "not_sent",
                 "error": "test mode has no transport",
             }
         proc = subprocess.run(
@@ -1582,7 +1595,7 @@ def deliver(dest: str, body: str) -> dict:
         return {
             "success": False,
             "message_id": "",
-            "provider_status": "error",
+            "provider_status": "not_sent",
             "error": "telnyx plugin loader unavailable",
         }
     sender, pconfig, error = resolve_standalone_sender(
@@ -1597,7 +1610,7 @@ def deliver(dest: str, body: str) -> dict:
         return {
             "success": False,
             "message_id": "",
-            "provider_status": "error",
+            "provider_status": "not_sent",
             "error": error or "telnyx_sms standalone_sender_fn is not registered",
         }
     try:
@@ -1761,7 +1774,7 @@ def provider_send_is_definitively_failed(result: dict) -> bool:
     if result.get("success"):
         return False
     status = str(result.get("provider_status") or "").strip().lower()
-    return status in DEFINITIVE_PROVIDER_FAIL_STATUSES
+    return status in DOUBLE_SEND_GUARD_EXEMPT_STATUSES
 
 
 def provider_send_triggers_double_send_guard(result: dict) -> bool:
@@ -1986,8 +1999,8 @@ def stage(
                     "refused_multi",
                     "a draft is already waiting for SEND; cancel it before staging another",
                 )
+            assert_no_recent_double_send_guard(ctx["store"], dest, body, now)
             if not replaces_id:
-                assert_no_recent_double_send_guard(ctx["store"], dest, body, now)
                 guard_why_not_reused(
                     latest_draft_for_approver(ctx["store"]["drafts"], approver),
                     dest=dest,
@@ -2213,6 +2226,7 @@ def send(draft_id: str, confirm: str, attest: str, actor_raw: str = "") -> int:
             draft["status"] = "sending"
             write_draft(path, draft)
             approved_at = iso(utc_now())
+            assert_no_recent_double_send_guard(ctx["store"], dest, body, utc_now())
             try:
                 result = deliver(dest, body)
             except Exception as exc:

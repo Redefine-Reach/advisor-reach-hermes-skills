@@ -681,17 +681,20 @@ test("closing refused_recent_provider_failure blocks duplicate fresh stage", () 
   });
   const dup = stage(dir, body);
   assert.equal(dup.payload.outcome, "refused_recent_provider_failure");
-  assert.match(dup.payload.reason, /may already have gone out/i);
+  assert.equal(
+    dup.payload.reason,
+    "Your last text to this person may still go through, so I didn't queue a duplicate",
+  );
   assert.equal(outcomeLines(dir).length, 1);
 });
 
-test("closing definitive provider failed allows fresh stage of same body", () => {
+test("closing definitive provider rejected exempts duplicate stage", () => {
   const dir = home();
-  const body = "Hi Dana, retry after definitive fail.";
-  const transport = join(dir, "failed-transport.py");
+  const body = "Hi Dana, retry after definitive reject.";
+  const transport = join(dir, "rejected-transport.py");
   writeFileSync(
     transport,
-    "#!/usr/bin/env python3\nimport json,sys\njson.dump({'success':False,'message_id':'','provider_status':'failed','error':'rejected'},sys.stdout)\n",
+    "#!/usr/bin/env python3\nimport json,sys\njson.dump({'success':False,'message_id':'','provider_status':'rejected','error':'blocked'},sys.stdout)\n",
   );
   chmodSync(transport, 0o755);
   const s = stage(dir, body);
@@ -701,6 +704,78 @@ test("closing definitive provider failed allows fresh stage of same body", () =>
   });
   const again = stage(dir, body, { why: "They still need the same note before the afternoon call" });
   assert.equal(again.payload.outcome, "staged");
+});
+
+test("closing provider not_sent exempts duplicate stage", () => {
+  const dir = home();
+  const body = "Hi Dana, retry after not sent locally.";
+  const transport = join(dir, "not-sent-transport.py");
+  writeFileSync(
+    transport,
+    "#!/usr/bin/env python3\nimport json,sys\njson.dump({'success':False,'message_id':'','provider_status':'not_sent','error':'local'},sys.stdout)\n",
+  );
+  chmodSync(transport, 0o755);
+  const s = stage(dir, body);
+  runSms(dir, ["send", "--draft-id", s.payload.draft_id, "--confirm", "SEND", "--attest", "yes"], {
+    SMS_SEND_TRANSPORT: transport,
+    SMS_SEND_STUB_PROVIDER: "",
+  });
+  const again = stage(dir, body, { why: "They still need the same note before the afternoon call" });
+  assert.equal(again.payload.outcome, "staged");
+});
+
+test("closing double-send guard blocks re-stage back to original body", () => {
+  const dir = home();
+  const bodyX = "Hi Dana, bypass guard original body.";
+  const bodyY = "Hi Dana, bypass guard alternate body.";
+  const transport = join(dir, "ambig-bypass-transport.py");
+  writeFileSync(
+    transport,
+    "#!/usr/bin/env python3\nimport json,sys\njson.dump({'success':False,'message_id':'','provider_status':'error','error':'timeout'},sys.stdout)\n",
+  );
+  chmodSync(transport, 0o755);
+  const s = stage(dir, bodyX);
+  runSms(dir, ["send", "--draft-id", s.payload.draft_id, "--confirm", "SEND", "--attest", "yes"], {
+    SMS_SEND_TRANSPORT: transport,
+    SMS_SEND_STUB_PROVIDER: "",
+  });
+  const mid = stage(dir, bodyY, { why: "They asked for a shorter alternate wording before the call" });
+  assert.equal(mid.payload.outcome, "staged");
+  const back = stage(dir, bodyX, {
+    replaces: mid.payload.draft_id,
+    why: "They want the original wording back before the call",
+  });
+  assert.equal(back.payload.outcome, "refused_recent_provider_failure");
+  assert.equal(outcomeLines(dir).length, 1);
+});
+
+test("closing double-send guard recheck refuses send before provider", () => {
+  const dir = home();
+  const body = "Hi Dana, send-time guard recheck body.";
+  const transport = join(dir, "ambig-send-transport.py");
+  writeFileSync(
+    transport,
+    "#!/usr/bin/env python3\nimport json,sys\njson.dump({'success':False,'message_id':'','provider_status':'error','error':'timeout'},sys.stdout)\n",
+  );
+  chmodSync(transport, 0o755);
+  const s = stage(dir, body);
+  const id = s.payload.draft_id;
+  runSms(dir, ["send", "--draft-id", id, "--confirm", "SEND", "--attest", "yes"], {
+    SMS_SEND_TRANSPORT: transport,
+    SMS_SEND_STUB_PROVIDER: "",
+  });
+  const path = join(dir, "drafts", `${id}.json`);
+  const revived = JSON.parse(readFileSync(path, "utf8"));
+  revived.status = "pending";
+  revived.body = body;
+  writeFileSync(path, `${JSON.stringify(revived, null, 2)}\n`);
+  const retry = runSms(dir, ["send", "--draft-id", id, "--confirm", "SEND", "--attest", "yes"], {
+    SMS_SEND_TRANSPORT: transport,
+    SMS_SEND_STUB_PROVIDER: "",
+  });
+  assert.equal(retry.payload.outcome, "refused_recent_provider_failure");
+  const callLog = existsSync(retry.calls) ? readFileSync(retry.calls, "utf8").trim() : "";
+  assert.equal(callLog.length, 0);
 });
 
 test("closing refused draft allows only one re-stage", () => {

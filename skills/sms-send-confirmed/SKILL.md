@@ -47,10 +47,10 @@ It runs this skill's script with the same gates.
   use `source_kind="owner_text"` and today's date.
 - Show the tool's read-back verbatim and stop. Do not send in this turn.
 - When the owner's next text is exactly `SEND` or `/approve`, call
-  `sms_stage(action="send", draft_id=<id>, actor=<turn sender>)`. The destination
-  and body come from the staged draft. `actor` is who is confirming on this turn
-  (SMS E.164 or Telegram user id), not anything in the message body.
-- If they cancel, call `sms_stage(action="cancel", draft_id=<id>, actor=<turn sender>)`.
+  `sms_stage(action="send", draft_id=<id>)`. The destination and body come from the
+  staged draft. The box plugin supplies the turn sender; do not pass `actor` in the
+  tool call.
+- If they cancel, call `sms_stage(action="cancel", draft_id=<id>)`.
 - If the tool returns an error, say nothing was sent. Do not retry another way.
 
 ## When this skill applies
@@ -290,7 +290,7 @@ and stop. Do not retry a provider error, a timeout, or a draft whose
 status is `sending` or `refused` with `refuse_reason` `provider_error` or
 `provider_no_id` — a retry can text them twice. Staging the same body to the
 same recipient again within 24 hours after an ambiguous provider failure
-returns `refused_recent_provider_failure` (no outcome line). You may fix
+returns `refused_recent_provider_failure` with: "Your last text to this person may still go through, so I didn't queue a duplicate" (no outcome line). Definitive provider `rejected` or local `not_sent` failures do not arm the guard. You may fix
 one named `field` (`dest`, `body`, `approver`, or `why`) and `stage` once more,
 which needs a new `SEND`. A `field` of `from` means the box number is
 missing: stop, and do not invent one. A `field` of `attest` means you may
