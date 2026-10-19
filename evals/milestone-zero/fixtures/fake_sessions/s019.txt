@@ -1,0 +1,2 @@
+OWNER (Alex): Open https://example.com/listing/FAKE123?token=abc999 and summarize it.
+ARIN: Got it.

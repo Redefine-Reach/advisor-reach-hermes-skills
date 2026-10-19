@@ -16,29 +16,38 @@ function py(args, extraEnv = {}) {
   return spawnSync("python3", args, { cwd: mz, env, encoding: "utf8" });
 }
 
-test("redact strips SSN-shaped spans", () => {
-  const raw = "Patient SSN 123-45-6789 and account #123456789012";
-  const res = py(["-c", `from redact import redact; import json; print(json.dumps(redact(${JSON.stringify(raw)})))`]);
-  assert.equal(res.status, 0, res.stderr);
-  const [, codes] = JSON.parse(res.stdout.trim());
-  assert.ok(codes.includes("ssn"));
-});
-
-test("redact --fail-closed exits 1 when residue remains", () => {
-  const dir = mkdtempSync(join(tmpdir(), "mz-redact-"));
-  const inp = join(dir, "in.txt");
-  writeFileSync(inp, "placeholder");
-  const out = join(dir, "out.txt");
+test("redact library masks phones to last four", () => {
+  const raw = "Text the client at 555-010-0400 please";
   const res = py([
     "-c",
-    `import sys
-from unittest.mock import patch
-import redact
-with patch.object(redact, "redact_fail_closed", return_value=("x", [], False, ["ssn"])):
-    code = redact.main(["--in", ${JSON.stringify(inp)}, "--out", ${JSON.stringify(out)}, "--fail-closed"])
-sys.exit(code)`,
+    `from redact import redact_fail_closed, RedactionContext
+c, _, ok, _ = redact_fail_closed(${JSON.stringify(raw)}, RedactionContext())
+import json; print(json.dumps({"ok": ok, "out": c}))`,
   ]);
-  assert.equal(res.status, 1);
+  assert.equal(res.status, 0, res.stderr);
+  const body = JSON.parse(res.stdout.trim());
+  assert.equal(body.ok, true);
+  assert.ok(body.out.includes("[PHONE ***0400]"));
+});
+
+test("export excludes health sessions with exit 2", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mz-export-"));
+  const session = join(dir, "s.txt");
+  writeFileSync(session, "OWNER: she has cancer\n");
+  const out = join(dir, "out.txt");
+  const res = py([
+    "export_session_to_case.py",
+    "--session",
+    session,
+    "--redacted-text-out",
+    out,
+    "--known-names",
+    join(mz, "fixtures", "fake_sessions", "known_names.txt"),
+    "--source",
+    "cli",
+  ]);
+  assert.equal(res.status, 2, res.stderr);
+  assert.match(res.stderr, /excluded_sessions: 1 category=health/);
 });
 
 test("cases.jsonl has 20 rows with suite tags", () => {

@@ -1,0 +1,2 @@
+OWNER (Alex): Set a reminder for Oct 20 at 9 AM to send the newsletter.
+ARIN: Done.

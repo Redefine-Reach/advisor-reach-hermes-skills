@@ -1,0 +1,2 @@
+OWNER (Alex): Lender says loan number 7700123456 is in underwriting.
+ARIN: Got it.
