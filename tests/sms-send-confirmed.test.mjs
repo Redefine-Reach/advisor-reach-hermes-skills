@@ -1910,6 +1910,28 @@ test("RUN 10 item 4 rule: real named recipient with [PRICE] stages, Missing line
   assert.match(r.payload.attestation, /The recipient can still opt out with their carrier\./);
 });
 
+test("RED-585 live: recipient need tails on the Why are refused; fact-only whys stage", () => {
+  const body = "Hi Dana, your closing date is now Nov 3.";
+  const bad = [
+    "Dana's closing date changed, so she needs the new date",
+    "The offer on 12 Oak St was accepted, and she needs the good news",
+  ];
+  for (const why of bad) {
+    const r = stageWith(body, why);
+    assert.equal(r.payload.outcome, "refused_why_action_tail", why + " " + r.stdout);
+    assert.match(r.payload.reason, /reason or fact only/i);
+    assert.equal(draftFiles(r.dir).length, 0);
+  }
+  for (const why of [
+    "Dana's closing date moved to Nov 3.",
+    "The offer on 12 Oak St was accepted.",
+  ]) {
+    const r = stageWith(body, why);
+    assert.equal(r.payload.outcome, "staged", why + " " + r.stdout);
+    assert.match(r.payload.why_line, new RegExp(why.replace(/[.?]$/, "").split(".")[0].slice(0, 12)));
+  }
+});
+
 test("RUN 10 item 8: Why consequence tail is refused_why_action_tail", () => {
   const r = stageWith("Hi Garcias, the appraisal came in.", "The appraisal came in, so the Garcias should know");
   assert.equal(r.payload.outcome, "refused_why_action_tail", r.stdout);

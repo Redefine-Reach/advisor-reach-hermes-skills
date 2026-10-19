@@ -403,7 +403,22 @@ _NAME_ROLE_TOKENS = frozenset(
         "tenant",
     }
 )
-# RED-585 RUN 10: consequence tails on the Why line are refused, not silently trimmed.
+# RED-585: Why tails that state what the recipient needs, should do, or should know are refused.
+_WHY_TAIL_JOIN = r",\s*(?:so|and|which\s+means)\s+"
+_WHY_TAIL_SUBJECT = (
+    r"(?:(?:she|he|they|them|you)\b|"
+    r"the\s+(?:buyer|client|seller|recipient)\b|"
+    r"the\s+(?-i:[A-Z][\w'’-]+)\b|"
+    r"(?-i:[A-Z][a-z]+(?:'s)?)\b)"
+)
+_WHY_TAIL_NEED_VERB = (
+    r"(?:needs?|should|must|(?:has|have)\s+to|wants?\s+to|will\s+want|knows?)\b"
+)
+_WHY_RECIPIENT_NEED_TAIL = re.compile(
+    _WHY_TAIL_JOIN + _WHY_TAIL_SUBJECT + r"(?:\s+[\w'’-]+){0,8}\s+" + _WHY_TAIL_NEED_VERB + r".*$",
+    re.I,
+)
+# "so the buyer should know" when the subject is not a single pronoun.
 _WHY_CONSEQUENCE_TAIL = re.compile(
     r"[,;:]?\s*\bso\s+(?:the\s+)?(?:[\w'’-]+(?:\s+[\w'’-]+){0,5}\s+)?(?:should|need(?:s)? to)\s+know\b.*$",
     re.I,
@@ -482,10 +497,15 @@ def format_missing_line(placeholders: list[str]) -> str:
 
 
 def why_has_consequence_action_tail(why: str) -> bool:
+    """True when the Why ends with what the recipient needs, should do, or should know."""
     reason = " ".join(str(why or "").split())
     if not reason:
         return False
-    return bool(_WHY_CONSEQUENCE_TAIL.search(reason) or _WHY_SO_THEY_KNOW.search(reason))
+    return bool(
+        _WHY_RECIPIENT_NEED_TAIL.search(reason)
+        or _WHY_CONSEQUENCE_TAIL.search(reason)
+        or _WHY_SO_THEY_KNOW.search(reason)
+    )
 
 
 def unfilled_placeholders(text: str) -> list[str]:
@@ -648,8 +668,9 @@ def gate_why_and_body(why_raw: str, body: str) -> str:
     if why_has_consequence_action_tail(why):
         raise GateFailure(
             "refused_why_action_tail",
-            "why has a trailing consequence (for example 'so the buyer should know'). "
-            "State the reason and source only; rewrite without that tail",
+            "why has a trailing consequence or recipient need (for example 'so she needs the new date', "
+            "'and she needs the good news', or 'so the buyer should know'). "
+            "State the reason or fact only; rewrite without that tail",
             field="why",
         )
     cause = why_cause(why, body)

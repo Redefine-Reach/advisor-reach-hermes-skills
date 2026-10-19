@@ -175,9 +175,12 @@ Every `stage` needs why this text, why now, and where you read that. If
   details are missing). It never invites SEND while placeholders remain. Ask for missing content
   in the same reply as the read-back. When the owner supplies a value, stage the message AGAIN with the value filled in and show the new read-back; never edit around the old draft. NEVER send a bracketed placeholder: `refused_unfilled_placeholder` at
   `send` cancels the draft.
-  `refused_why_action_tail`: the Why line has a trailing consequence ("so the buyer
-  should know", "so the Garcias should know", "so they know"). Rewrite to state the
-  reason only.
+  `refused_why_action_tail`: the Why line has a trailing consequence or states what
+  the recipient needs, should do, or should know (joined by `, so`, `, and`, `so`,
+  `and`, or `which means`, then a person such as she/he/they/the buyer/Dana and
+  needs/should/must/has to/wants to/know). Examples: `so the buyer should know`,
+  `so she needs the new date`, `and she needs the good news`. Rewrite to state the
+  reason or fact only (for example `Dana's closing date moved to Nov 3.`).
   `refused_why_reused`: the Why line is identical to the owner's previous draft but
   the recipient or the message body changed. Write a fresh why for each new text and
   person; never copy the last draft's Why into a different action.
