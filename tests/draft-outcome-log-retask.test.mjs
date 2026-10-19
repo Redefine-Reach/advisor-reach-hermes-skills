@@ -264,7 +264,7 @@ test("item7 AC18 cross-channel actor map and three refusal classes", () => {
     ["send", "--draft-id", id, "--confirm", "SEND", "--attest", "yes", "--actor", OWNER_TG],
     { ...envExtra, SMS_SEND_STUB_PROVIDER: "1" },
   );
-  assert.equal(tgSend.payload.outcome, "refused_not_owner");
+  assert.equal(tgSend.payload.outcome, "sent");
   const dir2 = home();
   const s2 = stage(dir2, "Hi Dana, SMS text path should still send.", envExtra);
   const id2 = s2.payload.draft_id;

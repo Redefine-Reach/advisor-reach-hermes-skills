@@ -1900,10 +1900,15 @@ def assert_actor_is_box_sms_turn(
     *,
     draft_id: str = "",
     dest: str = "",
+    mapped_telegram_approver: str = "",
 ) -> None:
-    """RED-700: SEND and re-stage only on the box-resolved SMS text-turn owner."""
+    """RED-700: SEND and re-stage on the box-resolved SMS text-turn owner; mapped owner Telegram may SEND."""
     normalized = normalize_identity_token(actor)
     if TELEGRAM_ID_RE.fullmatch(normalized):
+        approver = str(mapped_telegram_approver or "").strip()
+        groups = ctx.get("owner_identity_groups") or owner_identity_groups()
+        if approver and groups and actor_matches_approver(actor, approver, groups):
+            return
         raise GateFailure(
             "refused_not_owner",
             "SEND and re-stage require the owner's SMS text thread until RED-700",
@@ -2193,7 +2198,13 @@ def send(draft_id: str, confirm: str, attest: str, actor_raw: str = "") -> int:
                     extra={"draft_id": draft_id, "dest": dest},
                 )
             actor = resolve_turn_actor(actor_raw, field="actor")
-            assert_actor_is_box_sms_turn(actor, ctx, draft_id=draft_id, dest=dest)
+            assert_actor_is_box_sms_turn(
+                actor,
+                ctx,
+                draft_id=draft_id,
+                dest=dest,
+                mapped_telegram_approver=approver,
+            )
             assert_actor_is_draft_approver(
                 draft,
                 actor,
