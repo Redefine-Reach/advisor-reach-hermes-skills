@@ -98,7 +98,7 @@ i im i'm i'll i've id you we they he she it this that these those there here wha
 the a an and but or so if then also just still yet already only even maybe perhaps please sure okay ok yes yeah no nope
 all any each every some most many much more less none nothing everything something anything someone everyone nobody
 today tomorrow tonight yesterday now later soon next last first second third new old good great fine perfect
-sounds looks seems got get gets getting going went come came coming will would could should can may might must
+sounds looks seems got get gets getting going went come came coming will would could should can may might must let
 closing showing showings listing listings inspection inspections appraisal escrow offer offers price pricing contract
 counter counteroffer buyer buyers seller sellers lender loan title tour tours open house home property client clients
 agent agents team office meeting call calls text texts email emails draft drafts reminder reminders note notes
@@ -108,6 +108,36 @@ sent saved staged scheduled booked moved cancelled canceled confirmed done finis
 left signed approved declined received called asked said says told wants needs
 noted understood thanks thank awesome cool nice sorry yep yup nah right agreed absolutely definitely correct exactly
 heads fyi reminder update hey hi hello morning evening dear regards cheers best""".split())
+
+def _load_common_words() -> frozenset[str]:
+    path = Path(__file__).resolve().parent / "common_words.txt"
+    words = {
+        ln.strip().lower() for ln in path.read_text(encoding="utf-8").splitlines()
+        if ln.strip() and not ln.startswith("#")
+    }
+    return frozenset(words)
+
+
+_COMMON_WORDS = _load_common_words()
+_KNOWN_WORDS: frozenset[str] | None = None
+
+
+def is_dictionary_word(word: str) -> bool:
+    """Ordinary English (common_words.txt plus the starter lists), with simple suffix stripping."""
+    global _KNOWN_WORDS
+    low = word.lower().replace("'", "").replace("\u2019", "")
+    if _KNOWN_WORDS is None:
+        _KNOWN_WORDS = _COMMON_WORDS | _COMMON_STARTERS | _TEXT_TARGET_SKIP | _NOT_SURNAME | _PERSON_VERBS | _ADVERBS
+    known = _KNOWN_WORDS
+    if low in known:
+        return True
+    stems = []
+    for suf, rep in (("ies", "y"), ("es", ""), ("s", ""), ("ed", ""), ("ed", "e"), ("d", ""),
+                     ("ing", ""), ("ing", "e"), ("ly", "")):
+        if low.endswith(suf) and len(low) - len(suf) >= 3:
+            stems.append(low[: len(low) - len(suf)] + rep)
+    return any(st in known for st in stems)
+
 
 _ADVERBS = frozenset("""also just still already probably definitely maybe really finally actually never always
 apparently basically clearly obviously supposedly reportedly honestly literally seriously totally""".split())
@@ -517,7 +547,17 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
                     nxt_cap and nxt_cap.group(1).lower() not in allow
                     and nxt_cap.group(1).lower() not in _COMMON_STARTERS
                 )
-                if w.lower() in _COMMON_STARTERS or not person:
+                # Vault b984cba (a): a capitalized word at a sentence/line/"Why:" start that is not
+                # ordinary English is a name whatever follows ("Philippa—", "Ambrose and",
+                # "Evander 👍", "Re: Philippa —", "Ambrose should"). The shape heuristics above
+                # stay as an extra layer for dictionary words.
+                contraction = re.match(r"['\u2019]([a-rt-z][a-z]*)\b", rest)
+                full = w + contraction.group(1) if contraction else w
+                if not is_dictionary_word(full) and full.lower() not in allow:
+                    person = True
+                elif w.lower() in _COMMON_STARTERS:
+                    return w + tail
+                if not person:
                     return w + tail
             ctx.bump("name")
             return ph(w) + (tail if tail.startswith("'s") else "")

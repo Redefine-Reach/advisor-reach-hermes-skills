@@ -261,16 +261,20 @@ class CheckLeaksCI(unittest.TestCase):
     # disappears also fails (so it gets reported and the pin updated deliberately).
     # Each entry: set -> (over_redacted, over_excluded, ids). Reasons per id are in the comments.
     PINNED_CONTROLS = {
-        "main": (0, 4, {
+        "main": (1, 4, {
+            "s130",  # (a) sentence-start "Chapter" is not in common_words.txt -> redacted as a name
             "s132",  # "therapy dog" hold removed (Vault 029b63a): drops as health
             "s133",  # "custody of the ... keys" hold removed: drops as legal
             "s134",  # "chapter 7 of the" hold removed: drops as legal
             "s136",  # "hospital-district" hold removed: drops as health
         }),
         "heldout": (0, 0, set()),
-        "heldout2": (2, 0, {
+        "heldout2": (5, 0, {
+            "u033",  # (a) sentence-start "Grace" (keep-list word, Vault N3) -> redacted as a name
+            "u034",  # (a) sentence-start "Bill" (keep-list word, Vault N3) -> redacted as a name
             "u035",  # "Hunter Douglas" hold removed: brand redacted as a name
             "u036",  # "Mason jar" hold removed: "Mason" redacted as a name
+            "u037",  # (a) sentence-start "Summer" (keep-list word, Vault N3) -> redacted as a name
         }),
     }
 
@@ -788,3 +792,35 @@ class WeekdayNamedPerson(_ExportHelpers, unittest.TestCase):
         proc, _, _ = self._export({"messages": [_msg("user", "text Mon re custody papers"), _msg("assistant", "Ok.")]},
                                   ["--owner-name", "David"])
         self.assertNotEqual(proc.returncode, EXIT_OK)
+
+
+class SentenceStartNonDictionary(_ExportHelpers, unittest.TestCase):
+    """Vault re-test of b984cba (a): a capitalized non-dictionary word at a sentence, line or
+    "Why:" start is a name whatever follows. Synthetic names only (unseen by the probes)."""
+
+    def _reply(self, text: str) -> dict:
+        proc, case, _ = self._export({"messages": [_msg("user", "status?"), _msg("assistant", text)]},
+                                     ["--owner-name", "David"])
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        return case
+
+    def test_em_dash_and_should_emoji_re(self) -> None:
+        for text, name in (("Wilhelmina\u2014the buyer\u2014wants Friday.", "Wilhelmina"),
+                           ("Lysander and his wife liked the patio.", "Lysander"),
+                           ("Wilhelmina and Lysander both signed.", "Lysander"),
+                           ("Peregrine \U0001F44D", "Peregrine"),
+                           ("Re: Wilhelmina \u2014 counter is in", "Wilhelmina"),
+                           ("Lysander should hear back by noon.", "Lysander"),
+                           ("Why: Peregrine wants the condo.", "Peregrine")):
+            case = self._reply(text)
+            self.assertNotIn(name, json.dumps(case, ensure_ascii=False), text)
+
+    def test_contractions_and_ordinary_starters_kept(self) -> None:
+        text = ("Don't worry. Here's the draft. Let's go. Isn't it great? Won't take long. "
+                "Booked the tour. Hope you're well. Wanted to confirm.")
+        self.assertEqual(self._reply(text)["fixture"]["assistant_text"], text)
+
+    def test_dictionary_word_shape_layer_still_applies(self) -> None:
+        # "Hope" is ordinary English, but "<Word> asked" still reads as a person (old layer).
+        case = self._reply("Hope asked about the HOA fee.")
+        self.assertNotIn("Hope", json.dumps(case))
