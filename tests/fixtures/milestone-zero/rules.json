@@ -1,0 +1,8 @@
+{
+  "do_not_keep": [
+    "bankruptcy filing details",
+    "health diagnosis record",
+    "do not keep this note"
+  ],
+  "opt_out_field": "owner_opt_out"
+}

@@ -1,0 +1,3 @@
+OWNER (Alex): Draft a text to Lena Placeholder
+ARIN: Draft: Hi Lena, 555-0142 is the number for the lender.
+OWNER (Alex): add her email lena@example.com
