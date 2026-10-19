@@ -79,6 +79,7 @@ function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), o
     SMS_DRAFT_DIR: join(dir, "drafts"),
     SMS_SESSION_DIR: join(dir, "sessions"),
     SMS_EVENT_DIR: join(dir, "events"),
+    DRAFT_OUTCOMES_PATH: join(dir, "draft-outcomes.jsonl"),
     SMS_SEND_TRANSPORT: transport,
     CALLS: calls,
     ...extra,

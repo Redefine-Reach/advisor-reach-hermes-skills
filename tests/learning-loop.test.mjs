@@ -75,8 +75,9 @@ test("skill routes preferences, memory questions, drafts, and the gate", () => {
   assert.match(skill, /On a text turn, the terminal and `execute_code` are refused/);
   assert.match(skill, /Call the box plugin tool `learning_loop`/);
   assert.match(skill, /Do not use `execute_code` on a text turn/);
-  assert.match(skill, /`save-explicit`, `note-correction`, `record`, and `write-client-skill` are `save`/);
-  assert.match(skill, /`apply`, `list`, `next`, `show`, and `status` are `show`/);
+  assert.match(skill, /`record` stores one draft style or acted-on signal/);
+  assert.match(skill, /`next` returns style notes to apply before staging/);
+  assert.match(skill, /`forget --style-note`/);
   assert.doesNotMatch(skill, /Run it from `execute_code` with an argument list/);
   assert.doesNotMatch(script, /I won't save health details/);
   assert.doesNotMatch(script, /background_review: true/);
@@ -325,6 +326,19 @@ test("status reports background review and does not change config", () => {
 
   const unset = run(home(), ["status"]);
   assert.equal(unset.payload.background_review, "unset");
+});
+
+test("style forget --about with no match returns NOT_FOUND and ambiguous match returns WHICH_ONE (AC26)", () => {
+  const dir = home();
+  run(dir, ["record", "--kind", "follow-up", "--action", "edit", "--note", "warmer opener"]);
+  run(dir, ["record", "--kind", "follow-up", "--action", "edit", "--note", "warmer closer"]);
+  const missing = run(dir, ["forget", "--style-note", "--about", "zzzznotfound"]);
+  assert.equal(missing.payload.say, "That isn't one I have saved.");
+  const pref = run(dir, ["save-explicit", "--scope", "owner", "--kind", "follow-up", "--text", "warmer opener"]);
+  assert.equal(pref.payload.saved, true);
+  const forgot = run(dir, ["forget", "--style-note", "--about", "warmer"]);
+  assert.match(forgot.payload.say, /Which one/);
+  assert.equal(forgot.store.preferences.length, 1);
 });
 
 test("forget style note removes a signal but not a preference with the same wording (AC26)", () => {

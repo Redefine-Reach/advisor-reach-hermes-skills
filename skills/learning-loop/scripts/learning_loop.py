@@ -29,6 +29,7 @@ COULD_NOT_SAVE = "I couldn't save that right now."
 ONE_CLIENT = "One preference is for the owner or for one named client."
 WHICH_ONE = "Which one should I forget? Ask me to list them."
 NOT_FOUND = "That isn't one I have saved."
+OWNER_ONLY = "Only the owner can change learned draft style on this box."
 GATE_PATH = "/opt/box/arin_donotkeep.py"
 KIND_MAX = 40
 TEXT_MAX = 400
@@ -37,6 +38,20 @@ WHEN_MAX = 200
 STEP_MAX = 180
 STEP_COUNT = 6
 LABEL_MAX = 80
+
+
+def require_owner_session() -> None:
+    if os.environ.get("LEARNING_LOOP_ENFORCE_OWNER") != "1":
+        return
+    actor = str(os.environ.get("LEARNING_LOOP_ACTOR", "")).strip()
+    owners = {
+        part.strip()
+        for part in str(os.environ.get("LEARNING_LOOP_OWNERS", "")).split(",")
+        if part.strip()
+    }
+    if actor and actor in owners:
+        return
+    blocked("error", OWNER_ONLY)
 
 
 def emit(obj, code=0):
@@ -578,6 +593,7 @@ def matching_style_forget(data, args):
 
 
 def cmd_forget(home, args):
+    require_owner_session()
     if getattr(args, "style_note", False):
         if args.procedure or args.id:
             blocked("error", WHICH_ONE)
@@ -666,6 +682,7 @@ def cmd_forget(home, args):
 
 
 def cmd_record(home, args):
+    require_owner_session()
     action = args.action
     if action not in {"edit", "send", "skip"}:
         blocked("error", COULD_NOT_SAVE)
@@ -721,6 +738,7 @@ def signals_for(data, kind):
 
 
 def cmd_show(home, args):
+    require_owner_session()
     kind = None
     if args.kind:
         kind = kind_of(args.kind, "")

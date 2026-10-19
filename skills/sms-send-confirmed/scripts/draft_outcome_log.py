@@ -166,6 +166,37 @@ def validate_outcome_line(line: dict) -> None:
         raise ValueError(f"never-contains guard: {violations}")
 
 
+def draft_has_final_line(path: Path, draft_id: str) -> bool:
+    if not path.is_file() or not draft_id:
+        return False
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict) and row.get("draft_id") == draft_id:
+            return True
+    return False
+
+
+def scan_export_rows(rows: list[dict]) -> list[str]:
+    hits: list[str] = []
+    blob = json.dumps(rows, ensure_ascii=True)
+    if EMAIL_RE.search(blob):
+        hits.append("email")
+    if URL_RE.search(blob):
+        hits.append("url")
+    if PHONEISH_RE.search(blob):
+        hits.append("phone")
+    if SSN_RE.search(blob):
+        hits.append("ssn_shape")
+    if "body" in blob or "note" in blob:
+        hits.append("body_or_note")
+    return hits
+
+
 def append_outcome(path: Path, line: dict) -> None:
     validate_outcome_line(line)
     payload = json.dumps(line, separators=(",", ":"), ensure_ascii=True, sort_keys=True) + "\n"
@@ -204,8 +235,7 @@ def outcome_from_draft(
     replaces_chain = build_replaces_chain(drafts_dir, draft)
     edit_rounds = len(replaces_chain)
     when = decided_at or utc_now()
-    first_body = str(draft.get("first_body") or body)
-    dist = edit_distance(first_body, body) if first_body and body else 0
+    dist = int(draft.get("edit_distance") or 0)
     resolved = outcome
     if outcome == "sent":
         resolved = classify_sent(edit_rounds)
@@ -243,7 +273,10 @@ def record_outcome(
         box_slug=box_slug,
         decided_at=decided_at,
     )
-    append_outcome(store_paths.get("draft_outcomes") or outcomes_path(), line)
+    out_path = store_paths.get("draft_outcomes") or outcomes_path()
+    if draft_has_final_line(out_path, str(draft.get("draft_id") or "")):
+        raise ValueError("duplicate_final")
+    append_outcome(out_path, line)
     return line
 
 
@@ -251,7 +284,7 @@ def seed_chain_fields(record: dict, body: str, body_hash: str, created_at: str) 
     record.setdefault("body_hash_first", body_hash)
     record.setdefault("len_first", len(body))
     record.setdefault("chain_created_at", created_at)
-    record.setdefault("first_body", body)
+    record["edit_distance"] = 0
 
 
 def inherit_chain_fields(record: dict, previous: dict, body: str, body_hash: str) -> None:
@@ -259,12 +292,18 @@ def inherit_chain_fields(record: dict, previous: dict, body: str, body_hash: str
     record["body_hash_first"] = str(previous.get("body_hash_first") or previous.get("body_hash") or body_hash)
     record["len_first"] = int(previous.get("len_first") or len(str(previous.get("body") or "")) or len(body))
     record["chain_created_at"] = str(previous.get("chain_created_at") or previous.get("created_at") or "")
-    record["first_body"] = str(previous.get("first_body") or previous.get("body") or body)
+    prev_body = str(previous.get("body") or "")
+    record["edit_distance"] = edit_distance(prev_body, body) if prev_body else 0
+
+
+def strip_plaintext_fields(data: dict) -> None:
+    """Drop staged message body from disk; keep why_line for RED-585 reuse guards."""
+    data["body"] = ""
 
 
 def mark_superseded(path: Path, data: dict) -> None:
     data["status"] = "superseded"
-    data["body"] = ""
+    strip_plaintext_fields(data)
     data["superseded_at"] = iso(utc_now())
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=True, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -281,6 +320,40 @@ def parse_expiry(draft: dict) -> datetime:
     return parsed
 
 
+def _sweep_one_expired(
+    store_paths: dict[str, Path],
+    path: Path,
+    *,
+    when: datetime,
+    box_slug: str | None,
+) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or data.get("status") != "pending":
+        return None
+    try:
+        if when < parse_expiry(data):
+            return None
+    except ValueError:
+        return None
+    body = str(data.get("body") or "")
+    data["body_hash_final"] = str(data.get("body_hash") or "")
+    data["len_final"] = len(body)
+    line = record_outcome(store_paths, data, outcome="ignored", box_slug=box_slug, decided_at=when)
+    data["status"] = "ignored"
+    data["cancelled_reason"] = "expired"
+    strip_plaintext_fields(data)
+    data["ignored_at"] = iso(when)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=True, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+    os.chmod(path, 0o600)
+    return line
+
+
 def sweep_expired(
     store_paths: dict[str, Path],
     *,
@@ -295,30 +368,9 @@ def sweep_expired(
     for path in sorted(drafts_dir.glob("*.json")):
         if path.name.startswith("."):
             continue
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if not isinstance(data, dict) or data.get("status") != "pending":
-            continue
-        try:
-            if when < parse_expiry(data):
-                continue
-        except ValueError:
-            continue
-        body = str(data.get("body") or "")
-        data["body_hash_final"] = str(data.get("body_hash") or "")
-        data["len_final"] = len(body)
-        line = record_outcome(store_paths, data, outcome="ignored", box_slug=box_slug, decided_at=when)
-        data["status"] = "ignored"
-        data["body"] = ""
-        data["ignored_at"] = iso(when)
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=True, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
-        os.chmod(path, 0o600)
-        written.append(line)
+        line = _sweep_one_expired(store_paths, path, when=when, box_slug=box_slug)
+        if line is not None:
+            written.append(line)
     return written
 
 

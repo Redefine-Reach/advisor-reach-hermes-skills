@@ -200,6 +200,7 @@ AUDIT_KEYS = (
     "draft_id",
     "provider_called",
     "session_ttl_expires_at",
+    "stubbed",
 )
 POD_NAME = re.compile(r"^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)-\d+$")
 E164_RE = re.compile(r"^\+[1-9]\d{1,14}$")
@@ -1206,10 +1207,9 @@ def audit(
     provider_status: str | None = None,
     provider_called: bool = False,
     session_ttl_expires_at: str | None = None,
+    stubbed: bool | None = None,
 ) -> None:
-    append_audit(
-        store["audit"],
-        {
+    row = {
             "ts": iso(utc_now()),
             "box_id": box_id,
             "approver": approver,
@@ -1226,8 +1226,10 @@ def audit(
             "draft_id": draft_id,
             "provider_called": provider_called,
             "session_ttl_expires_at": session_ttl_expires_at,
-        },
-    )
+        }
+    if stubbed is not None:
+        row["stubbed"] = stubbed
+    append_audit(store["audit"], row)
 
 
 class DraftLock:
@@ -1485,10 +1487,18 @@ def resolve_standalone_sender(discover, resolve_all, get_entry, load_config, pla
     return sender, platform_config_for_send(load_config, platform_type, config_type), ""
 
 
+def stub_provider_enabled() -> bool:
+    flag = str(os.environ.get("SMS_SEND_STUB_PROVIDER", "")).strip().lower()
+    if flag not in {"1", "true", "yes", "on"}:
+        return False
+    if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
+        return True
+    return str(os.environ.get("SMS_SEND_STUB_ALLOW", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def deliver(dest: str, body: str) -> dict:
     """One adapter send. Test mode never falls through to the plugin."""
-    stub = str(os.environ.get("SMS_SEND_STUB_PROVIDER", "")).strip().lower()
-    if stub in {"1", "true", "yes", "on"}:
+    if stub_provider_enabled():
         digest = hashlib.sha256(f"{dest}\0{body}".encode("utf-8")).hexdigest()[:16]
         return {
             "success": True,
@@ -1615,7 +1625,55 @@ def refuse_context(failure: GateFailure, *, approver: str = "", dest: str = "", 
     return emit(payload, failure.status)
 
 
-def finalize_draft_outcome(
+def audit_outcome_log_failed(
+    store: dict[str, Path],
+    *,
+    box_id: str,
+    draft_id: str | None,
+    reason_class: str,
+) -> None:
+    try:
+        append_audit(
+            store["audit"],
+            {
+                "ts": iso(utc_now()),
+                "box_id": box_id,
+                "approver": "",
+                "approved_at": None,
+                "attestation_version": ATTESTATION_VERSION,
+                "dest": "",
+                "from": "",
+                "body_hash": "",
+                "body_len": 0,
+                "telnyx_message_id": None,
+                "provider_status": None,
+                "outcome": "outcome_log_failed",
+                "reason": reason_class[:120],
+                "draft_id": draft_id,
+                "provider_called": False,
+                "session_ttl_expires_at": None,
+            },
+        )
+    except Exception:
+        return
+
+
+def assert_draft_owner(ctx: dict, draft: dict, *, draft_id: str) -> None:
+    approver = str(draft.get("approver") or "")
+    if approver not in ctx["owners"] or draft.get("from") != ctx["from"]:
+        raise GateFailure(
+            "refused_not_owner",
+            "draft owner or From no longer matches this box",
+            extra={"draft_id": draft_id, "dest": str(draft.get("dest") or "")},
+        )
+
+
+def snapshot_for_outcome(draft: dict, body: str) -> None:
+    draft["body_hash_final"] = str(draft.get("body_hash") or "")
+    draft["len_final"] = len(body)
+
+
+def maybe_finalize_draft_outcome(
     store: dict[str, Path],
     draft: dict,
     outcome: str,
@@ -1629,8 +1687,13 @@ def finalize_draft_outcome(
             outcome=outcome,
             box_slug=box_id or None,
         )
-    except Exception:
-        return
+    except Exception as exc:
+        audit_outcome_log_failed(
+            store,
+            box_id=box_id,
+            draft_id=str(draft.get("draft_id") or "") or None,
+            reason_class=exc.__class__.__name__,
+        )
 
 
 def stage(
@@ -1708,6 +1771,18 @@ def stage(
                         "replaces draft belongs to another approver",
                         field="replaces",
                     )
+                if str(previous.get("dest") or "") != dest:
+                    raise GateFailure(
+                        "refused_why_reused",
+                        "re-stage after an edit must keep the same recipient; stage a new draft for someone else",
+                        field="dest",
+                    )
+                guard_why_not_reused(
+                    previous,
+                    dest=dest,
+                    body=body,
+                    why_line=why_line,
+                )
             elif pending_blocks(ctx["store"]["drafts"], now):
                 raise GateFailure(
                     "refused_multi",
@@ -1793,19 +1868,21 @@ def stage(
         return refuse_context(failure, approver=approver, dest=dest, body=body)
 
 
-def cancel_draft(directory: Path, draft_id: str, reason: str) -> dict | None:
+def cancel_draft(directory: Path, draft_id: str, reason: str) -> tuple[dict | None, bool]:
     path = draft_path(directory, draft_id)
     if not path.exists():
-        return None
+        return None, False
     data = read_draft(path)
-    original_body = str(data.get("body") or "")
-    if data.get("status") == "pending":
-        data["status"] = "cancelled"
-        data["cancelled_reason"] = reason
-        data["body"] = ""
-        write_draft(path, data)
-    data["body"] = original_body
-    return data
+    if data.get("status") != "pending":
+        return data, False
+    body = str(data.get("body") or "")
+    snapshot_for_outcome(data, body)
+    data["status"] = "cancelled"
+    data["cancelled_reason"] = reason
+    _draft_outcomes.strip_plaintext_fields(data)
+    write_draft(path, data)
+    data["body"] = body
+    return data, True
 
 
 def send(draft_id: str, confirm: str, attest: str) -> int:
@@ -1843,22 +1920,17 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                     "this draft is not waiting for a confirm",
                     extra={"draft_id": draft_id, "dest": dest},
                 )
+            assert_draft_owner(ctx, draft, draft_id=draft_id)
             if utc_now() >= parse_expiry(draft):
-                draft["body_hash_final"] = str(draft.get("body_hash") or "")
-                draft["len_final"] = len(body)
-                finalize_draft_outcome(ctx["store"], draft, "ignored", box_id=ctx["box_id"])
+                snapshot_for_outcome(draft, body)
+                maybe_finalize_draft_outcome(ctx["store"], draft, "ignored", box_id=ctx["box_id"])
                 draft["status"] = "ignored"
-                draft["body"] = ""
+                draft["cancelled_reason"] = "expired"
+                _draft_outcomes.strip_plaintext_fields(draft)
                 write_draft(path, draft)
                 raise GateFailure(
                     "refused_no_confirm",
                     "confirmation window expired; stage the message again",
-                    extra={"draft_id": draft_id, "dest": dest},
-                )
-            if approver not in ctx["owners"] or draft.get("from") != ctx["from"]:
-                raise GateFailure(
-                    "refused_not_owner",
-                    "draft owner or From no longer matches this box",
                     extra={"draft_id": draft_id, "dest": dest},
                 )
             if not is_confirm(confirm):
@@ -1867,11 +1939,9 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                 draft["cancelled_reason"] = (
                     "owner replied NO, DROP, or skip" if dropped else "confirm was not SEND"
                 )
-                if dropped:
-                    draft["body_hash_final"] = str(draft.get("body_hash") or "")
-                    draft["len_final"] = len(body)
-                    finalize_draft_outcome(ctx["store"], draft, "cancelled", box_id=ctx["box_id"])
-                draft["body"] = ""
+                snapshot_for_outcome(draft, body)
+                maybe_finalize_draft_outcome(ctx["store"], draft, "cancelled", box_id=ctx["box_id"])
+                _draft_outcomes.strip_plaintext_fields(draft)
                 write_draft(path, draft)
                 raise GateFailure(
                     "refused_no_confirm",
@@ -1884,7 +1954,9 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
             if left:
                 draft["status"] = "cancelled"
                 draft["cancelled_reason"] = "unfilled placeholder"
-                draft["body"] = ""
+                snapshot_for_outcome(draft, body)
+                maybe_finalize_draft_outcome(ctx["store"], draft, "cancelled", box_id=ctx["box_id"])
+                _draft_outcomes.strip_plaintext_fields(draft)
                 write_draft(path, draft)
                 raise GateFailure(
                     "refused_unfilled_placeholder",
@@ -1932,13 +2004,12 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                         "error": "provider returned no message id; this draft will not be retried",
                     }
                 else:
-                    draft["body_hash_final"] = str(draft.get("body_hash") or "")
-                    draft["len_final"] = len(body)
-                    finalize_draft_outcome(ctx["store"], draft, "sent", box_id=ctx["box_id"])
+                    snapshot_for_outcome(draft, body)
+                    maybe_finalize_draft_outcome(ctx["store"], draft, "sent", box_id=ctx["box_id"])
                     draft["status"] = "sent"
                     draft["telnyx_message_id"] = message_id
                     draft["approved_at"] = approved_at
-                    draft["body"] = ""
+                    _draft_outcomes.strip_plaintext_fields(draft)
                     write_draft(path, draft)
                     sent_dt = utc_now()
                     sent_at = iso(sent_dt)
@@ -1968,7 +2039,8 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                         draft_id=draft_id,
                         telnyx_message_id=message_id,
                         provider_status=result.get("provider_status") or "accepted",
-                        provider_called=True,
+                        provider_called=provider_called,
+                        stubbed=bool(result.get("stubbed")),
                         session_ttl_expires_at=ttl_expires_at if session_recorded else None,
                     )
                     return emit(
@@ -2058,14 +2130,19 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
 def cancel(draft_id: str) -> int:
     try:
         ctx = context()
+        transitioned = False
+        data: dict | None = None
         with DraftLock(ctx["store"]["drafts"]):
-            data = cancel_draft(ctx["store"]["drafts"], draft_id, "owner cancelled")
+            path = draft_path(ctx["store"]["drafts"], draft_id)
+            if not path.exists():
+                raise GateFailure("error", "draft was not found", field="draft_id", status=EXIT_ERROR)
+            draft = read_draft(path)
+            assert_draft_owner(ctx, draft, draft_id=draft_id)
+            data, transitioned = cancel_draft(ctx["store"]["drafts"], draft_id, "owner cancelled")
         if data is None:
             raise GateFailure("error", "draft was not found", field="draft_id", status=EXIT_ERROR)
-        body = str(data.get("body") or "")
-        data["body_hash_final"] = str(data.get("body_hash") or "")
-        data["len_final"] = len(body)
-        finalize_draft_outcome(ctx["store"], data, "cancelled", box_id=ctx["box_id"])
+        if transitioned:
+            maybe_finalize_draft_outcome(ctx["store"], data, "cancelled", box_id=ctx["box_id"])
         audit(
             ctx["store"],
             box_id=ctx["box_id"],
@@ -2555,7 +2632,8 @@ def main(argv: list[str] | None = None) -> int:
         return dismiss(args.approver, args.event_id)
     if args.cmd == "sweep-outcomes":
         store = paths()
-        lines = _draft_outcomes.sweep_expired(store, box_slug=resolve_box_id())
+        with DraftLock(store["drafts"]):
+            lines = _draft_outcomes.sweep_expired(store, box_slug=resolve_box_id())
         return emit(
             {
                 "ok": True,

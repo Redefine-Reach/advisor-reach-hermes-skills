@@ -88,7 +88,8 @@ function runSms(dir, args, extra = {}) {
 
 function stage(dir, body, extra = {}) {
   const replaces = extra.replaces;
-  const { replaces: _drop, ...envExtra } = extra;
+  const why = extra.why || WHY;
+  const { replaces: _drop, why: _why, ...envExtra } = extra;
   return runSms(
     dir,
     [
@@ -100,7 +101,7 @@ function stage(dir, body, extra = {}) {
       "--body",
       body,
       "--why",
-      WHY,
+      why,
       "--source-kind",
       "owner_text",
       ...(replaces ? ["--replaces", replaces] : []),
@@ -135,9 +136,12 @@ test("sent as is writes one outcome line with stubbed provider_called false", ()
 
 test("sent after one edit links replaces_chain and edit_rounds 1", () => {
   const dir = home();
-  const first = stage(dir, "Hello there friend!");
+  const first = stage(dir, "Hello there, hope you are well!");
   const draft1 = first.payload.draft_id;
-  const second = stage(dir, "Hey friend", { replaces: draft1 });
+  const second = stage(dir, "Hey friend", {
+    replaces: draft1,
+    why: "They want a warmer shorter hello before the comparison call",
+  });
   assert.equal(second.payload.replaces, draft1);
   const draft2 = second.payload.draft_id;
   assert.equal(readDraft(dir, draft2).replaces, draft1);

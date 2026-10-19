@@ -37,10 +37,13 @@ business, or a MoO blast) stays refused.
 and do not answer with a plain-text draft. Call the `sms_stage` tool instead.
 It runs this skill's script with the same gates.
 
+- Before every stage, run `learning_loop` op `next` with the draft `kind` (for
+  example `sms-third-party` or the kind your box uses for these drafts).
 - Stage: `sms_stage(action="stage", approver=<owner E.164>, dest=<E.164>,
   body=<text>, why=<one line>, source_kind=<kind>, source_date=<YYYY-MM-DD>,
-  source_name=<only if required>)`. Follow the Why line rules below. When the
-  owner dictated the text, use `source_kind="owner_text"` and today's date.
+  source_name=<only if required>, replaces=<draft_id only when re-staging after
+  an edit>)`. Follow the Why line rules below. When the owner dictated the text,
+  use `source_kind="owner_text"` and today's date.
 - Show the tool's read-back verbatim and stop. Do not send in this turn.
 - When the owner's next text is exactly `SEND` or `/approve`, call
   `sms_stage(action="send")`. The destination and body come from the staged draft.
@@ -224,23 +227,41 @@ Silence, an earlier yes, or "text my clients" is not consent. Consent is
 destination, this From number, this body, and this Why line. That is the same rule as
 email outreach: the irreversible step needs its own go-ahead.
 
-## Turn 2 — SEND or DROP
+## Turn 2 — SEND, edit, or DROP
 
 Wait for the owner's next message. The attestation already tells them:
 Reply SEND to send, DROP to discard.
 
+Before you act, call `learning_loop` op `next` with this draft's `kind` so
+style notes apply. Do not announce that you recorded anything.
+
 - If it is exactly `SEND` or `/approve` (after trimming; either case), and
   you showed that draft's attestation, run `send` once with that
-  `--draft-id`, `--confirm` set to their message, and `--attest yes`.
-- If it is `DROP`, `NO`, or `skip` (after trimming; either case), run the
-  `cancel` command for that draft and tell them it was not sent. `NO` remains
-  an alias for owners who already use it.
-- Any other reply does not send. Run the `cancel` command for that draft
-  and tell them it was not sent. A vague "yes", "go ahead", or "send it"
-  is not a confirm.
+  `--draft-id`, `--confirm` set to their message, and `--attest yes`. When
+  the outcome is `sent`, call `learning_loop` op `record` with
+  `action="send"` and the same `kind`. Do not pass a note or the body.
+- If the owner replies with an **edit** (a shorter wording, tone change, or
+  other revision — not DROP/NO/skip and not SEND), do **not** cancel. Call
+  `learning_loop` op `record` with `action="edit"` and a `note` that states
+  the change in plain words ("shorter, no exclamation"), never the draft body.
+  Then re-stage with `replaces` set to that `draft_id`, the updated body, and
+  a fresh Why line when the recipient or message changed enough to need one.
+  Show the new attestation and wait again for SEND or DROP.
+- If it is `DROP`, `NO`, or `skip` (after trimming; either case), run
+  `sms_stage(action="cancel", draft_id=<id>)`, then `learning_loop` op
+  `record` with `action="skip"` and the same `kind` (no note). Tell them it
+  was not sent with **Not sent.** first. `NO` remains an alias for owners who
+  already use it.
+- Any other reply that is not SEND and not an edit does not send. Run
+  `cancel` for that draft, then `record` with `action="skip"` when the owner
+  clearly dropped the approach, and tell them it was not sent. A vague "yes",
+  "go ahead", or "send it" is not a confirm.
 
 Do not ask the owner to answer with a carrier opt-out keyword. `DROP`, `NO`,
 and `skip` drop a staged draft.
+
+The read-back footer is unchanged: Why line, then SEND/DROP, then the carrier
+opt-out line last. Never remove the SEND demand because of a learned note.
 
 `--attest yes` is allowed only after you displayed the staged attestation.
 If you did not, stop. Do not pass `--attest yes` to get the script to send.
