@@ -1279,6 +1279,54 @@ def parse_expiry(draft: dict) -> datetime:
     return parsed
 
 
+def latest_draft_for_approver(directory: Path, approver: str) -> dict | None:
+    """Most recent draft file for this approver (any status), or None."""
+    if not directory.exists():
+        return None
+    latest: dict | None = None
+    latest_at = ""
+    for path in directory.glob("*.json"):
+        if path.name.startswith("."):
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict) or str(data.get("approver") or "") != approver:
+            continue
+        created = str(data.get("created_at") or "")
+        if latest is None or created > latest_at:
+            latest = data
+            latest_at = created
+    return latest
+
+
+def guard_why_not_reused(
+    previous: dict | None,
+    *,
+    dest: str,
+    body: str,
+    why_line: str,
+) -> None:
+    """RED-585: a new draft must not reuse the prior Why when the text or recipient changed."""
+    if not previous:
+        return
+    prior_line = str(previous.get("why_line") or "").strip()
+    new_line = str(why_line or "").strip()
+    if not prior_line or prior_line != new_line:
+        return
+    same_dest = str(previous.get("dest") or "") == dest
+    same_body = str(previous.get("body_hash") or "") == body_hash(body)
+    if same_dest and same_body:
+        return
+    raise GateFailure(
+        "refused_why_reused",
+        "why matches the previous draft but the recipient or message changed. "
+        "Write a new why for this text and this person; do not copy the last draft's why",
+        field="why",
+    )
+
+
 def pending_blocks(directory: Path, now: datetime) -> bool:
     if not directory.exists():
         return False
@@ -1575,6 +1623,12 @@ def stage(
                     "refused_multi",
                     "a draft is already waiting for SEND; cancel it before staging another",
                 )
+            guard_why_not_reused(
+                latest_draft_for_approver(ctx["store"]["drafts"], approver),
+                dest=dest,
+                body=body,
+                why_line=why_line,
+            )
             draft_id = os.urandom(8).hex()
             expires = now + draft_ttl()
             record = {

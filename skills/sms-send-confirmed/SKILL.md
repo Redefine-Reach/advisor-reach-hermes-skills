@@ -178,6 +178,9 @@ Every `stage` needs why this text, why now, and where you read that. If
   `refused_why_action_tail`: the Why line has a trailing consequence ("so the buyer
   should know", "so the Garcias should know", "so they know"). Rewrite to state the
   reason only.
+  `refused_why_reused`: the Why line is identical to the owner's previous draft but
+  the recipient or the message body changed. Write a fresh why for each new text and
+  person; never copy the last draft's Why into a different action.
   `refused_body_meta`: instructions like "Tell them ..." in the text.
   `refused_body_not_to_recipient`: not addressed to the recipient.
   `refused_unfilled_placeholder` (at send): the body still has a bracketed placeholder; restage with the value.

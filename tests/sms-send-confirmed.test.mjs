@@ -21,6 +21,7 @@ const script = readFileSync(scriptPath, "utf8");
 
 const OWNER = "+17145550100";
 const DEST = "+15555550199";
+const DEST2 = "+15555550200";
 const FROM = "+19283563339";
 const BODY = "Hi Dana, your listing packet is ready.";
 
@@ -697,10 +698,24 @@ test("a reply still requires SEND", () => {
   sendOne(dir);
   const inbound = run(["inbound", "--sender", DEST, "--body", "Can you call?", "--message-id", "r1"], {}, dir);
   assert.equal(inbound.payload.outcome, "owner_event");
+  const replyWhy = "Dana asked to call back";
   const staged = run(
-    ["stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Dana, yes, I will call you."],
+    [
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      DEST,
+      "--body",
+      "Hi Dana, yes, I will call you.",
+      "--why",
+      replyWhy,
+      "--source-kind",
+      "owner_text",
+    ],
     {},
     dir,
+    { why: false },
   );
   assert.equal(staged.payload.outcome, "staged");
   assert.equal(staged.callLines.length, 1);
@@ -712,9 +727,22 @@ test("a reply still requires SEND", () => {
   assert.equal(vague.payload.outcome, "refused_no_confirm");
   assert.equal(vague.callLines.length, 1);
   const restaged = run(
-    ["stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Dana, yes, I will call you."],
+    [
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      DEST,
+      "--body",
+      "Hi Dana, yes, I will call you.",
+      "--why",
+      replyWhy,
+      "--source-kind",
+      "owner_text",
+    ],
     {},
     dir,
+    { why: false },
   );
   const sent = run(
     ["send", "--draft-id", restaged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
@@ -1748,6 +1776,103 @@ test("SKILL.md: any missing detail gets a placeholder, restage after the value, 
 });
 
 // --- RED-585 QA RUN 10 (Oct 19) -----------------------------------------------------------
+test("RED-585: back-to-back drafts cannot reuse the prior Why when recipient or body differs", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sms-why-reuse-"));
+  const appraisalWhy = "The appraisal came in";
+  const first = run(
+    [
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      DEST,
+      "--body",
+      "Hi Garcias, the appraisal came in.",
+      "--why",
+      appraisalWhy,
+      "--source-kind",
+      "owner_text",
+    ],
+    {},
+    dir,
+    { why: false },
+  );
+  assert.equal(first.payload.outcome, "staged", first.stdout);
+  assert.match(first.payload.why_line, /appraisal came in/);
+  const dropped = run(
+    ["send", "--draft-id", first.payload.draft_id, "--confirm", "DROP", "--attest", "yes"],
+    {},
+    dir,
+  );
+  assert.equal(dropped.payload.outcome, "refused_no_confirm");
+  const copiedWhy = run(
+    [
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      DEST2,
+      "--body",
+      "Hi Hendersons, the comparison is coming before our 4 PM call.",
+      "--why",
+      appraisalWhy,
+      "--source-kind",
+      "owner_text",
+    ],
+    {},
+    dir,
+    { why: false },
+  );
+  assert.equal(copiedWhy.payload.outcome, "refused_why_reused", copiedWhy.stdout);
+  const distinct = run(
+    [
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      DEST2,
+      "--body",
+      "Hi Hendersons, the comparison is coming before our 4 PM call.",
+      "--why",
+      "The Hendersons need the comparison before the 4 PM call",
+      "--source-kind",
+      "owner_text",
+    ],
+    {},
+    dir,
+    { why: false },
+  );
+  assert.equal(distinct.payload.outcome, "staged", distinct.stdout);
+  assert.notEqual(distinct.payload.why_line, first.payload.why_line);
+  assert.match(distinct.payload.why_line, /comparison before the 4 PM call/);
+  assert.match(first.payload.why_line, /appraisal came in/);
+  const dropDistinct = run(
+    ["send", "--draft-id", distinct.payload.draft_id, "--confirm", "DROP", "--attest", "yes"],
+    {},
+    dir,
+  );
+  assert.equal(dropDistinct.payload.outcome, "refused_no_confirm");
+  const sameAgain = run(
+    [
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      DEST,
+      "--body",
+      "Hi Garcias, the appraisal came in.",
+      "--why",
+      appraisalWhy,
+      "--source-kind",
+      "owner_text",
+    ],
+    {},
+    dir,
+    { why: false },
+  );
+  assert.equal(sameAgain.payload.outcome, "staged", "restaging the same text may reuse the same why");
+});
+
 test("RUN 10 item 9: [NAME] in the greeting is refused_no_recipient; no draft", () => {
   const r = stageWith("Hi [NAME], just following up.", "The prior conversation needs a follow-up now");
   assert.equal(r.payload.outcome, "refused_no_recipient", r.stdout);
