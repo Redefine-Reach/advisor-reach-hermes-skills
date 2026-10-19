@@ -824,3 +824,24 @@ class SentenceStartNonDictionary(_ExportHelpers, unittest.TestCase):
         # "Hope" is ordinary English, but "<Word> asked" still reads as a person (old layer).
         case = self._reply("Hope asked about the HOA fee.")
         self.assertNotIn("Hope", json.dumps(case))
+
+
+class AllCapsNonDictionary(_ExportHelpers, unittest.TestCase):
+    """Vault re-test of b984cba (b): unknown ALL-CAPS names are redacted. Synthetic only."""
+
+    def _reply(self, text: str) -> dict:
+        proc, case, _ = self._export({"messages": [_msg("user", "status?"), _msg("assistant", text)]},
+                                     ["--owner-name", "David"])
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        return case
+
+    def test_unknown_all_caps_name_redacted(self) -> None:
+        for text, name in (("PEREGRINE CALLED about the patio.", "PEREGRINE"),
+                           ("Spoke to LYSANDER, fine with Friday.", "LYSANDER")):
+            self.assertNotIn(name, json.dumps(self._reply(text)), text)
+
+    def test_acronyms_shouting_and_placeholders_kept(self) -> None:
+        text = "DON'T sign yet. FYI the MLS and HOA docs are in. Reply SEND to send. THANKS SO MUCH! ASAP."
+        self.assertEqual(self._reply(text)["fixture"]["assistant_text"], text)
+        case = self._reply("Call 602-555-0142 OK")
+        self.assertIn("[PHONE ***0142] OK", case["fixture"]["assistant_text"])

@@ -139,6 +139,13 @@ def is_dictionary_word(word: str) -> bool:
     return any(st in known for st in stems)
 
 
+# Common acronyms / shouting words that are not names (ALL-CAPS rule, Vault b984cba (b)).
+_ACRONYMS = frozenset("""
+asap fyi mls hoa hvac cma adu llc inc pdf dob ssn ein arin owner sms mms usps ups fedex eta tbd rsvp atm pst mst est cst
+utc usa url api crm irs hud fha usda arm apr heloc pmi ltv dti bpo reo nar realtor sqft btw imo lol omg thx pls plz
+ooo pto nda loi poa coe tbh aka diy faq gps pin otp kyc ach ira llp esq vin pdt edt cdt mdt hoas mlss pdfs ssns
+""".split())
+
 _ADVERBS = frozenset("""also just still already probably definitely maybe really finally actually never always
 apparently basically clearly obviously supposedly reportedly honestly literally seriously totally""".split())
 
@@ -565,6 +572,21 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
             return ph(w)
 
         body = re.sub(r"\b([A-Z][a-z]{2,})(?:'s)?\b", word, body)
+
+        # Vault b984cba (b): an ALL-CAPS word that is not ordinary English and not a common
+        # acronym is a name ("EVANDER CALLED"). Placeholders ([PHONE ...], REDACTED_X, CLIENT_n)
+        # are never touched.
+        def caps(g: re.Match[str]) -> str:
+            w = g.group(1)
+            contraction = re.match(r"['\u2019]([A-RT-Z][A-Z]*)\b", body[g.end(1):])
+            full = w + contraction.group(1) if contraction else w
+            low = w.lower()
+            if (low in allow and low not in name_map) or low in _ACRONYMS or is_dictionary_word(full):
+                return w
+            ctx.bump("name")
+            return ph(w)
+
+        body = re.sub(r"(?<![\[\w])([A-Z]{3,})(?![\w\]])", caps, body)
         body = re.sub(
             r"\b([a-z]{2,})\b",
             lambda g: g.group(0)
