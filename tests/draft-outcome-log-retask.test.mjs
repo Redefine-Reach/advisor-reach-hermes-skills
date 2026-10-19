@@ -776,6 +776,48 @@ test("closing double-send guard recheck refuses send before provider", () => {
   assert.equal(retry.payload.outcome, "refused_recent_provider_failure");
   const callLog = existsSync(retry.calls) ? readFileSync(retry.calls, "utf8").trim() : "";
   assert.equal(callLog.length, 0);
+  const after = JSON.parse(readFileSync(path, "utf8"));
+  assert.equal(after.status, "pending");
+});
+
+test("closing error-only provider payloads arm the guard (503 timeout partial)", () => {
+  const body = "Hi Dana, error-only guard arms on this body.";
+  for (const err of [
+    "503 Service Unavailable",
+    "upstream timeout waiting for Telnyx",
+    "partial multipart send: segment 2 failed",
+  ]) {
+    const dir = home();
+    const transport = join(dir, "err-only-transport.py");
+    writeFileSync(
+      transport,
+      `#!/usr/bin/env python3\nimport json,sys\njson.dump({'error':${JSON.stringify(err)}},sys.stdout)\n`,
+    );
+    chmodSync(transport, 0o755);
+    const norm = spawnSync(
+      "python3",
+      [
+        "-c",
+        `import importlib.util, sys
+spec = importlib.util.spec_from_file_location("sms", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+r = mod.normalize_sender_result({"error": sys.argv[2]})
+print(r["provider_status"])`,
+        scriptPath,
+        err,
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(norm.stdout.trim(), "error", err);
+    const s = stage(dir, body);
+    runSms(dir, ["send", "--draft-id", s.payload.draft_id, "--confirm", "SEND", "--attest", "yes"], {
+      SMS_SEND_TRANSPORT: transport,
+      SMS_SEND_STUB_PROVIDER: "",
+    });
+    const dup = stage(dir, body, { why: "They still need the same note before the afternoon call" });
+    assert.equal(dup.payload.outcome, "refused_recent_provider_failure", err);
+  }
 });
 
 test("closing refused draft allows only one re-stage", () => {

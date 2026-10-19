@@ -1505,8 +1505,6 @@ def normalize_sender_result(result: object) -> dict:
             provider_status = raw_status
         elif raw_status:
             provider_status = raw_status
-        elif error:
-            provider_status = "rejected"
     if not error:
         error = "provider rejected the send"
     return {
@@ -2223,10 +2221,10 @@ def send(draft_id: str, confirm: str, attest: str, actor_raw: str = "") -> int:
                     status=EXIT_ERROR,
                     extra={"draft_id": draft_id, "dest": dest, "refuse_reason": "over_length"},
                 )
+            assert_no_recent_double_send_guard(ctx["store"], dest, body, utc_now())
             draft["status"] = "sending"
             write_draft(path, draft)
             approved_at = iso(utc_now())
-            assert_no_recent_double_send_guard(ctx["store"], dest, body, utc_now())
             try:
                 result = deliver(dest, body)
             except Exception as exc:
