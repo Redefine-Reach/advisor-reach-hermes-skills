@@ -170,8 +170,9 @@ Every `stage` needs why this text, why now, and where you read that. If
   ("Hi Dana, the new price for 12 Oak St is [PRICE]."; also [DATE], [TIME], [ADDRESS]).
   Never add facts the owner did not give. The read-back order is: body, Why line,
   `Missing: ...` (when placeholders remain), then the usual authorization lines and
-  `The recipient can still opt out with their carrier.` last. The Missing line ends with
-  `Reply SEND to send, DROP to discard.` (not carrier keywords). Ask for missing content
+  `The recipient can still opt out with their carrier.` last. The Missing line says
+  `Reply with it to restage, or DROP to discard.` (use `both` / `them` when several
+  details are missing). It never invites SEND while placeholders remain. Ask for missing content
   in the same reply as the read-back. When the owner supplies a value, stage the message AGAIN with the value filled in and show the new read-back; never edit around the old draft. NEVER send a bracketed placeholder: `refused_unfilled_placeholder` at
   `send` cancels the draft.
   `refused_why_action_tail`: the Why line has a trailing consequence ("so the buyer
@@ -217,22 +218,23 @@ Silence, an earlier yes, or "text my clients" is not consent. Consent is
 destination, this From number, this body, and this Why line. That is the same rule as
 email outreach: the irreversible step needs its own go-ahead.
 
-## Turn 2 — SEND or NO
+## Turn 2 — SEND or DROP
 
 Wait for the owner's next message. The attestation already tells them:
-Reply SEND to send, or NO to drop it.
+Reply SEND to send, DROP to discard.
 
 - If it is exactly `SEND` or `/approve` (after trimming; either case), and
   you showed that draft's attestation, run `send` once with that
   `--draft-id`, `--confirm` set to their message, and `--attest yes`.
-- If it is `NO` or `skip` (after trimming; either case), run the `cancel`
-  command for that draft and tell them it was not sent.
+- If it is `DROP`, `NO`, or `skip` (after trimming; either case), run the
+  `cancel` command for that draft and tell them it was not sent. `NO` remains
+  an alias for owners who already use it.
 - Any other reply does not send. Run the `cancel` command for that draft
   and tell them it was not sent. A vague "yes", "go ahead", or "send it"
   is not a confirm.
 
-Do not ask the owner to answer with a carrier opt-out keyword. `NO` and
-`skip` are the words that drop a staged draft.
+Do not ask the owner to answer with a carrier opt-out keyword. `DROP`, `NO`,
+and `skip` drop a staged draft.
 
 `--attest yes` is allowed only after you displayed the staged attestation.
 If you did not, stop. Do not pass `--attest yes` to get the script to send.

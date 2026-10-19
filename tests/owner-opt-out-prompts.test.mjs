@@ -115,7 +115,7 @@ test("detector flags an instruction to reply with an opt-out keyword", () => {
   );
   assert.deepEqual(findOptOutReplyInstructions("Never ask the owner to reply HELP."), []);
   assert.deepEqual(findOptOutReplyInstructions("HELP is the help word."), []);
-  assert.deepEqual(findOptOutReplyInstructions("Reply SEND to send, or NO to drop it."), []);
+  assert.deepEqual(findOptOutReplyInstructions("Reply SEND to send, DROP to discard."), []);
   assert.deepEqual(
     findOptOutReplyInstructions("reply and stop. Say that lists are not sent this way."),
     [],

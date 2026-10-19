@@ -2,7 +2,7 @@
 // The script is the gate: stage never sends; send requires SEND plus attestation;
 // opt-out, cron, multi-dest, an unresolved box, and a delegated child never call
 // the transport. Path A allows any resolved non-empty box id when
-// TELNYX_SMS_FROM_NUMBER is set. stage requires a Why line (red-390-v2).
+// TELNYX_SMS_FROM_NUMBER is set. stage requires a Why line (red-390-v3 attestation).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -155,8 +155,8 @@ test("skill routes third-party SMS through confirm, the pinned adapter, and the 
   assert.match(skill, /refused_multi/);
   assert.match(skill, /\/opt\/data\/audit\/sms-outbound\.jsonl/);
   assert.match(skill, /\/opt\/data\/audit\/sms-opt-out\.txt/);
-  assert.match(skill, /Reply SEND to send, or NO to drop it/);
-  assert.match(skill, /`NO` or `skip`/);
+  assert.match(skill, /Reply SEND to send, DROP to discard/);
+  assert.match(skill, /`DROP`, `NO`/);
   assert.match(skill, /STOP, STOPALL, STOP ALL, UNSUBSCRIBE/);
   assert.match(skill, /CANCEL, END, and QUIT/);
   assert.match(skill, /REVOKE and OPTOUT are extra guards/);
@@ -187,7 +187,7 @@ test("script sends through standalone_sender_fn after plugin resolve, not hermes
   assert.match(script, /standalone_sender_fn/);
   assert.match(script, /_resolve_all/);
   assert.match(script, /a7d209f/);
-  assert.match(script, /red-390-v2/);
+  assert.match(script, /red-390-v3/);
   assert.doesNotMatch(script, /red-390-v1/);
   assert.match(script, /refused_no_why/);
   assert.match(script, /HERMES_DELEGATED_CHILD_CONTEXT/);
@@ -262,7 +262,7 @@ test("stage shows attestation and does not send", () => {
   assert.equal(payload.dest, DEST);
   assert.match(payload.attestation, /from ARIN's number \(\+19283563339\) to \+15555550199/);
   assert.match(payload.attestation, /Reply SEND to confirm you authorize this one message/);
-  assert.match(payload.attestation, /Reply SEND to send, or NO to drop it\./);
+  assert.match(payload.attestation, /Reply SEND to send, DROP to discard\./);
   assert.match(payload.attestation, /The recipient can still opt out with their carrier\./);
   assert.doesNotMatch(payload.attestation, /to cancel/i);
   assert.doesNotMatch(payload.attestation, /\bSTOP\b/);
@@ -373,8 +373,8 @@ test("the cancel command drops a staged draft and does not send", () => {
   assert.equal(later.callLines.length, 0);
 });
 
-test("NO, no, and skip drop the draft and do not send", () => {
-  for (const token of ["NO", "no", "  skip ", "Skip"]) {
+test("DROP, NO, no, and skip drop the draft and do not send", () => {
+  for (const token of ["DROP", "drop", "NO", "no", "  skip ", "Skip"]) {
     const dir = mkdtempSync(join(tmpdir(), "sms-drop-"));
     const staged = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {}, dir);
     const dropped = run(
@@ -383,7 +383,7 @@ test("NO, no, and skip drop the draft and do not send", () => {
       dir,
     );
     assert.equal(dropped.payload.outcome, "refused_no_confirm", token);
-    assert.match(dropped.payload.reason, /owner replied NO or skip/);
+    assert.match(dropped.payload.reason, /owner replied NO, DROP, or skip/);
     assert.equal(dropped.payload.provider_called, false);
     assert.equal(dropped.callLines.length, 0);
     const later = run(
@@ -877,7 +877,7 @@ test("stage puts the Why line in the attestation and not in the client body", ()
   );
   assert.equal(staged.payload.outcome, "staged");
   assert.equal(staged.payload.provider_called, false);
-  assert.equal(staged.payload.attestation_version, "red-390-v2");
+  assert.equal(staged.payload.attestation_version, "red-390-v3");
   assert.equal(staged.payload.source_kind, "fub_note");
   assert.equal(staged.payload.source_date, "2026-10-07");
   assert.equal(staged.payload.why_line, line);
@@ -895,7 +895,7 @@ test("stage puts the Why line in the attestation and not in the client body", ()
   assert.equal(draft.source_kind, "fub_note");
   assert.equal(draft.source_date, "2026-10-07");
   assert.equal(draft.source_ref, "note-1");
-  assert.equal(draft.attestation_version, "red-390-v2");
+  assert.equal(draft.attestation_version, "red-390-v3");
   assert.doesNotMatch(draft.body, /Why:/);
   const sent = run(
     ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
@@ -1552,7 +1552,7 @@ test("QA run 7 AC9: owner_text Why says 'from your own text' once, even if the m
   const twice = stageWith("Hi Sam, happy birthday!", "It's Sam's birthday today, from your own text.");
   assert.equal(twice.payload.why_line, "Why: It's Sam's birthday today, from your own text.");
   assert.equal(twice.payload.why_line.split("from your own text").length, 2);
-  assert.match(r.payload.attestation, /Reply SEND to send, or NO to drop it\./);
+  assert.match(r.payload.attestation, /Reply SEND to send, DROP to discard\./);
   assert.ok(r.payload.why_line.length <= 120);
   // Non-owner kinds keep their own label and still carry a real date.
   const fub = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Dana, the offer is in.",
@@ -1772,13 +1772,14 @@ test("RUN 10 item 4 rule: real named recipient with [PRICE] stages, Missing line
   assert.equal(r.payload.outcome, "staged", r.stdout);
   assert.equal(
     r.payload.missing_line,
-    "Missing: new price. Reply SEND to send, DROP to discard.",
+    "Missing: new price. Reply with it to restage, or DROP to discard.",
   );
+  assert.doesNotMatch(r.payload.missing_line, /Reply SEND to send/);
   const lines = r.payload.attestation.split("\n");
   const whyIdx = lines.findIndex((l) => l.startsWith("Why:"));
   const missingIdx = lines.findIndex((l) => l.startsWith("Missing:"));
   const authIdx = lines.findIndex((l) => l.startsWith("Reply SEND to confirm"));
-  const dropIdx = lines.findIndex((l) => l === "Reply SEND to send, or NO to drop it.");
+  const dropIdx = lines.findIndex((l) => l === "Reply SEND to send, DROP to discard.");
   const optIdx = lines.findIndex((l) => l === "The recipient can still opt out with their carrier.");
   assert.ok(whyIdx > 1 && missingIdx > whyIdx && authIdx > missingIdx && dropIdx > authIdx && optIdx === lines.length - 1);
   assert.match(r.payload.attestation, /The recipient can still opt out with their carrier\./);
@@ -1820,13 +1821,27 @@ test("who-first: role placeholder [BUYER] in greeting refuses; known real name w
   assert.ok(named.payload.missing_line);
 });
 
+test("Why action tail: real causes with 'so ... can' still stage (not _WHY_SO_CAN)", () => {
+  for (const [body, why] of [
+    ["Hi Dana, we can plan the move timeline.", "Dana asked so she can plan the move"],
+    ["Hi Lee, Saturday works for the showing.", "Lee asked for Saturday so the showing can be booked"],
+  ]) {
+    const r = stageWith(body, why);
+    assert.equal(r.payload.outcome, "staged", why + " " + r.stdout);
+    assert.notEqual(r.payload.outcome, "refused_why_action_tail");
+  }
+});
+
 test("attestation with multiple content placeholders lists Missing once before standard footer", () => {
   const r = stageWith(
     "Hi Dana, the showing is on [DATE] at [TIME].",
     "Dana asked to confirm the showing time",
   );
   assert.equal(r.payload.outcome, "staged", r.stdout);
-  assert.match(r.payload.missing_line, /^Missing: date and time\. Reply SEND to send, DROP to discard\.$/);
+  assert.match(
+    r.payload.missing_line,
+    /^Missing: date and time\. Reply with both to restage, or DROP to discard\.$/,
+  );
   assert.ok(r.payload.attestation.indexOf(r.payload.missing_line) < r.payload.attestation.indexOf("Reply SEND to confirm"));
   assert.ok(r.payload.attestation.endsWith("The recipient can still opt out with their carrier."));
 });

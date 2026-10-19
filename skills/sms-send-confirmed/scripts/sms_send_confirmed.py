@@ -51,13 +51,14 @@ except ImportError:
     _platform_registry = None
     _discover_plugins = None
 
-# red-390-v2 adds the owner Why line. The client body and body_hash stay the same.
-ATTESTATION_VERSION = "red-390-v2"
+# red-390-v2 adds the owner Why line. red-390-v3 updates attestation footer wording
+# (DROP discard, Missing line). The client body and body_hash stay the same.
+ATTESTATION_VERSION = "red-390-v3"
 DEFAULT_MAX_BODY_CHARS = 640
 DEFAULT_DRAFT_TTL_SECONDS = 1800
 DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
 CONFIRM_TOKENS = frozenset({"send", "/approve"})
-DROP_TOKENS = frozenset({"no", "skip"})
+DROP_TOKENS = frozenset({"no", "skip", "drop"})
 ATTEST_YES = frozenset({"yes", "y", "true", "1"})
 # Telnyx default stop keywords. Case-insensitive; surrounding and repeated
 # whitespace ignored. STOP ALL is two words. Source:
@@ -272,7 +273,7 @@ def attestation_text(
     lines.extend(
         [
             "Reply SEND to confirm you authorize this one message and that the recipient may receive it.",
-            "Reply SEND to send, or NO to drop it.",
+            "Reply SEND to send, DROP to discard.",
             "The recipient can still opt out with their carrier.",
         ]
     )
@@ -408,7 +409,6 @@ _WHY_CONSEQUENCE_TAIL = re.compile(
     re.I,
 )
 _WHY_SO_THEY_KNOW = re.compile(r"[,;:]?\s*\bso\s+(?:they|he|she|we|you)\s+know\b.*$", re.I)
-_WHY_SO_CAN = re.compile(r"[,;:]?\s*\bso\s+[\w'’-]+(?:\s+[\w'’-]+){0,4}\s+can\s+\w+.*$", re.I)
 _PLACEHOLDER_MISSING_LABELS = {
     "price": "new price",
     "date": "date",
@@ -472,18 +472,20 @@ def format_missing_line(placeholders: list[str]) -> str:
         detail = f"{labels[0]} and {labels[1]}"
     else:
         detail = ", ".join(labels[:-1]) + f", and {labels[-1]}"
-    return f"Missing: {detail}. Reply SEND to send, DROP to discard."
+    if len(labels) == 1:
+        restage = "Reply with it to restage, or DROP to discard."
+    elif len(labels) == 2:
+        restage = "Reply with both to restage, or DROP to discard."
+    else:
+        restage = "Reply with them to restage, or DROP to discard."
+    return f"Missing: {detail}. {restage}"
 
 
 def why_has_consequence_action_tail(why: str) -> bool:
     reason = " ".join(str(why or "").split())
     if not reason:
         return False
-    return bool(
-        _WHY_CONSEQUENCE_TAIL.search(reason)
-        or _WHY_SO_THEY_KNOW.search(reason)
-        or _WHY_SO_CAN.search(reason)
-    )
+    return bool(_WHY_CONSEQUENCE_TAIL.search(reason) or _WHY_SO_THEY_KNOW.search(reason))
 
 
 def unfilled_placeholders(text: str) -> list[str]:
@@ -1704,13 +1706,13 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                 dropped = is_drop(confirm)
                 draft["status"] = "cancelled"
                 draft["cancelled_reason"] = (
-                    "owner replied NO or skip" if dropped else "confirm was not SEND"
+                    "owner replied NO, DROP, or skip" if dropped else "confirm was not SEND"
                 )
                 draft["body"] = ""
                 write_draft(path, draft)
                 raise GateFailure(
                     "refused_no_confirm",
-                    "owner replied NO or skip; the draft was not sent"
+                    "owner replied NO, DROP, or skip; the draft was not sent"
                     if dropped
                     else "confirm was not SEND; the draft was not sent",
                     extra={"draft_id": draft_id, "dest": dest},

@@ -157,7 +157,7 @@ test("6.0 PR #10 and RED-629 are present and Kanban is off", () => {
   const skill = readFileSync(skillPath, "utf8");
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   assert.match(sms, /HERMES_DELEGATED_CHILD_CONTEXT/);
-  assert.match(sms, /red-390-v2/);
+  assert.match(sms, /red-390-v3/);
   assert.match(sms, /assert_not_delegated_child/);
   assert.match(sms, /refused_autonomous/);
   assert.match(smsText, /Why line/);
