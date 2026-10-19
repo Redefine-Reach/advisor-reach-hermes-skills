@@ -12,6 +12,9 @@ Two modes:
       David FAIL) tagged invented_fact, send or privacy. Nothing is compared, and no
       grader output is shown, until every picked case is rated.
       stdout: counts and case ids only (never David's notes, never case text).
+      Side-by-side does not embed reply text. If a future path copies the rating sheet
+      or replies off-box, names must use CLIENT_n (scan_reply's redacted field), never
+      the on-box sheet_text with real names.
 """
 
 from __future__ import annotations

@@ -13,13 +13,15 @@ Selection (fixed before David sees anything):
   * every random choice comes from random.Random(seed), so the same results file + seed
     always gives the same 10 ids in the same order.
 
-Reply scan (Vault, PR #57): before rating-sheet.md is written, every picked reply goes through the
-exporter's redaction (redact.py, with --known-names when given) and its credential patterns
-(grader/reply_scan.py). A credential in any picked reply writes NOTHING and exits 3 with the
-case ids only. Phone/email/health/name hits are counted per case in picks.json and flagged.
-After the sheet is written and re-read (every id present, no credential, 0600), the raw
---replies file is shredded (overwritten, unlinked, absence confirmed). --keep-raw-replies keeps
-it, and is refused unless every pick is synthetic.
+Reply scan (Vault, PR #57 + rating-sheet follow-up): before rating-sheet.md is written, every
+picked reply goes through the exporter's redaction and credential patterns (grader/reply_scan.py).
+A credential in any picked reply writes NOTHING and exits 3 with the case ids only.
+Phone/email/health/name hits are counted per case in picks.json and flagged. The on-box
+rating sheet keeps real names (phones/emails still masked) so David rates the reply as sent;
+any copy that leaves the box must use CLIENT_n (scan_reply's redacted field). After the sheet
+is written and re-read (every id present, no credential, 0600), the raw --replies file is
+shredded (overwritten, unlinked, absence confirmed). --keep-raw-replies keeps it, and is
+refused unless every pick is synthetic.
 
 Permissions (same rules as the exporter, grader/secure_out.py): every output, the out folder and
 its parents are checked BEFORE anything is written; a git checkout, a loose (0755, 2770 ...)
@@ -29,8 +31,9 @@ Every output gets a deletion date (30 days) in retention-manifest.json.
 Outputs (in --out-dir; dir 0700, files 0600; never inside a git worktree):
   * picks.json      seed, results sha256, the 10 ids in sheet order, which rules were met.
                     No per-case grader verdict or score (David may open the folder).
-  * rating-sheet.md for each case: redacted context turns, last owner message, ARIN's last
-                    reply. NO grader score, verdict, reason code, hard fail or gate.
+  * rating-sheet.md for each case: context turns, last owner message, ARIN's last reply
+                    with phones/emails masked and **real names kept** (0600, on-box only).
+                    NO grader score, verdict, reason code, hard fail or gate.
   * ratings.json    the blank form David fills: case_id, verdict (PASS|FAIL),
                     fail_reason (invented_fact|send|privacy|other), note.
 
@@ -243,10 +246,11 @@ def render_sheet(ids: list[str], cases: dict[str, dict[str, Any]], replies: dict
         "  `privacy` (leaked, kept, or showed something it shouldn't), or `other`",
         "- `note`: one line in your words",
         "",
-        "This file stays on the box. Do not copy it anywhere."
+        "This file stays on the box (0600). Do not copy it anywhere."
         + (f" It is deleted by {delete_by}." if delete_by else ""),
-        "ARIN's replies went through the same redaction as your exported cases, so names and",
-        "numbers may show as CLIENT_n or [PHONE ***1234].",
+        "Phones, emails and similar details are masked ([PHONE ***1234], [REDACTED_EMAIL]).",
+        "Real names are kept on this on-box sheet so you can rate the reply as sent. Any copy",
+        "that leaves the box must replace names with CLIENT_n first.",
         "",
     ]
     for n, cid in enumerate(ids, 1):
@@ -338,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
         if blocked:
             print(json.dumps({"ok": False, "error": "reply_credential", "case_ids": blocked}), file=sys.stderr)
             return 3
-        sheet_replies = {cid: scans[cid]["redacted"] for cid in pick["ids"]}
+        sheet_replies = {cid: scans[cid]["sheet_text"] for cid in pick["ids"]}
         flags = {cid: flag_summary(scans[cid]["counts"]) for cid in pick["ids"]}
         delete_by = deletion_date()
         picks = {

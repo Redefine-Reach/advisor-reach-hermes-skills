@@ -46,7 +46,7 @@ function plantReplies(dir, fn) {
   return rows.map((r) => r.case_id);
 }
 
-test("a reply with a phone number and a known name is redacted on the sheet, counted and flagged", () => {
+test("on-box sheet keeps real names; phones stay masked; name hits counted; off-box redacted uses CLIENT_n", () => {
   const dir = tmp("mvq-safe-");
   try {
     assert.equal(baseline(dir).status, 0);
@@ -56,17 +56,33 @@ test("a reply with a phone number and a known name is redacted on the sheet, cou
     const res = pick(dir, ["--known-names", names]);
     assert.equal(res.status, 0, res.stdout + res.stderr);
     const sheet = readFileSync(join(dir, "pick", "rating-sheet.md"), "utf8");
-    assert.doesNotMatch(sheet, /Octavian|Wrexley/);
+    // On-box rating sheet: real names kept so David rates the reply as sent.
+    assert.match(sheet, /Octavian Wrexley/);
+    assert.doesNotMatch(sheet, /CLIENT_\d+/);
     assert.doesNotMatch(sheet.replace(/[-\s]/g, ""), /4805550177/);
     assert.match(sheet, /\[PHONE \*\*\*0177\]/);
     assert.match(sheet, /_Check: ARIN's reply had phone details/);
+    assert.match(sheet, /Real names are kept on this on-box sheet/);
     const picks = JSON.parse(readFileSync(join(dir, "pick", "picks.json"), "utf8"));
     for (const id of picks.case_ids) {
       assert.ok(picks.reply_scan[id].phone >= 1 && picks.reply_scan[id].name >= 1, id);
       assert.deepEqual(picks.reply_flags[id], ["phone"]);
     }
+    // Counts / stdout / picks never carry the name or phone digits.
     assert.doesNotMatch(JSON.stringify(picks) + res.stdout + res.stderr, /Octavian|0177/);
     assert.ok(!existsSync(join(dir, "raw", "replies.jsonl"))); // raw file gone after the sheet
+    // Off-box form (scan_reply.redacted) still replaces names with CLIENT_n.
+    const probe = spawnSync("python3", ["-c",
+      "from grader.reply_scan import scan_reply\n"
+      + "s=scan_reply('Texted nothing yet. Octavian Wrexley asked you to call 480-555-0177.',"
+      + "['Octavian Wrexley'])\n"
+      + "assert 'Octavian' in s['sheet_text'] and 'CLIENT_' not in s['sheet_text']\n"
+      + "assert 'CLIENT_' in s['redacted'] and 'Octavian' not in s['redacted']\n"
+      + "assert '[PHONE' in s['sheet_text'] and '[PHONE' in s['redacted']\n"
+      + "print('ok')\n"],
+      { cwd: mz, encoding: "utf8", env: ENV });
+    assert.equal(probe.status, 0, probe.stdout + probe.stderr);
+    assert.match(probe.stdout, /^ok$/m);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

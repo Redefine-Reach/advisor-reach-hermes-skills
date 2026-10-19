@@ -7,7 +7,10 @@ known-names file when given) and its credential patterns, plus common API-key sh
   * credential: any hit BLOCKS the reply. run_mvq never grades it (status "blocked_credential",
     never PASS) and never writes it to --replies-out; pick_agreement writes no sheet at all.
   * phone / email / health / name: counted and flagged for David (counts only, never values).
-  * redacted: the reply text after the exporter's redaction, used on the blind rating sheet.
+  * sheet_text: phones/emails/etc masked, **real names kept** — only for the 0600 on-box
+    rating sheet David rates on ARIN TEST (Vault follow-up: CLIENT_n changes what he rates).
+  * redacted: full exporter redaction including CLIENT_n — any copy that leaves the box,
+    side-by-side exports, reports, or off-box paths must use this (never sheet_text).
 """
 
 from __future__ import annotations
@@ -56,6 +59,18 @@ def _name_map_pass(text: str, name_map: dict[str, str]) -> str:
     return pat.sub(lambda m: name_map[m.group(1).lower()], text)
 
 
+def _sheet_text_keep_names(original: str, redacted: str, name_map: dict[str, str]) -> str:
+    """On-box rating sheet: put real names back; leave phone/email/credential masks in place."""
+    if not name_map:
+        return redacted
+    out = redacted
+    # Longer tags first so CLIENT_10 is not partially matched as CLIENT_1.
+    for raw_lower, tag in sorted(name_map.items(), key=lambda kv: (-len(kv[1]), -len(kv[0]))):
+        m = re.search(rf"\b{re.escape(raw_lower)}\b", original, re.IGNORECASE)
+        out = out.replace(tag, m.group(0) if m else raw_lower)
+    return out
+
+
 def load_known(path: Path | None) -> list[str]:
     """Known names via the exporter's loader (the file must be 0600, like the export run)."""
     return _redact.load_known_names(path) if path is not None else []
@@ -68,11 +83,12 @@ def has_credential(text: str) -> bool:
 
 
 def scan_reply(text: str, known_names: list[str] | None = None, owner_name: str = "") -> dict[str, Any]:
-    """Return {"credential": bool, "counts": {phone,email,health,name,credential}, "redacted": str}."""
+    """Return credential, counts, sheet_text (names kept), and redacted (CLIENT_n for off-box)."""
     text = text or ""
     ctx = _redact.RedactionContext(known_names=list(known_names or []), owner_name=owner_name)
     redacted, _codes = _redact.redact_text(text, ctx)
     redacted = _name_map_pass(redacted, ctx._name_map)
+    sheet_text = _sheet_text_keep_names(text, redacted, ctx._name_map)
     cc = ctx.class_counts
     health = len(_redact._HEALTH_DROP.findall(text)) + len(_EXTRA_HEALTH.findall(text))
     cred_hits = sum(len(p.findall(text)) for p in (*_redact._CRED_PATTERNS, *_EXTRA_KEY_PATTERNS))
@@ -84,7 +100,12 @@ def scan_reply(text: str, known_names: list[str] | None = None, owner_name: str 
         "health": health,
         "name": cc.get("name", 0),
     }
-    return {"credential": credential, "counts": counts, "redacted": redacted}
+    return {
+        "credential": credential,
+        "counts": counts,
+        "sheet_text": sheet_text,
+        "redacted": redacted,
+    }
 
 
 def flag_summary(counts: dict[str, int]) -> list[str]:
