@@ -6,7 +6,9 @@ Redactor contract (one session at a time):
   Excluded = non-zero exit, crash, timeout, OR no output file / empty output.
   Anything written to {out} is scanned even when the exit code is non-zero (fail-open output = leak).
 Exit codes: 0 clean; 1 any leak (or a detector-error session not excluded); 2 only over-redaction/over-exclusion
-(controls changed/dropped) and --fail-on-overredaction; 3 setup error.
+(controls changed/dropped) and --fail-on-overredaction; 3 setup error; 4 any redactor crash or timeout
+(a crash still counts as excluded for leak scoring, but never passes CI). With --expect-over-ids, exit 2 means
+the over-redacted/over-excluded control ids differ from that exact list (new or gone).
 Report prints counts only: categories, session ids and counts. Planted FAKE values are never printed.
 """
 import argparse, json, os, re, shlex, subprocess, sys, tempfile
@@ -62,6 +64,9 @@ def main():
     ap.add_argument("--fail-on-overredaction", action="store_true")
     ap.add_argument("--strict-drop", action="store_true",
                     help="count a health/legal/do-not-keep/forgotten session that was redacted but not dropped as a leak")
+    ap.add_argument("--expect-over-ids", default=None,
+                    help="comma-separated control ids expected to be over-redacted/over-excluded; with "
+                         "--fail-on-overredaction, fail (2) only when the set differs (new or gone)")
     ap.add_argument("--json", help="write the machine report here (counts only)")
     ap.add_argument(
         "--private-sessions",
@@ -79,6 +84,7 @@ def main():
             a.fail_on_overredaction,
             a.strict_drop,
             a.json,
+            None,
         )
         if code != 0:
             return code
@@ -91,10 +97,11 @@ def main():
         a.fail_on_overredaction,
         a.strict_drop,
         a.json,
+        a.expect_over_ids,
     )
 
 
-def main_run(cmd_tpl, sd: Path, label: str, cwd, timeout, fail_on_over, strict_drop, json_path):
+def main_run(cmd_tpl, sd: Path, label: str, cwd, timeout, fail_on_over, strict_drop, json_path, expect_over=None):
     sd = Path(sd).resolve()
     keys = [json.loads(l) for l in (sd / "answer_keys.jsonl").read_text().splitlines() if l.strip()]
     if not keys:
@@ -205,6 +212,18 @@ def main_run(cmd_tpl, sd: Path, label: str, cwd, timeout, fail_on_over, strict_d
         os.chmod(json_path, 0o600)
     if total_leak or err_not_excluded:
         return 1
+    if crashes:
+        print(f"CRASHES: {len(crashes)} (CI fails on any crash)")
+        return 4
+    over_ids = set(i for i, _ in over) | set(i for i, _ in over_excl)
+    if expect_over is not None:
+        want = set(x for x in expect_over.split(",") if x)
+        new, gone = sorted(over_ids - want), sorted(want - over_ids)
+        if new or gone:
+            print(f"over-redaction pin mismatch: new={','.join(new) or 'none'} gone={','.join(gone) or 'none'}")
+            if fail_on_over:
+                return 2
+        return 0
     if fail_on_over and (over or over_excl):
         return 2
     return 0
