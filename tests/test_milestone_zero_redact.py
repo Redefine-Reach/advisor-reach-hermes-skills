@@ -257,6 +257,45 @@ class CheckLeaksCI(unittest.TestCase):
             self.assertIn("LEAKS TOTAL: 0", proc.stdout)
 
 
+    # Over-dropped / over-redacted controls are pinned exactly: a NEW one fails CI, and one that
+    # disappears also fails (so it gets reported and the pin updated deliberately).
+    # Each entry: set -> (over_redacted, over_excluded, ids). Reasons per id are in the comments.
+    PINNED_CONTROLS = {
+        "main": (0, 4, {
+            "s132",  # "therapy dog" hold removed (Vault 029b63a): drops as health
+            "s133",  # "custody of the ... keys" hold removed: drops as legal
+            "s134",  # "chapter 7 of the" hold removed: drops as legal
+            "s136",  # "hospital-district" hold removed: drops as health
+        }),
+        "heldout": (0, 0, set()),
+        "heldout2": (2, 0, {
+            "u035",  # "Hunter Douglas" hold removed: brand redacted as a name
+            "u036",  # "Mason jar" hold removed: "Mason" redacted as a name
+        }),
+    }
+
+    def test_pinned_over_redacted_and_over_dropped_controls(self) -> None:
+        import re as _re
+        cmd = (
+            "python3 export_session_to_case.py --session {in} --redacted-text-out {out} "
+            "--known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex --source cli"
+        )
+        dirs = {"main": FIX_MAIN, "heldout": MZ / "fixtures" / "fake_sessions_heldout",
+                "heldout2": MZ / "fixtures" / "fake_sessions_heldout2"}
+        for label, (want_red, want_exc, want_ids) in self.PINNED_CONTROLS.items():
+            proc = subprocess.run(
+                [sys.executable, str(MZ / "check_leaks.py"), "--label", label, "--cwd", str(MZ),
+                 "--sessions", str(dirs[label]), "--cmd", cmd, "--strict-drop"],
+                capture_output=True, text=True, cwd=str(MZ),
+            )
+            m = _re.search(r"over-redacted=(\d+) .*over-excluded=(\d+)", proc.stdout)
+            self.assertIsNotNone(m, proc.stdout + proc.stderr)
+            ids_m = _re.search(r"control ids: (\S+)", proc.stdout)
+            got_ids = set(ids_m.group(1).split(",")) if ids_m else set()
+            new, gone = sorted(got_ids - want_ids), sorted(want_ids - got_ids)
+            self.assertEqual((new, gone), ([], []), f"{label}: new over-drop/over-redaction {new}; no longer over {gone}")
+            self.assertEqual((int(m.group(1)), int(m.group(2))), (want_red, want_exc), label)
+
 
 def _msg(role: str, content: str) -> dict[str, str]:
     return {"role": role, "content": content}
