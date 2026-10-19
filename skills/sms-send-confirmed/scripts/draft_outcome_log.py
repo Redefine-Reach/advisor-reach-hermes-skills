@@ -15,6 +15,8 @@ from typing import Mapping
 OUTCOME_KIND = "sms"
 OUTCOME_NAMES = frozenset({"sent_as_is", "sent_after_edit", "cancelled", "ignored", "refused"})
 REFUSE_REASON_RE = re.compile(r"^[a-z][a-z_]{0,31}$")
+RESTAGEABLE_REFUSE_REASONS = frozenset({"unfilled_placeholder", "opted_out", "over_length"})
+PROVIDER_REFUSE_REASONS = frozenset({"provider_error", "provider_no_id"})
 OUTCOME_LINE_KEYS = frozenset(
     {
         "ts",
@@ -131,8 +133,16 @@ def never_contains_violations(line: dict) -> list[str]:
     for key in ("body", "dest", "approver", "why", "why_line", "note"):
         if key in line:
             hits.append(f"field:{key}")
+    chain = line.get("replaces_chain")
+    if isinstance(chain, list):
+        for item in chain:
+            token = str(item or "")
+            if not DRAFT_ID_RE.fullmatch(token):
+                hits.append("bad_chain_id")
     for key, value in line.items():
-        if key in {"body_hash_first", "body_hash_final", "draft_id"}:
+        if key == "replaces_chain":
+            continue
+        if key in {"body_hash_first", "body_hash_final", "draft_id", "refuse_reason"}:
             continue
         text = json.dumps(value, ensure_ascii=True)
         if EMAIL_RE.search(text):
@@ -316,7 +326,8 @@ def inherit_chain_fields(record: dict, previous: dict, body: str, body_hash: str
     record["len_first"] = int(previous.get("len_first") or len(str(previous.get("body") or "")) or len(body))
     record["chain_created_at"] = str(previous.get("chain_created_at") or previous.get("created_at") or "")
     prev_body = str(previous.get("body") or "")
-    record["edit_distance"] = edit_distance(prev_body, body) if prev_body else 0
+    round_dist = edit_distance(prev_body, body) if prev_body else 0
+    record["edit_distance"] = int(previous.get("edit_distance") or 0) + round_dist
 
 
 def strip_plaintext_fields(data: dict) -> None:

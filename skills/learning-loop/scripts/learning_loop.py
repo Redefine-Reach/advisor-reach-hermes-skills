@@ -41,15 +41,16 @@ LABEL_MAX = 80
 
 
 def require_owner_session() -> None:
-    if os.environ.get("LEARNING_LOOP_ENFORCE_OWNER") != "1":
-        return
+    """Refuse only when the turn sender is known and not on the owner allowlist."""
     actor = str(os.environ.get("LEARNING_LOOP_ACTOR", "")).strip()
+    if not actor:
+        return
     owners = {
         part.strip()
         for part in str(os.environ.get("LEARNING_LOOP_OWNERS", "")).split(",")
         if part.strip()
     }
-    if actor and actor in owners:
+    if not owners or actor in owners:
         return
     blocked("error", OWNER_ONLY)
 

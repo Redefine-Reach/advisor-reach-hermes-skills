@@ -40,7 +40,7 @@ function draftFiles(dir) {
 function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), options = {}) {
   // Existing stage flows stay valid: a Why line is required, so inject one
   // unless the test passed --why itself or opted out.
-  const cmdArgs =
+  let cmdArgs =
     options.why === false || args[0] !== "stage" || args.includes("--why")
       ? args
       : [
@@ -50,6 +50,15 @@ function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), o
           "--source-kind",
           "owner_text",
         ];
+  if (cmdArgs[0] === "send" && !cmdArgs.includes("--actor")) {
+    cmdArgs = [...cmdArgs, "--actor", OWNER];
+  }
+  if (cmdArgs[0] === "cancel" && !cmdArgs.includes("--actor")) {
+    cmdArgs = [...cmdArgs, "--actor", OWNER];
+  }
+  if (cmdArgs[0] === "stage" && cmdArgs.includes("--replaces") && !cmdArgs.includes("--actor")) {
+    cmdArgs = [...cmdArgs, "--actor", OWNER];
+  }
   const calls = join(dir, "calls.jsonl");
   const transport = join(dir, "transport.py");
   writeFileSync(
@@ -801,7 +810,17 @@ test("a Telegram approver can confirm and cannot be the destination", () => {
   );
   assert.equal(staged.payload.outcome, "staged");
   const sent = run(
-    ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
+    [
+      "send",
+      "--draft-id",
+      staged.payload.draft_id,
+      "--confirm",
+      "SEND",
+      "--attest",
+      "yes",
+      "--actor",
+      "424242",
+    ],
     { TELEGRAM_ALLOWED_USERS: "424242" },
     dir,
   );
@@ -1744,7 +1763,10 @@ test("send refuses a draft whose body still has a bracketed placeholder, and res
     assert.ok(sent.payload.placeholders.length >= 1);
     const files = draftFiles(dir).map((n) => JSON.parse(readFileSync(join(dir, "drafts", n), "utf8")));
     assert.equal(files.length, 1);
-    assert.ok(files.every((d) => d.status === "cancelled" && d.body === ""), "draft is cancelled and body cleared");
+    assert.ok(
+      files.every((d) => d.status === "refused" && d.refuse_reason === "unfilled_placeholder" && d.body === ""),
+      "draft is refused with reason and body stripped from disk",
+    );
   }
   const spaced = stageThenSend("Hi Dana, the showing is on [ DATE ].", why);
   assert.equal(spaced.sent.payload.outcome, "refused_unfilled_placeholder", spaced.sent.stdout);

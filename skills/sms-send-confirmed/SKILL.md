@@ -245,7 +245,7 @@ style notes apply. Do not announce that you recorded anything.
   `learning_loop` op `record` with `action="edit"` and a `note` that states
   the change in plain words ("shorter, no exclamation"), never the draft body.
   Then re-stage with `replaces` set to that `draft_id`, the updated body, and
-  a fresh Why line when the recipient or message changed enough to need one.
+  a **new** Why line (the guard refuses a reused Why whenever the body changes).
   Show the new attestation and wait again for SEND or DROP.
 - If it is `DROP`, `NO`, or `skip` (after trimming; either case), run
   `sms_stage(action="cancel", draft_id=<id>)`, then `learning_loop` op
@@ -273,7 +273,8 @@ a follow-up text to that person.
 
 If the outcome is not `sent`, tell the owner the `reason` in their words
 and stop. Do not retry a provider error, a timeout, or a draft whose
-status is `sending` or `error` — a retry can text them twice. You may fix
+status is `sending` or `refused` with `refuse_reason` `provider_error` or
+`provider_no_id` — a retry can text them twice. You may fix
 one named `field` (`dest`, `body`, `approver`, or `why`) and `stage` once more,
 which needs a new `SEND`. A `field` of `from` means the box number is
 missing: stop, and do not invent one. A `field` of `attest` means you may

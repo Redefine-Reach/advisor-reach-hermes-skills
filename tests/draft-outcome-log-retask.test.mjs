@@ -16,6 +16,7 @@ const gatePath = join(here, "fixtures", "learning-loop", "arin_donotkeep.py");
 const judgePath = join(here, "fixtures", "learning-loop", "judge.py");
 
 const OWNER = "+17145550100";
+const OWNER2 = "+17145550333";
 const STRANGER = "+17145550222";
 const DEST = "+15555550199";
 const DEST2 = "+15555550200";
@@ -54,7 +55,14 @@ function runSms(dir, args, extra = {}) {
     CALLS: calls,
     ...extra,
   };
-  const proc = spawnSync("python3", [scriptPath, ...args], { env, encoding: "utf8" });
+  let cmd = [...args];
+  if (cmd[0] === "send" && !cmd.includes("--actor")) {
+    cmd = [...cmd, "--actor", OWNER];
+  }
+  if (cmd[0] === "cancel" && !cmd.includes("--actor")) {
+    cmd = [...cmd, "--actor", OWNER];
+  }
+  const proc = spawnSync("python3", [scriptPath, ...cmd], { env, encoding: "utf8" });
   let payload = null;
   try {
     payload = JSON.parse(proc.stdout || "null");
@@ -77,7 +85,20 @@ function stage(dir, body, extra = {}) {
   const { replaces: _r, dest: _d, why: _w, ...envExtra } = extra;
   return runSms(
     dir,
-    ["stage", "--approver", OWNER, "--dest", dest, "--body", body, "--why", why, "--source-kind", "owner_text", ...(replaces ? ["--replaces", replaces] : [])],
+    [
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      dest,
+      "--body",
+      body,
+      "--why",
+      why,
+      "--source-kind",
+      "owner_text",
+      ...(replaces ? ["--replaces", replaces, "--actor", OWNER] : []),
+    ],
     envExtra,
   );
 }
@@ -159,20 +180,12 @@ test("item4 Jerry refused outcome on provider failure with re-stage chain and ex
   assert.doesNotMatch(JSON.stringify(lines[0]), /rejected/);
   const loopBefore = runLoop(dir, ["show"]);
   assert.equal(loopBefore.store?.signals?.length ?? 0, 0);
-  const fixed = stage(dir, "Provider fail path fixed for you.", {
+  const blockedRestage = stage(dir, "Provider fail path fixed for you.", {
     replaces: refusedId,
     why: "They still need the confirmation before the afternoon call",
   });
-  assert.equal(fixed.payload.outcome, "staged");
-  runSms(
-    dir,
-    ["send", "--draft-id", fixed.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
-    { SMS_SEND_STUB_PROVIDER: "1" },
-  );
-  assert.equal(outcomeLines(dir).length, 2);
-  assert.equal(outcomeLines(dir)[0].outcome, "refused");
-  const sentLine = outcomeLines(dir)[1];
-  assert.deepEqual(sentLine.replaces_chain, [refusedId]);
+  assert.equal(blockedRestage.payload.outcome, "error");
+  assert.equal(outcomeLines(dir).length, 1);
   const cancelled = stage(dir, "You asked to drop this follow-up entirely.", {
     why: "They asked to drop this follow-up before the afternoon call",
   });
@@ -200,7 +213,8 @@ test("item4 non-SEND reply and unfilled placeholder write cancelled outcomes", (
   const phSend = runSms(dir, ["send", "--draft-id", ph.payload.draft_id, "--confirm", "SEND", "--attest", "yes"]);
   assert.equal(phSend.payload.outcome, "refused_unfilled_placeholder");
   assert.equal(outcomeLines(dir).length, 2);
-  assert.equal(outcomeLines(dir)[1].outcome, "cancelled");
+  assert.equal(outcomeLines(dir)[1].outcome, "refused");
+  assert.equal(outcomeLines(dir)[1].refuse_reason, "unfilled_placeholder");
 });
 
 test("item5 re-stage keeps recipient and refuses reused Why when body changes", () => {
@@ -223,26 +237,119 @@ test("item6 no draft file keeps plaintext body after finals", () => {
   }
 });
 
-test("item7 non-owner cancel writes no outcome lines", () => {
-  const dir = home();
-  const s = stage(dir, "Checking in with you today.");
-  const id = s.payload.draft_id;
-  const draftPath = join(dir, "drafts", `${id}.json`);
-  const draft = JSON.parse(readFileSync(draftPath, "utf8"));
-  draft.approver = STRANGER;
-  writeFileSync(draftPath, JSON.stringify(draft));
-  const refused = runSms(dir, ["cancel", "--draft-id", id]);
-  assert.equal(refused.payload.outcome, "refused_not_owner");
-  assert.equal(outcomeLines(dir).length, 0);
+function draftSnapshot(dir, id) {
+  return readFileSync(join(dir, "drafts", `${id}.json`), "utf8");
+}
+
+function assertDraftUnchanged(dir, id, before) {
+  assert.equal(readFileSync(join(dir, "drafts", `${id}.json`), "utf8"), before);
+}
+
+test("item7 AC18 only draft approver may cancel send or re-stage", () => {
+  for (const actor of [OWNER2, STRANGER]) {
+    const dir = home();
+    const envExtra = {
+      TELNYX_SMS_ALLOWED_USERS: `${OWNER},${OWNER2}`,
+    };
+    const s = stage(dir, "You can reply when you have a moment.", envExtra);
+    assert.equal(s.payload.outcome, "staged", s.proc.stderr);
+    const id = s.payload.draft_id;
+    const before = draftSnapshot(dir, id);
+    const cancel = runSms(dir, ["cancel", "--draft-id", id, "--actor", actor], envExtra);
+    assert.equal(cancel.payload.outcome, "refused_not_owner");
+    assert.equal(outcomeLines(dir).length, 0);
+    assertDraftUnchanged(dir, id, before);
+    const send = runSms(
+      dir,
+      ["send", "--draft-id", id, "--confirm", "SEND", "--attest", "yes", "--actor", actor],
+      { ...envExtra, SMS_SEND_STUB_PROVIDER: "1" },
+    );
+    assert.equal(send.payload.outcome, "refused_not_owner");
+    assert.equal(outcomeLines(dir).length, 0);
+    assertDraftUnchanged(dir, id, before);
+    const restage = runSms(
+      dir,
+      [
+        "stage",
+        "--approver",
+        OWNER,
+        "--dest",
+        DEST,
+        "--body",
+        "You should not reach this re-stage.",
+        "--why",
+        "Another reason for the afternoon call slot",
+        "--source-kind",
+        "owner_text",
+        "--replaces",
+        id,
+        "--actor",
+        actor,
+      ],
+      envExtra,
+    );
+    assert.equal(restage.payload.outcome, "refused_not_owner");
+    assert.equal(outcomeLines(dir).length, 0);
+    assertDraftUnchanged(dir, id, before);
+  }
 });
 
 test("item7 learning_loop record refused for non-owner session", () => {
   const dir = home();
   const r = runLoop(dir, ["record", "--kind", "follow-up", "--action", "edit", "--note", "shorter"], {
     LEARNING_LOOP_ACTOR: STRANGER,
+    LEARNING_LOOP_OWNERS: OWNER,
   });
   assert.equal(r.payload.ok, false);
   assert.equal(r.store, null);
+});
+
+test("item6 learning_loop non-owner show and forget leave loop.json unchanged", () => {
+  const dir = home();
+  runLoop(dir, ["record", "--kind", "follow-up", "--action", "edit", "--note", "shorter"], {
+    LEARNING_LOOP_ACTOR: OWNER,
+    LEARNING_LOOP_OWNERS: OWNER,
+  });
+  const before = readFileSync(join(dir, "learning", "loop.json"), "utf8");
+  for (const args of [["show"], ["forget", "--style-note"]]) {
+    const r = runLoop(dir, args, { LEARNING_LOOP_ACTOR: STRANGER, LEARNING_LOOP_OWNERS: OWNER });
+    assert.equal(r.payload.ok, false);
+    assert.equal(readFileSync(join(dir, "learning", "loop.json"), "utf8"), before);
+  }
+  const r2 = runLoop(dir, ["show"], { LEARNING_LOOP_OWNERS: OWNER });
+  assert.equal(r2.payload.ok, true);
+});
+
+test("item1 N1 digit-heavy replaces_chain id writes exactly one outcome line", () => {
+  const dir = home();
+  const heavy = "a1292779231167a2";
+  const s1 = runSms(
+    dir,
+    [
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      DEST,
+      "--body",
+      "First chain body for you.",
+      "--why",
+      WHY,
+      "--source-kind",
+      "owner_text",
+    ],
+    { SMS_DRAFT_ID_NEXT: heavy },
+  );
+  assert.equal(s1.payload.draft_id, heavy);
+  const s2 = stage(dir, "Second chain body for you.", {
+    replaces: heavy,
+    why: "Second reason for your update today",
+  });
+  const sent = runSms(dir, ["send", "--draft-id", s2.payload.draft_id, "--confirm", "SEND", "--attest", "yes"], {
+    SMS_SEND_STUB_PROVIDER: "1",
+  });
+  assert.equal(sent.outcomes.length, 1);
+  assert.deepEqual(sent.outcomes[0].replaces_chain, [heavy]);
 });
 
 test("item10 stub ignored without test mode unless allow flag", () => {

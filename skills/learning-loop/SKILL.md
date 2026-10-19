@@ -32,7 +32,8 @@ On a text turn, call the box plugin `learning_loop` with these ops (not `execute
 | `next` | `next --kind <kind>` | before every new draft of that kind |
 | `show` | `show` or `show --kind <kind>` | what you learned from drafts |
 | `forget` | `forget --id` / `--text` (preference), `--style-note` [--about], or client procedure fields | owner names what to remove |
-| `list` / `apply` / `status` | same as today | memory questions and Daily Brief prefs |
+| `list` | `list` | saved preferences and client procedures |
+| `apply` / `status` | use `list` and `show` (no separate plugin op) | memory questions and Daily Brief prefs |
 
 Non-owner sessions must not call `record`, `show`, or `forget`; the plugin refuses them.
 

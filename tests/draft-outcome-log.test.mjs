@@ -72,7 +72,17 @@ function runSms(dir, args, extra = {}) {
     CALLS: calls,
     ...extra,
   };
-  const proc = spawnSync("python3", [scriptPath, ...args], { env, encoding: "utf8" });
+  let cmd = args;
+  if (cmd[0] === "send" && !cmd.includes("--actor")) {
+    cmd = [...cmd, "--actor", OWNER];
+  }
+  if (cmd[0] === "cancel" && !cmd.includes("--actor")) {
+    cmd = [...cmd, "--actor", OWNER];
+  }
+  if (cmd[0] === "stage" && cmd.includes("--replaces") && !cmd.includes("--actor")) {
+    cmd = [...cmd, "--actor", OWNER];
+  }
+  const proc = spawnSync("python3", [scriptPath, ...cmd], { env, encoding: "utf8" });
   let payload = null;
   try {
     payload = JSON.parse(proc.stdout || "null");
@@ -104,7 +114,7 @@ function stage(dir, body, extra = {}) {
       why,
       "--source-kind",
       "owner_text",
-      ...(replaces ? ["--replaces", replaces] : []),
+      ...(replaces ? ["--replaces", replaces, "--actor", OWNER] : []),
     ],
     envExtra,
   );

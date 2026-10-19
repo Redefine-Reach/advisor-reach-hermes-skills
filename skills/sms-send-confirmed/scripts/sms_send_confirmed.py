@@ -1668,6 +1668,42 @@ def assert_draft_owner(ctx: dict, draft: dict, *, draft_id: str) -> None:
         )
 
 
+def resolve_turn_actor(raw: str, *, field: str = "actor") -> str:
+    text = str(raw or "").strip()
+    if not text:
+        raise GateFailure(
+            "error",
+            "turn actor is required for send, cancel, and stage --replaces",
+            field=field,
+            status=EXIT_ERROR,
+        )
+    if TELEGRAM_ID_RE.fullmatch(text):
+        return text
+    kind, number = classify_phone(text)
+    if kind == "ok" and number:
+        return number
+    raise GateFailure("error", "actor is not valid", field=field, status=EXIT_ERROR)
+
+
+def assert_actor_is_draft_approver(draft: dict, actor: str, *, draft_id: str) -> None:
+    approver = str(draft.get("approver") or "")
+    if actor != approver:
+        raise GateFailure(
+            "refused_not_owner",
+            "only the draft approver may act on this draft",
+            field="actor",
+            extra={"draft_id": draft_id, "dest": str(draft.get("dest") or "")},
+        )
+
+
+def new_draft_id() -> str:
+    forced = str(os.environ.get("SMS_DRAFT_ID_NEXT", "")).strip()
+    if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1" and _draft_outcomes.DRAFT_ID_RE.fullmatch(forced):
+        os.environ.pop("SMS_DRAFT_ID_NEXT", None)
+        return forced
+    return os.urandom(8).hex()
+
+
 def snapshot_for_outcome(draft: dict, body: str) -> None:
     draft["body_hash_final"] = str(draft.get("body_hash") or "")
     draft["len_final"] = len(body)
@@ -1732,6 +1768,7 @@ def stage(
     source_name_raw: str = "",
     source_ref_raw: str = "",
     replaces_raw: str = "",
+    actor_raw: str = "",
 ) -> int:
     try:
         ctx = context()
@@ -1792,6 +1829,27 @@ def stage(
                         field="replaces",
                         status=EXIT_ERROR,
                     )
+                actor = resolve_turn_actor(actor_raw, field="actor")
+                if actor != approver:
+                    raise GateFailure(
+                        "refused_not_owner",
+                        "actor must match the staging approver",
+                        field="actor",
+                    )
+                assert_actor_is_draft_approver(previous, actor, draft_id=replaces_id)
+                prev_refuse = str(previous.get("refuse_reason") or "")
+                if prev_status == "refused" and prev_refuse not in _draft_outcomes.RESTAGEABLE_REFUSE_REASONS:
+                    raise GateFailure(
+                        "error",
+                        "this draft cannot be re-staged after a provider failure",
+                        field="replaces",
+                        status=EXIT_ERROR,
+                    )
+                if prev_status == "refused" and pending_blocks(ctx["store"]["drafts"], now):
+                    raise GateFailure(
+                        "refused_multi",
+                        "a draft is already waiting for SEND; cancel it before staging another",
+                    )
                 if str(previous.get("approver") or "") != approver:
                     raise GateFailure(
                         "refused_not_owner",
@@ -1822,7 +1880,7 @@ def stage(
                     body=body,
                     why_line=why_line,
                 )
-            draft_id = os.urandom(8).hex()
+            draft_id = new_draft_id()
             expires = now + draft_ttl()
             created_at = iso(now)
             body_digest = body_hash(body)
@@ -1913,7 +1971,7 @@ def cancel_draft(directory: Path, draft_id: str, reason: str) -> tuple[dict | No
     return data, True
 
 
-def send(draft_id: str, confirm: str, attest: str) -> int:
+def send(draft_id: str, confirm: str, attest: str, actor_raw: str = "") -> int:
     ctx: dict = {}
     draft: dict = {}
     held_body = ""
@@ -1948,6 +2006,8 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                     "this draft is not waiting for a confirm",
                     extra={"draft_id": draft_id, "dest": dest},
                 )
+            actor = resolve_turn_actor(actor_raw, field="actor")
+            assert_actor_is_draft_approver(draft, actor, draft_id=draft_id)
             assert_draft_owner(ctx, draft, draft_id=draft_id)
             if utc_now() >= parse_expiry(draft):
                 snapshot_for_outcome(draft, body)
@@ -1980,12 +2040,14 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                 )
             left = unfilled_placeholders(body)
             if left:
-                draft["status"] = "cancelled"
-                draft["cancelled_reason"] = "unfilled placeholder"
-                snapshot_for_outcome(draft, body)
-                maybe_finalize_draft_outcome(ctx["store"], draft, "cancelled", box_id=ctx["box_id"])
-                _draft_outcomes.strip_plaintext_fields(draft)
-                write_draft(path, draft)
+                finalize_script_refused_draft(
+                    ctx["store"],
+                    draft,
+                    path,
+                    box_id=ctx["box_id"],
+                    refuse_reason="unfilled_placeholder",
+                    body=body,
+                )
                 raise GateFailure(
                     "refused_unfilled_placeholder",
                     "the draft still has a bracketed placeholder ("
@@ -2001,13 +2063,33 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                     field="attest",
                     extra={"draft_id": draft_id, "dest": dest},
                 )
-            assert_not_opted_out(dest, ctx["store"]["opt_out"])
+            try:
+                assert_not_opted_out(dest, ctx["store"]["opt_out"])
+            except GateFailure as opt_out:
+                if opt_out.outcome == "refused_stop":
+                    finalize_script_refused_draft(
+                        ctx["store"],
+                        draft,
+                        path,
+                        box_id=ctx["box_id"],
+                        refuse_reason="opted_out",
+                        body=body,
+                    )
+                raise
             if len(body) > max_body_chars() or not body:
+                finalize_script_refused_draft(
+                    ctx["store"],
+                    draft,
+                    path,
+                    box_id=ctx["box_id"],
+                    refuse_reason="over_length",
+                    body=body,
+                )
                 raise GateFailure(
                     "error",
                     "staged body is no longer sendable as one message",
                     status=EXIT_ERROR,
-                    extra={"draft_id": draft_id, "dest": dest},
+                    extra={"draft_id": draft_id, "dest": dest, "refuse_reason": "over_length"},
                 )
             draft["status"] = "sending"
             write_draft(path, draft)
@@ -2052,7 +2134,7 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                         {
                             "ok": False,
                             "outcome": "refused",
-                            "reason": "provider returned no message id; stage again with replaces to retry",
+                            "reason": "provider returned no message id; this draft will not be retried",
                             "draft_id": draft_id,
                             "dest": dest,
                             "from": ctx["from"],
@@ -2146,7 +2228,7 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                 {
                     "ok": False,
                     "outcome": "refused",
-                    "reason": "provider rejected the send; stage again with replaces to retry",
+                    "reason": "provider rejected the send; do not retry because a retry can text them twice",
                     "draft_id": draft_id,
                     "dest": dest,
                     "from": ctx["from"],
@@ -2190,7 +2272,7 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
         return emit(payload, failure.status)
 
 
-def cancel(draft_id: str) -> int:
+def cancel(draft_id: str, actor_raw: str = "") -> int:
     try:
         ctx = context()
         transitioned = False
@@ -2200,6 +2282,8 @@ def cancel(draft_id: str) -> int:
             if not path.exists():
                 raise GateFailure("error", "draft was not found", field="draft_id", status=EXIT_ERROR)
             draft = read_draft(path)
+            actor = resolve_turn_actor(actor_raw, field="actor")
+            assert_actor_is_draft_approver(draft, actor, draft_id=draft_id)
             assert_draft_owner(ctx, draft, draft_id=draft_id)
             data, transitioned = cancel_draft(ctx["store"]["drafts"], draft_id, "owner cancelled")
         if data is None:
@@ -2637,14 +2721,21 @@ def build_parser() -> argparse.ArgumentParser:
     stage_cmd.add_argument("--source-name", default="")
     stage_cmd.add_argument("--source-ref", default="")
     stage_cmd.add_argument("--replaces", default="", help="Previous draft_id when re-staging after an edit.")
+    stage_cmd.add_argument(
+        "--actor",
+        default="",
+        help="Turn sender E.164; required with --replaces and must match the draft approver.",
+    )
 
     send_cmd = sub.add_parser("send", help="Send one staged draft after SEND and attestation.")
     send_cmd.add_argument("--draft-id", required=True)
     send_cmd.add_argument("--confirm", required=True)
     send_cmd.add_argument("--attest", required=True)
+    send_cmd.add_argument("--actor", required=True, help="Turn sender; must match the draft approver.")
 
     cancel_cmd = sub.add_parser("cancel", help="Cancel one staged draft. Does not send.")
     cancel_cmd.add_argument("--draft-id", required=True)
+    cancel_cmd.add_argument("--actor", required=True, help="Turn sender; must match the draft approver.")
 
     deny_cmd = sub.add_parser("deny", help="Add one number to the local opt-out list. Does not send.")
     deny_cmd.add_argument("--approver", required=True)
@@ -2680,11 +2771,12 @@ def main(argv: list[str] | None = None) -> int:
             args.source_name,
             args.source_ref,
             args.replaces,
+            args.actor,
         )
     if args.cmd == "send":
-        return send(args.draft_id, args.confirm, args.attest)
+        return send(args.draft_id, args.confirm, args.attest, args.actor)
     if args.cmd == "cancel":
-        return cancel(args.draft_id)
+        return cancel(args.draft_id, args.actor)
     if args.cmd == "deny":
         return deny(args.approver, args.dest)
     if args.cmd == "inbound":
