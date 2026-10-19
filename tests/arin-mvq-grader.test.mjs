@@ -66,6 +66,8 @@ for v in vectors:
             assert hf[k] == val, (v["id"], k, hf[k], val)
     if "expect_pass" in v:
         assert g["pass"] == v["expect_pass"], (v["id"], g)
+    for k, val in (v.get("expect_gate") or {}).items():
+        assert g["gates"][k] == val, (v["id"], "gate", k, g["gates"])
     if "expect_line5_max" in v:
         assert g["line_scores"][4] <= v["expect_line5_max"], (v["id"], g["line_scores"])
     if v.get("expect_min_total"):

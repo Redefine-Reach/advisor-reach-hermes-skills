@@ -49,8 +49,20 @@ def merge_hard_fails(
     return merged
 
 
-def case_pass(total: float, hard_fails: dict[str, bool], config: GraderConfig) -> bool:
-    if any(hard_fails.values()):
+def gates(line_scores: list[int | None], draft_expected: Any = None) -> dict[str, bool]:
+    """Gating rules (Jerry, locked Oct 19 5:05 AM AZ), separate from H1-H4.
+
+    gate: Why -- a draft is expected (line 5 applies) and line 5 scored 0 (Why missing,
+    restates the trigger, or generic). The case fails whatever the total. Line 5 = 1 can pass.
+    Line 5 applies when draft_expected is true, or unset with a draft produced (deterministic R5).
+    """
+    r5 = line_scores[4] if len(line_scores) > 4 else None
+    return {"Why": draft_expected is not False and r5 is not None and r5 == 0}
+
+
+def case_pass(total: float, hard_fails: dict[str, bool], config: GraderConfig,
+              gate: dict[str, bool] | None = None) -> bool:
+    if any(hard_fails.values()) or any((gate or {}).values()):
         return False
     return total >= config.bar
 
@@ -131,6 +143,7 @@ def grade_case(
             note = ""
 
     total = weighted_total(line_scores, cfg)
+    gate = gates(line_scores, case.get("draft_expected"))
     return {
         **base,
         "ok": True,
@@ -140,7 +153,8 @@ def grade_case(
         "line_reasons": line_reasons,
         "hard_fails": hard,
         "total": total,
-        "pass": case_pass(total, hard, cfg),
+        "gates": gate,
+        "pass": case_pass(total, hard, cfg, gate),
         "grader_note": note,
         "det_judge_line_agreement": sum(
             1 for a, b in zip(det["line_scores"], line_scores) if a is not None and b is not None and abs(a - b) <= 1

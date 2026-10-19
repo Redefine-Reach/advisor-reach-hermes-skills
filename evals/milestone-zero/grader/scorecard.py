@@ -28,6 +28,10 @@ def _overall(cases: list[dict[str, Any]]) -> tuple[float, int, float, int]:
     return avg, passed, rate, hard
 
 
+def _gate_count(cases: list[dict[str, Any]]) -> int:
+    return sum(1 for c in cases if (c.get("gates") or {}).get("Why"))
+
+
 def _group_pass_rate(rows: list[dict[str, Any]], key: str) -> dict[str, dict[str, float]]:
     buckets: dict[str, list[bool]] = {}
     for row in rows:
@@ -83,14 +87,17 @@ def render_scorecard(
         f"{meta.get('cases_synthetic', len(cases) - len(real_cases))}); scored {len(cases)}; unscored {unscored} "
         "(excluded from averages and pass rate)",
         f"- **Grader version:** {grader_version}",
-        f"- **Bar:** {bar}/10 per case, and no hard fail",
+        f"- **Bar:** {bar}/10 per case, no hard fail (H1-H4), and no gate (gate: Why = expected draft with line 5 at 0)",
         f"- **Line weights:** {weights}",
         f"- **Selection sha256:** {meta.get('selection_sha256', 'n/a')}",
+        *([f"- **Context replay (live):** {meta['context_replay']['cases_replayed']} of "
+           f"{meta['context_replay']['cases_with_context']} cases with context turns replayed (fresh session per case)"]
+          if meta.get("context_replay") else []),
         "",
         "## Overall",
         "",
-        f"- All scored: average **{avg_total}/10**; pass rate **{pass_rate:.1%}** ({pass_count}/{len(cases)}); hard fails **{hard_fail_count}**",
-        (f"- Real only: average **{r_avg}/10**; pass rate **{r_rate:.1%}** ({r_pass}/{len(real_cases)}); hard fails **{r_hard}**"
+        f"- All scored: average **{avg_total}/10**; pass rate **{pass_rate:.1%}** ({pass_count}/{len(cases)}); hard fails **{hard_fail_count}**; gate: Why **{_gate_count(cases)}**",
+        (f"- Real only: average **{r_avg}/10**; pass rate **{r_rate:.1%}** ({r_pass}/{len(real_cases)}); hard fails **{r_hard}**; gate: Why **{_gate_count(real_cases)}**"
          if real_cases else "- Real only: n/a (no real cases scored)"),
         f"- struggled (real): {struggled} of {struggled_target} target",
         "",
@@ -117,8 +124,8 @@ def render_scorecard(
             "",
             "## Per-case table",
             "",
-            "| Case | User | Category | R1 | R2 | R3 | R4 | R5 | Total | Hard fail | Pass | Grader note |",
-            "|---|---|---|---|---|---|---|---|---|---|---|---|",
+            "| Case | User | Category | R1 | R2 | R3 | R4 | R5 | Total | Hard fail | Gate | Pass | Grader note |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
         ]
     )
     for row in cases:
@@ -128,7 +135,8 @@ def render_scorecard(
         note = (row.get("grader_note") or "").replace("|", "/")
         passed_cell = "yes" if row.get("pass") else "no"
         lines.append(
-            "| {id} | {user} | {cat} | {r1} | {r2} | {r3} | {r4} | {r5} | {total} | {hard} | {passed} | {note} |".format(
+            "| {id} | {user} | {cat} | {r1} | {r2} | {r3} | {r4} | {r5} | {total} | {hard} | {gate} | {passed} | {note} |".format(
+                gate="Why" if (row.get("gates") or {}).get("Why") else "—",
                 id=row.get("case_id"),
                 user=row.get("user"),
                 cat=row.get("category"),

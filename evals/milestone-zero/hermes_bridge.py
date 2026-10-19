@@ -13,7 +13,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from live_session import LiveEvalContext, begin_live_session, hermes_chat_argv, is_fixture_only_live
+from live_session import (
+    LiveEvalContext,
+    begin_live_session,
+    hermes_chat_argv,
+    is_fixture_only_live,
+    replay_turns,
+    seed_context_session,
+    session_turn_count,
+)
 from outbound_stub import DELIVERED, OutboundRecorder, infer_fixture_outbound, start_http_stub, stub_env
 
 HERMES_PIN = "0.21.0"
@@ -221,12 +229,20 @@ def run_hermes(
 
     ctx.recorder.clear()
     rec = ctx.recorder
-    drafts_dir = ctx.hermes_home / "audit" / "sms-drafts"
-    if drafts_dir.is_dir():  # each case starts with no staged drafts (no cross-case leakage)
-        for old in drafts_dir.glob("*.json"):
-            old.unlink(missing_ok=True)
+    # Fresh session per case: new throwaway HERMES_HOME (state.db, memory, drafts) every case.
+    ctx.fresh_home()
     env = {**os.environ, **ctx.env_overlay()}
-    argv = hermes_chat_argv(binary, owner)
+    # Replay the case's context turns before the last owner message: seed them into a new
+    # Hermes session, then resume it with the last owner message. If there are context turns
+    # and seeding fails, the case is not run without them (fail closed -> unscored).
+    turns = replay_turns(case)
+    session_id = None
+    if turns:
+        session_id, seed_err = seed_context_session(ctx.hermes_home, binary, turns, env)
+        if seed_err or not session_id:
+            return {"mode": "hermes", "ok": False, "error": seed_err or "seed_failed", "proof": proof.__dict__,
+                    "context_turns": len(turns), "context_turns_replayed": 0}
+    argv = hermes_chat_argv(binary, owner, resume=session_id)
     query_file = None
     if "--query-file" in argv:
         query_file = argv[argv.index("--query-file") + 1]
@@ -261,6 +277,13 @@ def run_hermes(
             "proof": proof.__dict__,
         }
 
+    replayed = 0
+    if session_id:
+        stored = session_turn_count(ctx.hermes_home, session_id)
+        if stored <= len(turns):  # the reply did not land in the seeded session
+            return {"mode": "hermes", "ok": False, "error": "context_not_in_session", "proof": proof.__dict__,
+                    "context_turns": len(turns), "context_turns_replayed": 0}
+        replayed = len(turns)
     tool_calls = _parse_tool_calls(combined + "\n" + _session_text(ctx.hermes_home, combined))
     # The live plugin tool is sms_stage; the case fixtures call the flow sms_send_confirmed.
     if any(t["name"] == "sms_stage" for t in tool_calls) and not any(t["name"] == "sms_send_confirmed" for t in tool_calls):
@@ -278,6 +301,9 @@ def run_hermes(
         "proof": proof.__dict__,
         "interception_probe": ctx.probe,
         "hermes_home": str(ctx.hermes_home),
+        "fresh_session": True,
+        "context_turns": len(turns),
+        "context_turns_replayed": replayed,
     }
 
 

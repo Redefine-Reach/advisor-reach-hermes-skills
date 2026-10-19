@@ -33,6 +33,8 @@ def compare_samples(
     line_ok = 0
     hard_total = 0
     hard_ok = 0
+    gate_total = 0
+    gate_ok = 0
     disagreements: list[str] = []
 
     for cid in ids:
@@ -58,15 +60,25 @@ def compare_samples(
                 hard_ok += 1
             else:
                 disagreements.append(f"{cid} {key}: human={hv} grader={gv}")
+        # Gates (gate: Why) are separate from H1-H4; human value defaults to line 5 == 0.
+        h_gate = bool((h.get("gates") or {}).get("Why", h_scores[4] == 0))
+        g_gate = bool((g.get("gates") or {}).get("Why"))
+        gate_total += 1
+        if h_gate == g_gate:
+            gate_ok += 1
+        else:
+            disagreements.append(f"{cid} gate Why: human={h_gate} grader={g_gate}")
 
     line_rate = line_ok / line_total if line_total else 0.0
     hard_rate = hard_ok / hard_total if hard_total else 0.0
-    ok = line_rate >= line_target and hard_rate >= hard_target
+    gate_rate = gate_ok / gate_total if gate_total else 1.0
+    ok = line_rate >= line_target and hard_rate >= hard_target and gate_rate >= hard_target
     return {
         "ok": ok,
         "cases_compared": len(ids),
         "line_agreement_rate": line_rate,
         "hard_fail_agreement_rate": hard_rate,
+        "gate_agreement_rate": gate_rate,
         "line_target": line_target,
         "hard_target": hard_target,
         "disagreements": disagreements,

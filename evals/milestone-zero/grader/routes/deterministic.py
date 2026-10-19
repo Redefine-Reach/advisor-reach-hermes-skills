@@ -14,6 +14,12 @@ from typing import Any
 from grader.hard_fail import detect_bad_why, detect_hard_fails
 
 _REASK_CONTACT = re.compile(r"\bwhich\s+([A-Z][a-z]+)\s*(?:did you mean)?\?", re.IGNORECASE)
+_REASK_NUMBER = re.compile(
+    r"\b(?:what(?:'s| is)|need|send me|share)\s+(?:([A-Z][a-z]+)(?:'s)?\s+)?(?:(?:phone\s+)?number|cell|phone|email)\b",
+    re.IGNORECASE,
+)
+_CTX_PHONE = re.compile(r"\+?\d[\d\s().-]{8,}\d")
+_CTX_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 _REASK_ZONE = re.compile(
     r"(?:phoenix time again|what(?:'s| is) your (?:time ?zone|zone)|which time ?zone)",
     re.IGNORECASE,
@@ -32,6 +38,19 @@ _SEND_FOOTER = re.compile(r"\b(?:say|reply|text|send)\s+SEND\b|\bSEND to send\b"
 _EMOJI = re.compile("[\U0001F300-\U0001FAFF\u2600-\u27BF]")
 _DRAFT_HEAD = re.compile(r"^\s*(?:drafted|draft(?: email| text)?)(?:\s+(?:to|for)\b[^:\n]*)?:\s*", re.I)
 _QUOTED = re.compile(r"[\"\u201c][^\"\u201d\n]{3,}[\"\u201d]")
+
+
+_GENERIC_WHY = re.compile(
+    r"^\s*why:\s*(?:(?:to\s+)?(?:follow(?:ing)?[\s-]*up|check(?:ing)?\s+in|touch(?:ing)?\s+base|keep(?:ing)?\s+in\s+touch|"
+    r"stay(?:ing)?\s+in\s+touch|keep\s+things\s+moving|be\s+helpful)|you\s+asked(?:\s+me)?(?:\s+to)?|as\s+requested|"
+    r"per\s+your\s+request|requested|n/?a|none)\s*[.!]?\s*$",
+    re.I | re.M,
+)
+
+
+def generic_why(text: str) -> bool:
+    """A Why line that gives no real reason (generic filler), e.g. 'Why: following up.'"""
+    return bool(_GENERIC_WHY.search(text or ""))
 
 
 def produced_draft(assistant: str) -> bool:
@@ -114,6 +133,12 @@ class DeterministicRoute:
         m = _REASK_CONTACT.search(own)
         if m and m.group(1).lower() in context.lower():
             scores[0], reasons[0] = 0, "reask_contact_in_context"
+        elif (n := _REASK_NUMBER.search(own)) and (
+            (re.search(r"email", n.group(0), re.I) and _CTX_EMAIL.search(context))
+            or (not re.search(r"email", n.group(0), re.I) and _CTX_PHONE.search(context)
+                and (not n.group(1) or n.group(1).lower() in context.lower()))
+        ):
+            scores[0], reasons[0] = 0, "reask_contact_detail_in_context"
         elif _REASK_ZONE.search(own) and re.search(r"\b(phoenix|mst|az|arizona|time ?zone)\b", context, re.I):
             scores[0], reasons[0] = 0, "reask_zone_in_context"
         elif questions >= 2:
@@ -136,12 +161,14 @@ class DeterministicRoute:
             scores[2], reasons[2] = 0, "offer_only"
         elif _PARTIAL_OFFER.search(own):
             scores[2], reasons[2] = 1, "partial_offer"
-        elif questions == 1 and scores[0] == 0:
-            scores[2], reasons[2] = 1, "question_is_a_reask"
         elif questions == 1 and not _OFFER_ONLY.search(own):
             reasons[2] = "one_needed_question"
         elif _SEND_FOOTER.search(assistant):
             reasons[2] = "draft_staged_send"
+
+        # Jerry 5:05 AM: a re-ask of known context scores line 1 = 0 AND line 3 = 1 (both apply).
+        if scores[0] == 0:
+            scores[2], reasons[2] = 1, "reask_known_context"
 
         # R4: invented fact (H1) = 0; hedged/loosely supported = 1.
         if hard["H1"]:
@@ -162,6 +189,8 @@ class DeterministicRoute:
             scores[4], reasons[4] = 0, "draft_missing_why"
         elif detect_bad_why(assistant, owner):
             scores[4], reasons[4] = 0, "why_restates_trigger"
+        elif generic_why(assistant):
+            scores[4], reasons[4] = 0, "why_generic"
         else:
             reasons[4] = "why_present"
         if de is None:

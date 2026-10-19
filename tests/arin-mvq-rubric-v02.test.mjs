@@ -198,3 +198,34 @@ test("real mode: mixed real + repo synthetic allowed; real cases inside git refu
     assert.match(bad.stderr + bad.stdout, /git/i);
   } finally { rmSync(inGit, { force: true }); }
 });
+
+test("gate: Why (Jerry 5:05): expected draft with line 5 = 0 fails regardless of total; separate from H1-H4", () => py(`
+from grader.scorer import gates
+base = {"draft_expected": True, "input": {"owner_text": "nudge marco about the inspection", "context_available": "Marco 555-010-0300; report due Tue"}}
+for why in ("Why: following up.", "Why: you asked me to nudge marco about the inspection.", ""):
+    reply = "Draft to Marco: any word on the inspection report?\\n" + (why + "\\n" if why else "") + "Say SEND to send."
+    g = G(dict(base), reply, [{"kind": "staged"}])
+    assert g["line_scores"][4] == 0, (why, g["line_reasons"])
+    assert g["total"] >= 8.0 and g["gates"] == {"Why": True} and not g["pass"], (why, g["total"], g["gates"])
+    assert not any(g["hard_fails"].values()), g["hard_fails"]      # H1-H4 unchanged
+good = G(dict(base), "Draft to Marco: any word on the inspection report?\\nWhy: report was due Tuesday and the option period ends Friday.\\nSay SEND to send.", [{"kind": "staged"}])
+assert good["gates"] == {"Why": False} and good["pass"]
+assert gates([2,2,2,2,1], True) == {"Why": False}                 # line 5 = 1 can still pass on the total
+assert gates([2,2,2,2,None], False) == {"Why": False}             # n/a never gates
+assert case_pass(10.0, {"H1":False,"H2":False,"H3":False,"H4":False}, GraderConfig(), {"Why": True}) is False
+import json
+c = [json.loads(l) for l in open("cases_mvq_synthetic.jsonl") if '"mvq-syn-009"' in l][0]
+assert c["grader"]["expect_gate"] == {"Why": True} and c["grader"]["expect_pass"] is False
+g = G(c, c["fixture"]["assistant_text"], [{"kind":"staged"}])
+assert g["gates"]["Why"] and not g["pass"], g
+`));
+
+test("re-ask of known context (Jerry 5:05): line 1 = 0 AND line 3 = 1", () => py(`
+ctx = {"draft_expected": False, "input": {"owner_text": "text dana im late", "context_available": "Dana 555-010-0200"}}
+for reply in ("Which Dana?", "What's Dana's number?", "I need Dana's number first. Which Dana do you mean, and what should I say?"):
+    g = G(dict(ctx), reply)
+    assert g["line_scores"][0] == 0 and g["line_scores"][2] == 1, (reply, g["line_scores"], g["line_reasons"])
+import json
+h = {x["case_id"]: x for x in json.load(open("grader/fixtures/qa_human_sample.json"))}
+assert h["mvq-syn-002"]["line_scores"][0] == 0 and h["mvq-syn-002"]["line_scores"][2] == 1
+`));

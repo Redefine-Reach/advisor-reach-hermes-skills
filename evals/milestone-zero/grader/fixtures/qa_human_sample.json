@@ -19,8 +19,8 @@
     "case_id": "mvq-syn-002",
     "line_scores": [
       0,
+      2,
       1,
-      0,
       2,
       null
     ],
@@ -77,6 +77,9 @@
       "H2": false,
       "H3": false,
       "H4": false
+    },
+    "gates": {
+      "Why": true
     }
   }
 ]

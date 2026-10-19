@@ -52,6 +52,19 @@ class LiveEvalContext:
     sms_runtime_env: Path
     sms_proc_environ: Path
     probe: dict[str, Any]
+    source_home: Path | None = None
+
+    def fresh_home(self) -> Path:
+        """Fresh throwaway HERMES_HOME (new state.db, no memory, no drafts) for the next case.
+
+        One Hermes session per case: nothing from an earlier case (session history, staged
+        drafts, learned memory) can reach the next one. The SMS stub server is kept.
+        """
+        old = self.hermes_home
+        self.hermes_home = make_eval_hermes_home(self.source_home)
+        if old.exists() and old != self.hermes_home:
+            shutil.rmtree(old, ignore_errors=True)
+        return self.hermes_home
 
     def env_overlay(self) -> dict[str, str]:
         overlay = stub_env(self.recorder, self.stub_base)
@@ -82,7 +95,110 @@ class LiveEvalContext:
             shutil.rmtree(self.hermes_home, ignore_errors=True)
 
 
-def hermes_chat_argv(binary: str, owner_text: str) -> list[str]:
+def owner_prefixed(owner_text: str) -> str:
+    prefix = os.environ.get("ARIN_EVAL_OWNER_PREFIX", "[SMS from box owner +15550100099]")
+    return f"{prefix} {owner_text}".strip() if prefix else owner_text
+
+
+def replay_turns(case: dict[str, Any]) -> list[dict[str, str]]:
+    """The case's context turns as Hermes messages (owner -> user, arin -> assistant), oldest first.
+
+    Only owner/arin text turns are replayed; anything else is dropped. Owner turns get the
+    same sender prefix as the last owner message, so every owner turn looks alike to ARIN.
+    """
+    out: list[dict[str, str]] = []
+    for t in (case.get("input") or {}).get("context_turns") or []:
+        role = {"owner": "user", "arin": "assistant"}.get(str(t.get("role", "")).lower())
+        text = t.get("content")
+        if role and isinstance(text, str) and text.strip():
+            out.append({"role": role, "content": owner_prefixed(text) if role == "user" else text})
+    return out
+
+
+SEED_SCRIPT = r"""
+import datetime, json, os, sys, uuid
+from pathlib import Path
+from hermes_state import SessionDB
+spec = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+db = SessionDB(db_path=Path(os.environ["HERMES_HOME"]) / "state.db")
+try:
+    sid = datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
+    db.create_session(sid, source=spec["source"], origin_json=json.dumps({"arin_eval": "context_replay"}))
+    for t in spec["turns"]:
+        db.append_message(sid, t["role"], t["content"])
+finally:
+    db.close()
+print("seeded_session_id:" + sid)
+"""
+
+
+def hermes_python(binary: str) -> str | None:
+    """Interpreter that can import Hermes (ARIN_EVAL_HERMES_PYTHON, else the binary's python shebang)."""
+    override = os.environ.get("ARIN_EVAL_HERMES_PYTHON")
+    if override:
+        return override
+    try:
+        with open(binary, "rb") as fh:
+            first = fh.readline(512).decode("utf-8", "replace").strip()
+    except OSError:
+        return None
+    if not first.startswith("#!") or "python" not in first:
+        return None
+    parts = first[2:].split()
+    if parts and parts[0].endswith("/env") and len(parts) > 1:
+        return shutil.which(parts[1])
+    return parts[0] if parts else None
+
+
+def seed_context_session(home: Path, binary: str, turns: list[dict[str, str]], env: dict[str, str]) -> tuple[str | None, str | None]:
+    """Write the context turns into a NEW session in the throwaway home's state.db (Hermes's own
+    SessionDB, the same path ``--resume @claude`` imports use). Returns (session_id, error).
+    Turn text goes through a 0600 file in a 0700 dir that is removed before returning."""
+    import subprocess
+
+    py = hermes_python(binary)
+    if not py:
+        return None, "hermes_python_not_found"
+    tmp = Path(tempfile.mkdtemp(prefix="arin-eval-seed-"))
+    os.chmod(tmp, 0o700)
+    spec = tmp / "turns.json"
+    try:
+        fd = os.open(spec, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({"source": os.environ.get("ARIN_EVAL_SOURCE", "telnyx_sms") or "cli", "turns": turns}, fh)
+        proc = subprocess.run([py, "-c", SEED_SCRIPT, str(spec)], capture_output=True, text=True,
+                              timeout=60, check=False, env={**env, "HERMES_HOME": str(home)}, cwd=str(home))
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"seed_failed: {type(exc).__name__}"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    for line in (proc.stdout or "").splitlines():
+        if line.startswith("seeded_session_id:"):
+            return line.split(":", 1)[1].strip(), None
+    return None, f"seed_failed: exit {proc.returncode}"
+
+
+def session_turn_count(home: Path, session_id: str) -> int:
+    """user+assistant rows stored for one session (counts only; read-only)."""
+    import sqlite3
+
+    db = home / "state.db"
+    if not db.is_file():
+        return 0
+    try:
+        con = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=3)
+        try:
+            row = con.execute(
+                "select count(*) from messages where session_id=? and role in ('user','assistant')", (session_id,)
+            ).fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return 0
+    return int(row[0]) if row else 0
+
+
+def hermes_chat_argv(binary: str, owner_text: str, resume: str | None = None) -> list[str]:
     """Hermes 0.21.0: ``chat -Q -q "<text>" --source telnyx_sms``.
 
     ``--source`` makes the CLI session look like an SMS turn so sms_stage does not refuse
@@ -91,9 +207,10 @@ def hermes_chat_argv(binary: str, owner_text: str) -> list[str]:
     Set either to an empty string to disable.
     """
     src = os.environ.get("ARIN_EVAL_SOURCE", "telnyx_sms")
-    prefix = os.environ.get("ARIN_EVAL_OWNER_PREFIX", "[SMS from box owner +15550100099]")
-    text = f"{prefix} {owner_text}".strip() if prefix else owner_text
+    text = owner_prefixed(owner_text)
     extra = ["--source", src] if src else []
+    if resume:
+        extra = ["--resume", resume, "--no-restore-cwd", *extra]
     if len(text) > 4000 or "\n" in text:
         query_file = Path(tempfile.mkstemp(prefix="arin-eval-query-", suffix=".txt")[1])
         query_file.write_text(text, encoding="utf-8")
@@ -210,6 +327,7 @@ def begin_live_session(source_home: Path | None = None) -> tuple[LiveEvalContext
         sms_runtime_env=runtime,
         sms_proc_environ=proc_empty,
         probe=probe_detail,
+        source_home=source_home,
     )
     return ctx, None
 

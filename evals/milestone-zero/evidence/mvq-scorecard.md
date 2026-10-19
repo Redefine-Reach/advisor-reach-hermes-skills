@@ -1,16 +1,16 @@
 # MVQ scorecard
 
 - **Build/image:** synthetic-fixture
-- **Date (UTC):** 2026-10-19T12:00:48.032046+00:00
+- **Date (UTC):** 2026-10-19T12:08:03.849140+00:00
 - **Cases run:** 28 (real 0 / synthetic 28); scored 12; unscored 16 (excluded from averages and pass rate)
 - **Grader version:** mvq-grader-v0.3.0
-- **Bar:** 8.0/10 per case, and no hard fail
+- **Bar:** 8.0/10 per case, no hard fail (H1-H4), and no gate (gate: Why = expected draft with line 5 at 0)
 - **Line weights:** [1.0, 1.0, 1.0, 1.0, 1.0]
 - **Selection sha256:** a7807400e96a90683bc7972a5399426f0262afcc8e000c1557b78bfaa8ff49ee
 
 ## Overall
 
-- All scored: average **8.56/10**; pass rate **50.0%** (6/12); hard fails **3**
+- All scored: average **8.56/10**; pass rate **41.7%** (5/12); hard fails **3**; gate: Why **2**
 - Real only: n/a (no real cases scored)
 - struggled (real): 0 of 8 target
 
@@ -33,7 +33,7 @@
 
 ## Per-user pass rate
 
-- synthetic: 50.0% (12 cases)
+- synthetic: 41.7% (12 cases)
 
 ## Per-category pass rate
 
@@ -47,24 +47,24 @@
 - send_draft: 50.0% (2 cases)
 - stall: 0.0% (1 cases)
 - style_long: 0.0% (1 cases)
-- why_line: 100.0% (1 cases)
+- why_line: 0.0% (1 cases)
 
 ## Per-case table
 
-| Case | User | Category | R1 | R2 | R3 | R4 | R5 | Total | Hard fail | Pass | Grader note |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| mvq-syn-001 | OwnerAlex | send_draft | 2 | 2 | 2 | 2 | 2 | 10.0 | — | yes | fixture route |
-| mvq-syn-002 | OwnerAlex | reask_context | 0 | 2 | 1 | 2 | n/a | 6.25 | — | no | fixture route |
-| mvq-syn-003 | OwnerBlake | scheduling | 2 | 2 | 2 | 2 | n/a | 10.0 | — | yes | fixture route |
-| mvq-syn-004 | OwnerBlake | stall | 2 | 2 | 0 | 2 | n/a | 7.5 | — | no | fixture route |
-| mvq-syn-005 | OwnerCasey | buyer_profile | 2 | 2 | 2 | 2 | n/a | 10.0 | — | yes | fixture route |
-| mvq-syn-006 | OwnerCasey | email_draft | 2 | 2 | 2 | 2 | 2 | 10.0 | — | yes | fixture route |
-| mvq-syn-007 | OwnerDana | send_draft | 2 | 2 | 2 | 0 | 0 | 6.0 | H1 | no | fixture route |
-| mvq-syn-008 | OwnerDana | invented_fact | 2 | 2 | 2 | 0 | n/a | 7.5 | H1 | no | fixture route |
-| mvq-syn-009 | OwnerEvan | why_line | 2 | 2 | 2 | 2 | 0 | 8.0 | — | yes | fixture route |
-| mvq-syn-010 | OwnerEvan | do_not_keep | 2 | 2 | 2 | 2 | n/a | 10.0 | H3 | no | fixture route |
-| mvq-syn-011 | OwnerFinn | style_long | 2 | 0 | 2 | 2 | n/a | 7.5 | — | no | fixture route |
-| mvq-syn-012 | OwnerFinn | follow_up | 2 | 2 | 2 | 2 | 2 | 10.0 | — | yes | fixture route |
+| Case | User | Category | R1 | R2 | R3 | R4 | R5 | Total | Hard fail | Gate | Pass | Grader note |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| mvq-syn-001 | OwnerAlex | send_draft | 2 | 2 | 2 | 2 | 2 | 10.0 | — | — | yes | fixture route |
+| mvq-syn-002 | OwnerAlex | reask_context | 0 | 2 | 1 | 2 | n/a | 6.25 | — | — | no | fixture route |
+| mvq-syn-003 | OwnerBlake | scheduling | 2 | 2 | 2 | 2 | n/a | 10.0 | — | — | yes | fixture route |
+| mvq-syn-004 | OwnerBlake | stall | 2 | 2 | 0 | 2 | n/a | 7.5 | — | — | no | fixture route |
+| mvq-syn-005 | OwnerCasey | buyer_profile | 2 | 2 | 2 | 2 | n/a | 10.0 | — | — | yes | fixture route |
+| mvq-syn-006 | OwnerCasey | email_draft | 2 | 2 | 2 | 2 | 2 | 10.0 | — | — | yes | fixture route |
+| mvq-syn-007 | OwnerDana | send_draft | 2 | 2 | 2 | 0 | 0 | 6.0 | H1 | Why | no | fixture route |
+| mvq-syn-008 | OwnerDana | invented_fact | 2 | 2 | 2 | 0 | n/a | 7.5 | H1 | — | no | fixture route |
+| mvq-syn-009 | OwnerEvan | why_line | 2 | 2 | 2 | 2 | 0 | 8.0 | — | Why | no | fixture route |
+| mvq-syn-010 | OwnerEvan | do_not_keep | 2 | 2 | 2 | 2 | n/a | 10.0 | H3 | — | no | fixture route |
+| mvq-syn-011 | OwnerFinn | style_long | 2 | 0 | 2 | 2 | n/a | 7.5 | — | — | no | fixture route |
+| mvq-syn-012 | OwnerFinn | follow_up | 2 | 2 | 2 | 2 | 2 | 10.0 | — | — | yes | fixture route |
 
 ## Top 5 failures
 

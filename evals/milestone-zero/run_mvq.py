@@ -67,6 +67,7 @@ def secure_write(path: Path, text: str, private: bool) -> None:
 def score_counts(rows: list[dict]) -> dict:
     lines = {f"R{i + 1}": Counter() for i in range(5)}
     hard = Counter()
+    gate = Counter()
     status = Counter()
     for r in rows:
         status[r.get("status", "unscored")] += 1
@@ -77,12 +78,16 @@ def score_counts(rows: list[dict]) -> dict:
             for k, v in (r.get("hard_fails") or {}).items():
                 if v:
                     hard[k] += 1
+            for k, v in (r.get("gates") or {}).items():
+                if v:
+                    gate[k] += 1
         else:
             for k in lines:
                 lines[k]["unscored"] += 1
     return {
         "lines": {k: {s: v.get(s, 0) for s in ("0", "1", "2", "n/a", "unscored")} for k, v in lines.items()},
         "hard_fails": {k: hard.get(k, 0) for k in ("H1", "H2", "H3", "H4")},
+        "gates": {"Why": gate.get("Why", 0)},
         "status": dict(status),
     }
 
@@ -174,6 +179,9 @@ def main() -> int:
         g = grade_case(case, run, config=config, include_text=not args.real)
         g["behavior_ok"] = run.get("behavior_ok")
         g["behavior_failures"] = run.get("behavior_failures", 0)
+        if args.live:
+            g["context_turns"] = run.get("context_turns", 0)
+            g["context_turns_replayed"] = run.get("context_turns_replayed", 0)
         if run.get("ok") is False:
             g.update({"ok": False, "status": "unscored", "error": "run_failed"})
             g.pop("pass", None)
@@ -193,6 +201,10 @@ def main() -> int:
         "cases_real": set_report["real"],
         "cases_synthetic": set_report["synthetic"],
         "set_report": set_report,
+        "context_replay": {
+            "cases_with_context": sum(1 for g in graded if g.get("context_turns")),
+            "cases_replayed": sum(1 for g in graded if g.get("context_turns") and g.get("context_turns_replayed") == g.get("context_turns")),
+        } if args.live else None,
     }
     scored = [g for g in graded if g.get("status") == "scored"]
     payload = {
@@ -218,7 +230,7 @@ def main() -> int:
     secure_write(results_path, json.dumps(payload, indent=2) + "\n", args.real)
     out = {"ok": guard_ok, "evidence": str(results_path), "summary": payload["summary"], "counts": counts,
            "counts_real": score_counts([g for g in graded if not g.get("synthetic")]),
-           "selection_sha256": selection_sha, "set_report": set_report}
+           "selection_sha256": selection_sha, "set_report": set_report, "context_replay": meta.get("context_replay")}
     if not args.real:  # scorecard carries reply text; synthetic only
         sc = evidence_dir / "mvq-scorecard.md"
         secure_write(sc, render_scorecard(meta, scored, qa_block=payload["qa"], unscored=len(graded) - len(scored)), args.real)

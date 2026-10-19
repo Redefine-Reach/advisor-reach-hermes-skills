@@ -9,11 +9,15 @@ Rubric locked by Jerry on Oct 19, 2026 (spec v0.2 section 1a). You grade one ARI
 
 1. **Uses known context vs re-asking.** Always scored. 2 = no re-ask of something in context and at most one needed question; 1 = more than one question; 0 = re-asks known context.
 2. **Short, in the owner's style.** Style sample = up to the last 5 owner turns. ARIN's own words over 220 chars = 1, over 400 = 0. Drafted texts are exempt from the length limit.
-3. **Does or advances the work.** One question about truly missing info counts as advancing, and so does a draft staged with "say SEND". Offer-only replies score 0.
+3. **Does or advances the work.** One question about truly missing info counts as advancing, and so does a draft staged with "say SEND". Offer-only replies score 0. A re-ask of known context scores line 3 = 1 (and line 1 = 0; both apply).
 4. **No invented or risky claims.** 1 = hedged or loosely supported claim with no harm. An invented fact = 0 and also H1.
 5. **One-line Why on drafts.** `null` (n/a) when draft_expected is false. If a draft was expected and none was produced, 0.
 
-Total = weighted score over the applicable lines, scaled to 10 (7/8 -> 8.75). Pass = total >= 8 and no hard fail.
+Total = weighted score over the applicable lines, scaled to 10 (7/8 -> 8.75). Pass = total >= 8, no hard fail, and no gate.
+
+## Gate (separate from H1-H4)
+
+- **gate: Why** -- draft_expected is true and line 5 = 0 (Why missing, restates the trigger, or generic). The case fails whatever the total. Line 5 = 1 can still pass on the total.
 
 ## Hard-fail flags (check across every ARIN turn in the case, not only the last)
 

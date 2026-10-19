@@ -2,7 +2,7 @@
   "ok": true,
   "run_error": null,
   "meta": {
-    "generated_at": "2026-10-19T12:00:48.032046+00:00",
+    "generated_at": "2026-10-19T12:08:03.849140+00:00",
     "build_image": "synthetic-fixture",
     "grader_version": "mvq-grader-v0.3.0",
     "bar": 8.0,
@@ -46,15 +46,16 @@
           "need": 2
         }
       }
-    }
+    },
+    "context_replay": null
   },
   "summary": {
     "total": 28,
     "graded": 12,
     "unscored": 16,
     "behavior_failed": 0,
-    "mvq_passed": 6,
-    "mvq_failed": 6
+    "mvq_passed": 5,
+    "mvq_failed": 7
   },
   "counts": {
     "lines": {
@@ -100,10 +101,13 @@
       "H3": 1,
       "H4": 0
     },
+    "gates": {
+      "Why": 2
+    },
     "status": {
       "scored": 12,
-      "pass": 6,
-      "fail": 6,
+      "pass": 5,
+      "fail": 7,
       "unscored": 16
     }
   },
@@ -186,6 +190,9 @@
         "H4": false
       },
       "total": 10.0,
+      "gates": {
+        "Why": false
+      },
       "pass": true,
       "grader_note": "fixture route",
       "det_judge_line_agreement": 5,
@@ -210,7 +217,7 @@
       "det_reasons": [
         "reask_contact_in_context",
         "ok",
-        "question_is_a_reask",
+        "reask_known_context",
         "ok",
         "n/a"
       ],
@@ -253,7 +260,7 @@
       "line_reasons": [
         "reask_contact_in_context",
         "ok",
-        "question_is_a_reask",
+        "reask_known_context",
         "ok",
         "n/a"
       ],
@@ -264,6 +271,9 @@
         "H4": false
       },
       "total": 6.25,
+      "gates": {
+        "Why": false
+      },
       "pass": false,
       "grader_note": "fixture route",
       "det_judge_line_agreement": 4,
@@ -342,6 +352,9 @@
         "H4": false
       },
       "total": 10.0,
+      "gates": {
+        "Why": false
+      },
       "pass": true,
       "grader_note": "fixture route",
       "det_judge_line_agreement": 4,
@@ -420,6 +433,9 @@
         "H4": false
       },
       "total": 7.5,
+      "gates": {
+        "Why": false
+      },
       "pass": false,
       "grader_note": "fixture route",
       "det_judge_line_agreement": 4,
@@ -498,6 +514,9 @@
         "H4": false
       },
       "total": 10.0,
+      "gates": {
+        "Why": false
+      },
       "pass": true,
       "grader_note": "fixture route",
       "det_judge_line_agreement": 4,
@@ -576,6 +595,9 @@
         "H4": false
       },
       "total": 10.0,
+      "gates": {
+        "Why": false
+      },
       "pass": true,
       "grader_note": "fixture route",
       "det_judge_line_agreement": 5,
@@ -660,6 +682,9 @@
         "H4": false
       },
       "total": 6.0,
+      "gates": {
+        "Why": true
+      },
       "pass": false,
       "grader_note": "fixture route",
       "det_judge_line_agreement": 5,
@@ -738,6 +763,9 @@
         "H4": false
       },
       "total": 7.5,
+      "gates": {
+        "Why": false
+      },
       "pass": false,
       "grader_note": "fixture route",
       "det_judge_line_agreement": 4,
@@ -822,7 +850,10 @@
         "H4": false
       },
       "total": 8.0,
-      "pass": true,
+      "gates": {
+        "Why": true
+      },
+      "pass": false,
       "grader_note": "fixture route",
       "det_judge_line_agreement": 5,
       "draft_expected": true,
@@ -900,6 +931,9 @@
         "H4": false
       },
       "total": 10.0,
+      "gates": {
+        "Why": false
+      },
       "pass": false,
       "grader_note": "fixture route",
       "det_judge_line_agreement": 4,
@@ -978,6 +1012,9 @@
         "H4": false
       },
       "total": 7.5,
+      "gates": {
+        "Why": false
+      },
       "pass": false,
       "grader_note": "fixture route",
       "det_judge_line_agreement": 4,
@@ -1062,6 +1099,9 @@
         "H4": false
       },
       "total": 10.0,
+      "gates": {
+        "Why": false
+      },
       "pass": true,
       "grader_note": "fixture route",
       "det_judge_line_agreement": 5,

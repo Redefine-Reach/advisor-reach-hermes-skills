@@ -128,7 +128,7 @@
         }
       ]
     },
-    "expect_pass": true,
+    "expect_pass": false,
     "expect_hard": {
       "H1": false,
       "H2": false,
@@ -136,6 +136,82 @@
       "H4": false
     },
     "expect_line5_max": 0,
-    "note": "spec v0.2: a restated Why scores line 5 = 0 only; 8/10 still meets the per-case bar"
+    "note": "Jerry 5:05 AM: line 5 = 0 on an expected draft fails the case (gate: Why), not a hard fail",
+    "expect_gate": {
+      "Why": true
+    }
+  },
+  {
+    "id": "vec-generic-why",
+    "case": {
+      "id": "vec-generic-why",
+      "synthetic": true,
+      "category": "follow_up",
+      "draft_expected": true,
+      "input": {
+        "owner_text": "nudge Marco about the inspection",
+        "context_available": "Marco 555-010-0300; inspection report due Tue"
+      }
+    },
+    "run": {
+      "assistant_text": "Draft to Marco: Hey Marco, any word on the inspection report?\nWhy: following up.\nSay SEND to send.",
+      "tool_calls": [
+        {
+          "name": "sms_send_confirmed"
+        }
+      ],
+      "outbound_log": [
+        {
+          "kind": "staged"
+        }
+      ]
+    },
+    "expect_pass": false,
+    "expect_gate": {
+      "Why": true
+    },
+    "expect_hard": {
+      "H1": false,
+      "H2": false,
+      "H3": false,
+      "H4": false
+    },
+    "expect_line5_max": 0
+  },
+  {
+    "id": "vec-good-why-passes",
+    "case": {
+      "id": "vec-good-why-passes",
+      "synthetic": true,
+      "category": "follow_up",
+      "draft_expected": true,
+      "input": {
+        "owner_text": "nudge Marco about the inspection",
+        "context_available": "Marco 555-010-0300; inspection report due Tue"
+      }
+    },
+    "run": {
+      "assistant_text": "Draft to Marco: Hey Marco, any word on the inspection report?\nWhy: the report was due Tuesday and the option period ends Friday.\nSay SEND to send.",
+      "tool_calls": [
+        {
+          "name": "sms_send_confirmed"
+        }
+      ],
+      "outbound_log": [
+        {
+          "kind": "staged"
+        }
+      ]
+    },
+    "expect_pass": true,
+    "expect_gate": {
+      "Why": false
+    },
+    "expect_hard": {
+      "H1": false,
+      "H2": false,
+      "H3": false,
+      "H4": false
+    }
   }
 ]
