@@ -98,7 +98,7 @@ i im i'm i'll i've id you we they he she it this that these those there here wha
 the a an and but or so if then also just still yet already only even maybe perhaps please sure okay ok yes yeah no nope
 all any each every some most many much more less none nothing everything something anything someone everyone nobody
 today tomorrow tonight yesterday now later soon next last first second third new old good great fine perfect
-sounds looks seems got get gets getting going went come came coming will would could should can may might must let
+sounds looks seems got get gets getting going went come came coming will would could should can may might must
 closing showing showings listing listings inspection inspections appraisal escrow offer offers price pricing contract
 counter counteroffer buyer buyers seller sellers lender loan title tour tours open house home property client clients
 agent agents team office meeting call calls text texts email emails draft drafts reminder reminders note notes
@@ -145,6 +145,14 @@ asap fyi mls hoa hvac cma adu llc inc pdf dob ssn ein arin owner sms mms usps up
 utc usa url api crm irs hud fha usda arm apr heloc pmi ltv dti bpo reo nar realtor sqft btw imo lol omg thx pls plz
 ooo pto nda loi poa coe tbh aka diy faq gps pin otp kyc ach ira llp esq vin pdt edt cdt mdt hoas mlss pdfs ssns
 """.split())
+
+_RE_NAME_EXTRA = re.compile(
+    r"(?<![\w\[])((?:Ma?c[A-Z][a-z]+)|(?=[^\W\d_]*[^\x00-\x7f])[^\W\d_a-z][^\W\d_]*[^\W\d_])(?:'s)?(?![\w\]])"
+)
+
+# "<Word>'s" contractions that are not possessives. Read ONLY by the sentence-start name test,
+# never by the do-not-keep rule-name check or the surname test (Vault df95508 item 4).
+_S_CONTRACTIONS = frozenset("let here there that what it who where how".split())
 
 _ADVERBS = frozenset("""also just still already probably definitely maybe really finally actually never always
 apparently basically clearly obviously supposedly reportedly honestly literally seriously totally""".split())
@@ -543,7 +551,7 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
                 rest = body[g.end(1):]
                 nxt_cap = re.match(r"\s+([A-Z][a-z]+)\b", rest)
                 nxt_word = re.match(r"\s+([a-z']+)\b", rest)
-                possessive = rest.startswith("'s")
+                possessive = rest.startswith("'s") and w.lower() not in _S_CONTRACTIONS
                 # Vault 029b63a: also comma, colon, end of line / alone, or an adverb next
                 # ("Percival, can you", "Cornelius: fine", "Octavia", "Thaddeus definitely called",
                 # "Grace, Bill, ..." as a list's first item).
@@ -572,6 +580,9 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
             return ph(w)
 
         body = re.sub(r"\b([A-Z][a-z]{2,})(?:'s)?\b", word, body)
+        # Vault df95508 item 3: capitalized names with non-ASCII letters (Zoë, Siobhán, Łukasz) and
+        # Mc/Mac names with an inner capital (McAllister, MacKenzie), anywhere in the line.
+        body = re.sub(_RE_NAME_EXTRA, lambda g: word(g) if g.group(1)[0].isupper() else g.group(0), body)
 
         # Vault b984cba (b): an ALL-CAPS word that is not ordinary English and not a common
         # acronym is a name ("EVANDER CALLED"). Placeholders ([PHONE ...], REDACTED_X, CLIENT_n)
