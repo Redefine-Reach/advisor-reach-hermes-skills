@@ -92,6 +92,8 @@ class ExportIntegration(unittest.TestCase):
                     str(FIX_MAIN / "forgotten.txt"),
                     "--owner-name",
                     "Alex",
+                    "--source",
+                    "cli",
                 ],
                 capture_output=True,
                 text=True,
@@ -121,6 +123,8 @@ class ExportIntegration(unittest.TestCase):
                     str(FIX_MAIN / "donotkeep_rules.json"),
                     "--forgotten",
                     str(FIX_MAIN / "forgotten.txt"),
+                    "--source",
+                    "cli",
                 ],
                 capture_output=True,
                 text=True,
@@ -222,7 +226,7 @@ class CheckLeaksCI(unittest.TestCase):
     def test_fake_sets_zero_leaks(self) -> None:
         cmd = (
             "python3 export_session_to_case.py --session {in} --redacted-text-out {out} "
-            "--known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex"
+            "--known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex --source cli"
         )
         for label, sub in (
             ("main", FIX_MAIN),
@@ -488,3 +492,166 @@ class ExportVaultRequirements(_ExportHelpers, unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExportVaultRound2(_ExportHelpers, unittest.TestCase):
+    """Vault review of 63bf28a (N1-N3, T1, G1, P1/P2, D1). Synthetic names and numbers only."""
+
+    def _blob(self, case: dict) -> str:
+        return json.dumps(case)
+
+    def test_n1_text_name_word_maps_single_name_across_turns(self) -> None:
+        for phrasing in ("text Rosalind about the walkthrough", "text Rosalind tomorrow morning", "text rosalind about it"):
+            sess = {"messages": [_msg("user", phrasing), _msg("assistant", "Drafted. Reply SEND to send."),
+                                 _msg("user", "any update?"), _msg("assistant", "Rosalind confirmed Friday.")]}
+            proc, case, _ = self._export(sess)
+            self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+            self.assertNotIn("rosalind", self._blob(case).lower(), phrasing)
+            # the word after the name survives (only the name is mapped)
+            ctx_owner = case["input"]["context_turns"][0]["content"]
+            self.assertRegex(ctx_owner, r"^text CLIENT_\d+ (about|tomorrow)")
+            self.assertRegex(case["fixture"]["assistant_text"], r"^CLIENT_\d+ confirmed Friday\.$")
+
+    def test_n1_surname_tokens_mapped_separately(self) -> None:
+        sess = {"messages": [_msg("user", "text Ottoline Varga about the offer"), _msg("assistant", "Drafted."),
+                             _msg("user", "and?"), _msg("assistant", "Varga said yes. Ottoline will sign tonight.")]}
+        proc, case, _ = self._export(sess)
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        blob = self._blob(case).lower()
+        self.assertNotIn("ottoline", blob)
+        self.assertNotIn("varga", blob)
+
+    def test_n2_sentence_reply_and_why_start_names(self) -> None:
+        sess = {"messages": [_msg("user", "draft the follow up for the condo"),
+                             _msg("assistant", "Draft: Checking in on the condo.\nWhy: Thaddeus asked for an update Tuesday.\nReply SEND to send."),
+                             _msg("user", "who called?"), _msg("assistant", "Percival called back. Leopoldine's offer is in.")]}
+        proc, case, _ = self._export(sess)
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        blob = self._blob(case)
+        for name in ("Thaddeus", "Percival", "Leopoldine"):
+            self.assertNotIn(name, blob)
+        self.assertIn("Why: CLIENT_", blob)
+
+    def test_n2_ordinary_sentence_starters_kept(self) -> None:
+        sess = {"messages": [_msg("user", "status?"),
+                             _msg("assistant", "Closing is Friday. Inspection came back clean. Everything is set. Showing confirmed for 4.")]}
+        proc, case, _ = self._export(sess)
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        self.assertEqual(case["fixture"]["assistant_text"],
+                         "Closing is Friday. Inspection came back clean. Everything is set. Showing confirmed for 4.")
+
+    def test_n3_no_builtin_keep_list_only_owner_name(self) -> None:
+        text = "Alex said Frank and Grace like it. Bill Hunter, Summer and Mason too. Douglas called."
+        sess = {"messages": [_msg("user", "who liked the house?"), _msg("assistant", text)]}
+        proc, case, _ = self._export(sess, ["--owner-name", "David"])
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        reply = case["fixture"]["assistant_text"]
+        for name in ("Alex", "Frank", "Grace", "Bill", "Hunter", "Summer", "Mason", "Douglas"):
+            self.assertNotRegex(reply, rf"\b{name}\b", name)
+        proc, case, _ = self._export({"messages": [_msg("user", "David here, text Frank about it"),
+                                                   _msg("assistant", "Done, David.")]}, ["--owner-name", "David"])
+        self.assertIn("David", self._blob(case))
+        self.assertNotIn("Frank", self._blob(case))
+        # benign phrases are still held whole (no keep-list needed)
+        proc, case, _ = self._export({"messages": [_msg("user", "Hunter Douglas blinds stay; order Mason jar centerpieces"),
+                                                   _msg("assistant", "Noted.")]}, ["--owner-name", "David"])
+        self.assertIn("Hunter Douglas", case["input"]["owner_text"])
+        self.assertIn("Mason jar", case["input"]["owner_text"])
+
+    def test_t1_top_level_tool_calls_dropped(self) -> None:
+        sess = self._long_session()
+        sess["tool_calls"] = [{"name": "contacts_lookup", "arguments": {"query": "Zoltan Fakeperson"}}]
+        proc, case, _ = self._export(sess)
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        self.assertEqual(case["fixture"]["tool_calls"], [])
+        self.assertEqual(case["export_meta"]["tool_calls_dropped"], 1)
+        self.assertNotIn("Zoltan", self._blob(case))
+
+    def _run(self, args: list[str]) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, str(MZ / "export_session_to_case.py"), *args],
+                              capture_output=True, text=True, cwd=str(MZ))
+
+    def _sess_file(self, base: Path, msgs: list[dict]) -> Path:
+        p = base / "s.json"
+        p.write_text(json.dumps({"messages": msgs}), encoding="utf-8")
+        return p
+
+    def test_g1_redacted_text_out_has_same_gates_and_no_tool_text(self) -> None:
+        base = Path(tempfile.mkdtemp()); os.chmod(base, 0o700)
+        sess = self._sess_file(base, [_msg("user", "call me back"), _msg("tool", "TOOLSECRETWORD output"),
+                                      _msg("assistant", "Ok.")])
+        known = ["--known-names", str(FIX_MAIN / "known_names.txt")]
+        out = base / "o" / "t.txt"
+        r = self._run(["--session", str(sess), "--redacted-text-out", str(out), "--source", "cli"])
+        self.assertEqual(r.returncode, EXIT_BLOCKED); self.assertIn("known_names_required", r.stderr)
+        r = self._run(["--session", str(sess), "--redacted-text-out", str(out), *known])
+        self.assertEqual(r.returncode, EXIT_BLOCKED); self.assertIn("source_required", r.stderr)
+        r = self._run(["--session", str(sess), "--redacted-text-out", str(MZ / "leak-test.txt"), *known, "--source", "cli"])
+        self.assertEqual(r.returncode, EXIT_BLOCKED); self.assertIn("inside_git_worktree", r.stderr)
+        self.assertFalse((MZ / "leak-test.txt").exists())
+        loose = base / "loose"; loose.mkdir(); os.chmod(loose, 0o770)
+        r = self._run(["--session", str(sess), "--redacted-text-out", str(loose / "t.txt"), *known, "--source", "cli"])
+        self.assertEqual(r.returncode, EXIT_BLOCKED); self.assertFalse((loose / "t.txt").exists())
+        r = self._run(["--session", str(sess), "--redacted-text-out", str(out), *known, "--source", "cli"])
+        self.assertEqual(r.returncode, EXIT_OK, r.stderr)
+        self.assertNotIn("TOOLSECRETWORD", out.read_text())
+        self.assertEqual(out.stat().st_mode & 0o777, 0o600)
+
+    def test_g1_fixture_check_with_out_keeps_git_perms_source_gates(self) -> None:
+        fixture = FIX_MAIN / "s001.txt"
+        base = Path(tempfile.mkdtemp()); os.chmod(base, 0o700)
+        r = self._run(["--session", str(fixture), "--fixture-check", "--id", "f1", "--out", str(MZ / "x.jsonl")])
+        self.assertEqual(r.returncode, EXIT_BLOCKED)
+        r = self._run(["--session", str(fixture), "--fixture-check", "--id", "f1", "--source", "cli",
+                       "--out", str(MZ / "x.jsonl")])
+        self.assertEqual(r.returncode, EXIT_BLOCKED); self.assertIn("inside_git_worktree", r.stderr)
+        self.assertFalse((MZ / "x.jsonl").exists())
+        sess = self._sess_file(base, [_msg("user", "hi"), _msg("assistant", "Ok.")])
+        r = self._run(["--session", str(sess), "--fixture-check", "--id", "f1", "--source", "cli",
+                       "--out", str(base / "o" / "c.jsonl")])
+        self.assertEqual(r.returncode, EXIT_BLOCKED); self.assertIn("fixture_check_outside_fixtures", r.stderr)
+        loose = base / "loose"; loose.mkdir(); os.chmod(loose, 0o770)
+        r = self._run(["--session", str(fixture), "--fixture-check", "--id", "f1", "--source", "cli",
+                       "--out", str(loose / "c.jsonl")])
+        self.assertEqual(r.returncode, EXIT_BLOCKED); self.assertFalse((loose / "c.jsonl").exists())
+
+    def test_p1_p2_manifest_dir_and_file_checked_before_any_write(self) -> None:
+        base = Path(tempfile.mkdtemp()); os.chmod(base, 0o700)
+        red = base / "redacted"; red.mkdir(mode=0o700)
+        mdir = red / "manifests"; mdir.mkdir(); os.chmod(mdir, 0o2770)
+        sess = self._sess_file(base, [_msg("user", "hi"), _msg("assistant", "Ok.")])
+        common = ["--session", str(sess), "--id", "p1", "--source", "cli",
+                  "--known-names", str(FIX_MAIN / "known_names.txt"), "--out", str(red / "c.jsonl")]
+        r = self._run([*common, "--manifest", str(mdir / "p1.json")])
+        self.assertEqual(r.returncode, EXIT_BLOCKED); self.assertIn("loose_permissions", r.stderr)
+        self.assertFalse((red / "c.jsonl").exists())
+        os.chmod(mdir, 0o700)
+        m = mdir / "p1.json"; m.write_text("{}"); os.chmod(m, 0o660)
+        r = self._run([*common, "--manifest", str(m)])
+        self.assertEqual(r.returncode, EXIT_BLOCKED)
+        self.assertFalse((red / "c.jsonl").exists())  # exit 1 = no output, nothing appended
+        os.chmod(m, 0o600)
+        r = self._run([*common, "--manifest", str(m)])
+        self.assertEqual(r.returncode, EXIT_OK, r.stderr)
+
+    def test_do_not_keep_rule_naming_a_person_drops_session(self) -> None:
+        base = Path(tempfile.mkdtemp()); os.chmod(base, 0o700)
+        rules = base / "rules.json"; rules.write_text(json.dumps({"do_not_keep": ["Wexford morning calls"]}))
+        sess = self._sess_file(base, [_msg("user", "Wexford is best reached by phone"), _msg("assistant", "Ok.")])
+        r = self._run(["--session", str(sess), "--id", "d1", "--source", "cli", "--rules", str(rules),
+                       "--known-names", str(FIX_MAIN / "known_names.txt"), "--out", str(base / "o" / "c.jsonl")])
+        self.assertEqual(r.returncode, EXIT_EXCLUDED, r.stderr)
+        self.assertFalse((base / "o" / "c.jsonl").exists())
+
+    def test_d1_box_export_shred_block_removes_names_even_with_subdirs(self) -> None:
+        doc = (MZ / "BOX-EXPORT.md").read_text(encoding="utf-8")
+        self.assertNotIn("/tmp/session-raw", doc)
+        start = doc.index("# Each step runs even if an earlier one fails")
+        block = doc[start: doc.index("```", start)]
+        base = Path(tempfile.mkdtemp()); os.chmod(base, 0o700)
+        d = base / "run"; (d / "raw-input" / "sub").mkdir(parents=True); (d / "redacted").mkdir()
+        (d / "raw-input" / "a.json").write_text("x"); (d / "raw-input" / "sub" / "b.json").write_text("x")
+        (d / "names.txt").write_text("x"); x = base / "exporter"; x.mkdir(); (x / "e.py").write_text("x")
+        subprocess.run(["bash", "-c", block], env={**os.environ, "D": str(d), "X": str(x)}, capture_output=True, check=False)
+        self.assertEqual(sorted(p.name for p in d.iterdir()), ["redacted"])
+        self.assertFalse(x.exists())

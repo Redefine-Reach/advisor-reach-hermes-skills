@@ -20,9 +20,10 @@ Redacted cases, manifests, and temp working files on the box: **delete within 30
 
 ## 1. Export session from Hermes logs (on box)
 
-Identify the session file under `$HERMES_HOME`. Copy to a working file (e.g. `/tmp/session-raw.json`). Optional sidecars (mode **0600**, never commit):
+Identify the session file under `$HERMES_HOME`. Copy it into `$D/raw-input/` (0700, see step 2) and nowhere else: **never `/tmp`** or any other path, because step 2's shred only covers `$D/raw-input`, `$D/names.txt` and the exporter copy. Sidecars (mode **0600**, never commit):
 
-- `--known-names` — **required** for real JSONL export (`--out` / default append path). Per-box contact list (mode **0600**, never commit). Case-insensitive whole-word redaction for lowercase texting-style names; export **blocks (exit 1)** if omitted. Leak-check via `--redacted-text-out` still passes `{known}` from the fixture dir in CI.  
+- `--known-names` — **required** for real JSONL export (`--out` / default append path). Per-box contact list (mode **0600**, never commit). Case-insensitive whole-word redaction for lowercase texting-style names; export **blocks (exit 1)** if omitted. `--redacted-text-out` has the same gates as `--out` (known names, `--source`, 0600/0700, no git checkout; tool-turn text is never written) and is for the CI leak check on synthetic fixtures only: **do not use it, or `--fixture-check`, on the box.** `--fixture-check` only accepts sessions under the repo's fixture dirs.  
+- `--owner-name` — the only name ever kept (no built-in keep-list). Set it to the box owner's first name (`David`).
 - `--rules` — `donotkeep_rules.json` with `do_not_keep` phrases (token-normalized, ≥75% overlap)  
 - `--forgotten` — forgotten phrases (same matching)
 
@@ -45,14 +46,21 @@ python3 $X/export_session_to_case.py \
 python3 $X/export_session_to_case.py --check-perms $D     # exit 1 + paths if anything is looser than 0600/0700
 python3 $X/export_session_to_case.py --summarize $D/redacted/cases-export.jsonl   # ids and counts only
 # Same session, before 3 AM AZ (daily snapshot): shred raw copies and the names file
-find $D/raw-input -type f -exec shred -u {} + && rmdir $D/raw-input && shred -u $D/names.txt && rm -rf $X
+# Each step runs even if an earlier one fails (no && chain), so names.txt is always removed.
+# shred is best effort on overlay/COW filesystems; the delete is what matters.
+find $D/raw-input -type f -exec shred -u {} + ; rm -rf $D/raw-input
+shred -u $D/names.txt ; rm -f $D/names.txt
+rm -rf $X
+ls -A $D    # expect only redacted/ (counts-only check: ls -A $D | wc -l)
 ```
 
 - **What a case keeps:** up to `--context-turns` (default 10) owner/ARIN turns before the last owner message, the last owner message, and the recorded ARIN reply (every ARIN turn after it; empty if the section ends on the owner). Tool/system turns are dropped (counted in `export_meta.turns_skipped_non_text`).
 - **Whole-case redaction:** redaction, the drop rules, the health/legal guard and the residue scan run over every turn kept, not only the owner turn. A name detected anywhere is replaced in every turn with the same placeholder. The kept text is re-scanned right before writing.
 - **Sources:** `--source` is required for real exports. Only `telnyx_sms`, `cli` and `api_server` are exported. Anything else (cron, telegram, webhook), or a mismatch with the session's own `source` field, is excluded (exit 2).
-- **Permissions:** the export refuses to write (exit 1) when the output dir is looser than 0700 or an existing output file is looser than 0600 (for example after an fsGroup relabel), and re-checks after writing. `--check-perms DIR` checks a whole tree (setgid is allowed).
-- **No case text in git:** `--out` inside a git worktree is refused (exit 1).
+- **Permissions:** the export checks every path it will write (output file and dir, manifest and its `manifests/` dir, `--redacted-text-out` and its dir) **before writing anything**, and refuses (exit 1, no output) when a dir is looser than 0700 or an existing file looser than 0600 (for example after an fsGroup relabel). It re-checks after writing. `--check-perms DIR` checks a whole tree (setgid is allowed).
+- **No case text in git:** `--out`, `--redacted-text-out` or `--manifest` inside a git worktree is refused (exit 1).
+- **Top-level `tool_calls`** in a session are dropped (`fixture.tool_calls` is always `[]`; the count is in `export_meta.tool_calls_dropped`).
+- **Names:** one token after "text" (plus a capitalized surname), each token mapped separately, so "text Rosalind about" maps `Rosalind` and a later "Rosalind confirmed" is replaced too. Capitalized names at the start of a sentence, a reply or a `Why:` line are detected when followed by a person verb ("asked", "called", "confirmed", "is"…), a possessive, or a surname. A do-not-keep rule that names a person drops any session mentioning that name.
 - `--category` is a label only (default `unlabeled`). The case labeller sets it later.
 
 - **Health or legal topic** (including common rewordings): entire session **excluded** (exit **2**), not redacted in place. A **second, independent** conservative pass (`conservative_guard.py`) re-scans redacted text; any residual health/legal/family/financial/credential-ish signal also forces exit **2** (default-deny).  
@@ -64,12 +72,12 @@ Leak-check helper (synthetic fixtures in CI):
 ```bash
 python3 evals/milestone-zero/check_leaks.py \
   --cwd evals/milestone-zero \
-  --cmd 'python3 export_session_to_case.py --session {in} --redacted-text-out {out} --known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex' \
+  --cmd 'python3 export_session_to_case.py --session {in} --redacted-text-out {out} --known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex --source cli' \
   --strict-drop --fail-on-overredaction
 python3 evals/milestone-zero/check_leaks.py \
   --cwd evals/milestone-zero --sessions fixtures/fake_sessions_heldout2 \
   --label heldout2 --strict-drop --fail-on-overredaction \
-  --cmd 'python3 export_session_to_case.py --session {in} --redacted-text-out {out} --known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex'
+  --cmd 'python3 export_session_to_case.py --session {in} --redacted-text-out {out} --known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex --source cli'
 # Private unseen set (not committed): run locally or in CI with a secret path
 export MZ_PRIVATE_LEAK_SESSIONS=/secure/path/to/private_sessions
 python3 evals/milestone-zero/check_leaks.py --label private --cwd evals/milestone-zero \

@@ -52,6 +52,8 @@ def redacted_transcript(redacted: object) -> str:
         lines: list[str] = []
         for msg in redacted.get("messages") or []:
             if isinstance(msg, dict):
+                if str(msg.get("role") or "").lower() in NON_TEXT_ROLES:
+                    continue  # tool/system turn text never goes into the transcript (Vault G1)
                 content = msg.get("content")
                 if isinstance(content, str) and content.strip():
                     lines.append(content)
@@ -67,6 +69,7 @@ def derive_session_index(case_id: str, explicit: str | None) -> str:
     return f"{case_id}-{digest}"
 
 
+NON_TEXT_ROLES = frozenset({"tool", "system", "function", "developer"})
 OWNER_ROLES = frozenset({"user", "owner", "human"})
 ARIN_ROLES = frozenset({"assistant", "arin", "agent"})
 DEFAULT_CONTEXT_TURNS = 10
@@ -158,7 +161,7 @@ def build_case(
         },
         "fixture": {
             "assistant_text": str(reply),
-            "tool_calls": redacted.get("tool_calls") if isinstance(redacted, dict) and isinstance(redacted.get("tool_calls"), list) else [],
+            "tool_calls": [],  # top-level session tool_calls are dropped (Vault T1), counted in export_meta
         },
         "expect": redacted.get("expect") if isinstance(redacted, dict) and isinstance(redacted.get("expect"), dict) else {},
         "export_meta": {
@@ -168,6 +171,7 @@ def build_case(
             "context_turns_kept": len(context),
             "context_turn_limit": context_turns,
             "turns_skipped_non_text": skipped,
+            "tool_calls_dropped": len(redacted.get("tool_calls") or []) if isinstance(redacted, dict) and isinstance(redacted.get("tool_calls"), list) else 0,
             "recorded_reply_present": reply_present,
             "source": source,
             "ok": True,
@@ -185,6 +189,18 @@ def case_text_blob(case: dict[str, object]) -> str:
 
 
 ALLOWED_SOURCES = frozenset({"telnyx_sms", "cli", "api_server"})  # David's text, CLI, API (never cron)
+
+
+FIXTURE_ROOTS = (ROOT / "fixtures", ROOT.parent.parent / "tests" / "fixtures")
+
+
+def _inside(path: Path, roots: tuple[Path, ...]) -> bool:
+    rp = path.resolve()
+    return any(rp == r.resolve() or r.resolve() in rp.parents for r in roots)
+
+
+def _loose_targets(paths: list[tuple[Path, int]]) -> list[Path]:
+    return [p for p, want in paths if p.exists() and loose_mode(p, want)]
 
 
 def apply_name_map(obj: object, name_map: dict[str, str]) -> object:
@@ -291,7 +307,7 @@ def main() -> int:
     parser.add_argument("--rules", type=Path, help="do-not-keep rules.json path")
     parser.add_argument("--forgotten", type=Path, help="Forgotten phrases file (mode 0600)")
     parser.add_argument("--session-index", help="Opaque session index for export_meta")
-    parser.add_argument("--owner-name", default="Alex", help="Owner first name kept during name redaction")
+    parser.add_argument("--owner-name", default="", help="Owner first name kept during name redaction (the only name ever kept)")
     parser.add_argument(
         "--context-turns",
         type=int,
@@ -301,7 +317,7 @@ def main() -> int:
     parser.add_argument(
         "--fixture-check",
         action="store_true",
-        help="Leak-check mode: do not require --known-names (CI fixtures only)",
+        help="CI leak-check on repo fixtures only: waives --known-names when --out is used; perms, git and source checks still apply",
     )
     args = parser.parse_args()
 
@@ -318,18 +334,23 @@ def main() -> int:
         return EXIT_BLOCKED
 
     append_jsonl = args.out is not None or args.redacted_text_out is None
-    if append_jsonl and not args.fixture_check and args.known_names is None:
-        print("export_blocked: known_names_required", file=sys.stderr)
-        return EXIT_BLOCKED
     if args.context_turns < 0 or args.context_turns > 50:
         print("export_blocked: bad_context_turns", file=sys.stderr)
         return EXIT_BLOCKED
-    if append_jsonl and not args.fixture_check:
-        target = args.out if args.out is not None else ROOT / "cases-export.local.jsonl"
-        if inside_git_worktree(target.parent):
-            print("export_blocked: out_inside_git_worktree", file=sys.stderr)
-            return EXIT_BLOCKED
-    if append_jsonl and not args.fixture_check and not args.source:
+    # Same gates for every output path (Vault G1): --out, --redacted-text-out, and --fixture-check.
+    if args.fixture_check and not _inside(args.session, FIXTURE_ROOTS):
+        print("export_blocked: fixture_check_outside_fixtures", file=sys.stderr)
+        return EXIT_BLOCKED
+    needs_known = args.redacted_text_out is not None or (append_jsonl and not args.fixture_check)
+    if needs_known and args.known_names is None:
+        print("export_blocked: known_names_required", file=sys.stderr)
+        return EXIT_BLOCKED
+    targets = [p for p in ((args.out if args.out is not None else (ROOT / "cases-export.local.jsonl")) if append_jsonl else None,
+                           args.redacted_text_out, args.manifest) if p is not None]
+    if any(inside_git_worktree(t.parent) for t in targets):
+        print("export_blocked: out_inside_git_worktree", file=sys.stderr)
+        return EXIT_BLOCKED
+    if not args.source:
         print("export_blocked: source_required", file=sys.stderr)
         return EXIT_BLOCKED
     if append_jsonl and (not args.id or not args.category):
@@ -406,12 +427,27 @@ def main() -> int:
         if append_jsonl
         else (args.redacted_text_out.parent if args.redacted_text_out else ROOT)
     )
+    # Permission pre-check on every path this run writes (outputs, their dirs, the manifest
+    # and its manifests/ dir), BEFORE anything is written: exit 1 means no output (Vault P1/P2).
+    planned: list[tuple[Path, int]] = [(manifest_path, 0o600), (manifest_path.parent, 0o700)]
+    if append_jsonl:
+        planned += [(dest, 0o600), (dest.parent, 0o700)]
+    if args.redacted_text_out:
+        planned += [(args.redacted_text_out, 0o600), (args.redacted_text_out.parent, 0o700)]
+    pre = _loose_targets(planned)
+    if pre:
+        print(f"export_blocked: loose_permissions paths={len(pre)}", file=sys.stderr)
+        return EXIT_BLOCKED
     secure_mkdir(scratch_parent)
     tmp_base = Path(tempfile.mkdtemp(prefix="mz-export-", dir=scratch_parent))
     try:
         os.chmod(tmp_base, 0o700)
         if args.redacted_text_out:
             secure_write_text(args.redacted_text_out, transcript + ("\n" if not transcript.endswith("\n") else ""))
+            post_t = _loose_targets([(args.redacted_text_out, 0o600), (args.redacted_text_out.parent, 0o700)])
+            if post_t:
+                print(f"export_blocked: loose_permissions_after_write paths={len(post_t)}", file=sys.stderr)
+                return EXIT_BLOCKED
         if append_jsonl:
             session_index = derive_session_index(args.id or "mz", args.session_index)
             case = build_case(
@@ -442,8 +478,7 @@ def main() -> int:
             with os.fdopen(fd, "a", encoding="utf-8") as handle:
                 handle.write(line)
             write_manifest(manifest_path, ctx.class_counts)
-            post = [p for p, want in ((dest, 0o600), (manifest_path, 0o600), (dest.parent, 0o700))
-                    if p.exists() and loose_mode(p, want)]
+            post = _loose_targets([(dest, 0o600), (manifest_path, 0o600), (dest.parent, 0o700), (manifest_path.parent, 0o700)])
             if post:
                 print(f"export_blocked: loose_permissions_after_write paths={len(post)}", file=sys.stderr)
                 return EXIT_BLOCKED

@@ -77,10 +77,40 @@ _MINOR = re.compile(
 _NAME_ALLOW = {
     w.lower()
     for w in """Monday Tuesday Wednesday Thursday Friday Saturday Sunday Jan January Feb February Mar March Apr April May Jun June Jul July
-Aug August Sep Sept September Oct October Nov November Dec December Phoenix Arizona ARIN OWNER Alex Hi Hey Hello Thanks Thank Done Draft Note
+Aug August Sep Sept September Oct October Nov November Dec December Phoenix Arizona ARIN OWNER Hi Hey Hello Thanks Thank Done Draft Note
 Remember Summarize Make Set Use Got Reply Schedule Pick Order Sign Add Call Text Remind Forward Open Show Wire Lender Her His The It Link Card Routing
-Client Mr Mrs Ms Dr Why Version Meeting List Fill Wifi FYI MLS PDF LLC DOB SSN EIN AZ Grace Bill Summer Frank Hunter Mason Grace Douglas Jar""".split()
+Client Mr Mrs Ms Dr Why Version Meeting List Fill Wifi FYI MLS PDF LLC DOB SSN EIN AZ Jar""".split()
 }
+# No real first names here (Vault N3): the only name ever kept is --owner-name.
+
+# Words after "text" that are not a person (Vault N1: "text Rosalind about" must map "Rosalind" only).
+_TEXT_TARGET_SKIP = frozenset("""
+a an the about to for from with when if and or but so on at in into by of now later soon tomorrow today tonight again
+first back me him her them us you it its that this these those everyone everybody someone somebody anyone all both
+my our your his their message messages msg reminder reminders thread group chat update updates note confirmation
+saying asking telling letting re regarding""".split())
+
+# Sentence-start words that are ordinary English, never treated as names (Vault N2 default-deny
+# applies only to a capitalized sentence-start word followed by a person verb or 's).
+_COMMON_STARTERS = frozenset("""
+i im i'm i'll i've id you we they he she it this that these those there here what when where who why how which
+the a an and but or so if then also just still yet already only even maybe perhaps please sure okay ok yes yeah no nope
+all any each every some most many much more less none nothing everything something anything someone everyone nobody
+today tomorrow tonight yesterday now later soon next last first second third new old good great fine perfect
+sounds looks seems got get gets getting going went come came coming will would could should can may might must
+closing showing showings listing listings inspection inspections appraisal escrow offer offers price pricing contract
+counter counteroffer buyer buyers seller sellers lender loan title tour tours open house home property client clients
+agent agents team office meeting call calls text texts email emails draft drafts reminder reminders note notes
+update updates status payment invoice rent lease deposit earnest docs documents paperwork report reports
+morning afternoon evening weekend week month year noon midnight
+sent saved staged scheduled booked moved cancelled canceled confirmed done finished ready set added updated
+left signed approved declined received called asked said says told wants needs""".split())
+
+_PERSON_VERBS = frozenset("""
+asked asks called calls said says texted texts emailed emails replied replies confirmed confirms wants wanted needs
+needed signed agreed approved declined left loved liked hated prefers prefer mentioned told tells sent sends is was
+will would can could has had just already still thinks thought decided requested booked cancelled canceled
+moved accepted rejected countered responded wrote writes shared""".split())
 
 _DIGIT_WORDS = {
     "zero": "0",
@@ -213,7 +243,7 @@ class UnsupportedFieldType(RedactionError):
 @dataclass
 class RedactionContext:
     known_names: list[str] = field(default_factory=list)
-    owner_name: str = "Alex"
+    owner_name: str = ""  # only --owner-name is ever kept (no default owner)
     class_counts: dict[str, int] = field(default_factory=dict)
     _name_map: dict[str, str] = field(default_factory=dict)
 
@@ -316,12 +346,24 @@ def session_drop_reason(
     if _LEGAL_DROP.search(scrub):
         return "legal"
     for phrase in rules.do_not_keep:
-        if phrase_hit(blob, phrase):
+        if phrase_hit(blob, phrase) or _rule_name_hit(blob, phrase):
             return "do_not_keep"
     for entry in forgotten:
         if phrase_hit(blob, entry):
             return "forgotten"
     return None
+
+
+def _rule_name_hit(blob: str, phrase: str) -> bool:
+    """A do-not-keep rule naming a person ("Fakeman morning calls") drops any session that
+    mentions that name, even when the rest of the wording differs (conservative)."""
+    for tok in re.findall(r"\b[A-Z][a-z]{2,}\b", phrase):
+        low = tok.lower()
+        if low in _NAME_ALLOW or low in _COMMON_STARTERS or low in _TEXT_TARGET_SKIP:
+            continue
+        if re.search(rf"\b{re.escape(tok)}(?:'s)?\b", blob, re.I):
+            return True
+    return False
 
 
 def phone_mask(match: re.Match[str]) -> str:
@@ -386,11 +428,24 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
         ctx.bump("name")
         return m.group(0).replace(word, ph(word), 1)
 
+    def replace_text_target(m: re.Match[str]) -> str:
+        first, last = m.group(1), m.group(2)
+        if first.lower() in allow or first.lower() in _TEXT_TARGET_SKIP:
+            return m.group(0)
+        ctx.bump("name")
+        out_s = m.group(0).replace(first, ph(first), 1)
+        if last and last.lower() not in allow and last.lower() not in _TEXT_TARGET_SKIP:
+            ctx.bump("name")
+            out_s = out_s[: out_s.rfind(last)] + ph(last) + out_s[out_s.rfind(last) + len(last):]
+        return out_s
+
+    # One name token after "text" (any case: texting-style lowercase names count), plus an
+    # optional CAPITALIZED surname. Each token gets its own placeholder, so the cross-turn
+    # pass replaces "Rosalind" alone later ("Rosalind confirmed Friday").
     out = re.sub(
-        r"\btext\s+([a-z]{2,}(?:\s+[a-z]{2,})?)",
-        replace_lower,
+        r"\b(?i:text)\s+([A-Za-z][a-z]+)(?:\s+([A-Z][a-z]+)\b)?",
+        replace_text_target,
         out,
-        flags=re.I,
     )
     out = re.sub(
         r"\btell\s+([a-z]{2,})\s+and\s+([a-z]{2,})",
@@ -424,9 +479,21 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
                 return w + tail
             before = body[:start].rstrip()
             sentence_start = before == "" or before[-1:] in ".!?:"
-            nxt = re.match(r"\s+([A-Z][a-z]+)\b", body[g.end(1) :])
-            if sentence_start and not (nxt and nxt.group(1).lower() not in allow):
-                return w + tail
+            if sentence_start and w.lower() not in name_map:
+                # Sentence/reply/"Why:" start (Vault N2): a name when it is not ordinary English
+                # and is followed by a person verb, a possessive, or another capitalized name.
+                rest = body[g.end(1):]
+                nxt_cap = re.match(r"\s+([A-Z][a-z]+)\b", rest)
+                nxt_word = re.match(r"\s+([a-z']+)\b", rest)
+                possessive = rest.startswith("'s")
+                person = (nxt_word and nxt_word.group(1) in _PERSON_VERBS) or possessive or (
+                    nxt_cap and nxt_cap.group(1).lower() not in allow
+                    and nxt_cap.group(1).lower() not in _COMMON_STARTERS
+                )
+                if w.lower() in _COMMON_STARTERS or not person:
+                    return w + tail
+            ctx.bump("name")
+            return ph(w) + (tail if tail.startswith("'s") else "")
             ctx.bump("name")
             return ph(w)
 
@@ -489,8 +556,10 @@ def redact_text(text: str, ctx: RedactionContext) -> tuple[str, list[str]]:
     out = _sub(_RE_ROUTING_BARE, PLACEHOLDER_ROUTING, "routing", out, ctx)
     out = _sub(_RE_DOB_LABEL, PLACEHOLDER_DOB, "dob", out, ctx)
     out = _sub(_RE_DIGITS_LONG, PLACEHOLDER_DIGITS, "long_digits", out, ctx)
-    out = re.sub("\u2063(\\d+)\u2063", lambda m: hold[int(m.group(1))], out)
+    # Benign phrases ("Hunter Douglas", "Mason jar", ...) stay held through name redaction,
+    # so no real first name needs a keep-list entry (Vault N3).
     out = redact_names(out, ctx)
+    out = re.sub("\u2063(\\d+)\u2063", lambda m: hold[int(m.group(1))], out)
     return out, list(ctx.class_counts.keys())
 
 

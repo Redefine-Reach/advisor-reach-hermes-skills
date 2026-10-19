@@ -41,6 +41,10 @@ test("export excludes health sessions with exit 2", () => {
     session,
     "--redacted-text-out",
     out,
+    "--known-names",
+    join(mz, "fixtures", "fake_sessions", "known_names.txt"),
+    "--source",
+    "cli",
   ]);
   assert.equal(res.status, 2, res.stderr);
   assert.match(res.stderr, /excluded_sessions: 1 category=health/);
