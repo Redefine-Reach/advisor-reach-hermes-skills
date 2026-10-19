@@ -28,21 +28,32 @@ Identify the session file under `$HERMES_HOME`. Copy to a working file (e.g. `/t
 
 ## 2. Redact and build case (fail closed)
 
+Real export (RED-681, Vault Oct 19): **every eligible section** of the owner's own text / CLI / API sessions, never automated runs and never selected by category. One process per section; `--source` comes from the state.db metadata for that session.
+
 ```bash
-cd /opt/data/skills/advisor-reach-hermes-skills
-python3 evals/milestone-zero/export_session_to_case.py \
-  --session /tmp/session-raw.json \
-  --id mz-021 \
-  --suite regression \
-  --category send_draft \
-  --owner-name Alex \
-  --known-names /tmp/box-known-names.txt \
-  --rules /tmp/donotkeep-rules.json \
-  --forgotten /tmp/forgotten-phrases.txt \
-  --session-index opaque-7f3a \
-  --out evals/milestone-zero/cases-export.local.jsonl \
-  --manifest evals/milestone-zero/cases-export.local.manifest.json
+umask 077
+D=/opt/data/eval-export/<run>          # 0700, outside any git checkout
+X=<exporter copy>                       # PR #56 files, deleted with raw-input
+python3 $X/export_session_to_case.py \
+  --session $D/raw-input/<section>.json \
+  --source cli \
+  --id rt-01 \
+  --owner-name David \
+  --known-names $D/names.txt \
+  --out $D/redacted/cases-export.jsonl \
+  --manifest $D/redacted/manifests/rt-01.manifest.json 2>>$D/redacted/export-run.log
+python3 $X/export_session_to_case.py --check-perms $D     # exit 1 + paths if anything is looser than 0600/0700
+python3 $X/export_session_to_case.py --summarize $D/redacted/cases-export.jsonl   # ids and counts only
+# Same session, before 3 AM AZ (daily snapshot): shred raw copies and the names file
+find $D/raw-input -type f -exec shred -u {} + && rmdir $D/raw-input && shred -u $D/names.txt && rm -rf $X
 ```
+
+- **What a case keeps:** up to `--context-turns` (default 10) owner/ARIN turns before the last owner message, the last owner message, and the recorded ARIN reply (every ARIN turn after it; empty if the section ends on the owner). Tool/system turns are dropped (counted in `export_meta.turns_skipped_non_text`).
+- **Whole-case redaction:** redaction, the drop rules, the health/legal guard and the residue scan run over every turn kept, not only the owner turn. A name detected anywhere is replaced in every turn with the same placeholder. The kept text is re-scanned right before writing.
+- **Sources:** `--source` is required for real exports. Only `telnyx_sms`, `cli` and `api_server` are exported. Anything else (cron, telegram, webhook), or a mismatch with the session's own `source` field, is excluded (exit 2).
+- **Permissions:** the export refuses to write (exit 1) when the output dir is looser than 0700 or an existing output file is looser than 0600 (for example after an fsGroup relabel), and re-checks after writing. `--check-perms DIR` checks a whole tree (setgid is allowed).
+- **No case text in git:** `--out` inside a git worktree is refused (exit 1).
+- `--category` is a label only (default `unlabeled`). The case labeller sets it later.
 
 - **Health or legal topic** (including common rewordings): entire session **excluded** (exit **2**), not redacted in place. A **second, independent** conservative pass (`conservative_guard.py`) re-scans redacted text; any residual health/legal/family/financial/credential-ish signal also forces exit **2** (default-deny).  
 - **Phones** (10-digit, +1, 7-digit local): masked as `[PHONE ***1234]` (last four only).  

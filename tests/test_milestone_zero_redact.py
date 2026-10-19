@@ -252,5 +252,239 @@ class CheckLeaksCI(unittest.TestCase):
             self.assertIn("LEAKS TOTAL: 0", proc.stdout)
 
 
+
+def _msg(role: str, content: str) -> dict[str, str]:
+    return {"role": role, "content": content}
+
+
+class _ExportHelpers:
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        os.chmod(FIX_MAIN / "known_names.txt", 0o600)
+
+    def _export(self, session: dict, extra: list[str] | None = None, out_dir: Path | None = None):
+        tmp = tempfile.mkdtemp()
+        os.chmod(tmp, 0o700)
+        base = Path(tmp)
+        sess = base / "session.json"
+        sess.write_text(json.dumps(session), encoding="utf-8")
+        out = (out_dir or (base / "redacted")) / "cases-export.jsonl"
+        proc = subprocess.run(
+            [sys.executable, str(MZ / "export_session_to_case.py"), "--session", str(sess),
+             "--id", "syn-01", "--category", "send_draft", "--known-names", str(FIX_MAIN / "known_names.txt"),
+             "--out", str(out), "--manifest", str(base / "m.json"),
+             *([] if extra and "--source" in extra else ["--source", "cli"]), *(extra or [])],
+            capture_output=True, text=True, cwd=str(MZ),
+        )
+        text = out.read_text(encoding="utf-8").strip() if out.exists() else ""
+        case = json.loads(text.splitlines()[-1]) if text else None
+        return proc, case, out
+
+    def _long_session(self) -> dict:
+        msgs = []
+        for i in range(7):
+            msgs.append(_msg("user", f"owner turn {i} about the listing"))
+            msgs.append(_msg("assistant", f"arin turn {i} noted"))
+        msgs.append(_msg("tool", "tool output ignored"))
+        msgs.append(_msg("user", "text Dana I am running late"))
+        msgs.append(_msg("assistant", "Drafted to Dana: running 10 late."))
+        msgs.append(_msg("assistant", "Why: Dana is waiting at the showing. Reply SEND to send."))
+        return {"messages": msgs}
+
+
+
+class ExportKeepsContextAndReply(_ExportHelpers, unittest.TestCase):
+    """RED-681: cases keep context turns, last owner message and recorded reply (synthetic only)."""
+
+    def test_keeps_last_owner_reply_and_ten_context_turns(self) -> None:
+        proc, case, out = self._export(self._long_session())
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        self.assertRegex(case["input"]["owner_text"], r"^text \S+ I am running late$")
+        self.assertNotIn("Dana", json.dumps(case))  # third-party name replaced in owner, context AND reply
+        self.assertRegex(case["fixture"]["assistant_text"].splitlines()[0], r"^Drafted to \S+: running 10 late\.$")
+        self.assertIn("Reply SEND", case["fixture"]["assistant_text"])
+        ctx = case["input"]["context_turns"]
+        self.assertEqual(len(ctx), 10)
+        self.assertEqual(ctx[-1], {"role": "arin", "content": "arin turn 6 noted"})
+        self.assertEqual({t["role"] for t in ctx}, {"owner", "arin"})
+        self.assertIn("owner: owner turn 6", case["input"]["context_available"])
+        meta = case["export_meta"]
+        self.assertTrue(meta["recorded_reply_present"])
+        self.assertEqual(meta["turns_skipped_non_text"], 1)
+        self.assertEqual(meta["context_turns_kept"], 10)
+        self.assertIs(case["synthetic"], False)
+        self.assertIsNone(case["draft_expected"])
+
+    def test_context_turn_limit_flag(self) -> None:
+        for n, want in ((0, 0), (3, 3), (50, 14)):
+            proc, case, _ = self._export(self._long_session(), ["--context-turns", str(n)])
+            self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+            self.assertEqual(len(case["input"]["context_turns"]), want, n)
+        proc, case, _ = self._export(self._long_session(), ["--context-turns", "-1"])
+        self.assertEqual(proc.returncode, EXIT_BLOCKED)
+        self.assertIsNone(case)
+
+    def test_section_ending_on_owner_has_no_reply(self) -> None:
+        sess = {"messages": [_msg("user", "can you check the showing time"), _msg("assistant", "Which one?"),
+                             _msg("user", "the Saturday one")]}
+        proc, case, _ = self._export(sess)
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        self.assertEqual(case["input"]["owner_text"], "the Saturday one")
+        self.assertEqual(case["fixture"]["assistant_text"], "")
+        self.assertFalse(case["export_meta"]["recorded_reply_present"])
+        self.assertEqual(len(case["input"]["context_turns"]), 2)
+
+    def test_context_and_reply_are_redacted_before_write(self) -> None:
+        sess = {"messages": [_msg("user", "Zelda Clientfake cell is 602-555-0142"),
+                             _msg("assistant", "Got it, saved 602 555 0142 for Zelda Clientfake"),
+                             _msg("user", "text her I am late"),
+                             _msg("assistant", "Drafted to Zelda Clientfake at 602-555-0142. Why: she asked for an ETA.")]}
+        proc, case, out = self._export(sess)
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        body = out.read_text(encoding="utf-8")
+        self.assertNotIn("Clientfake", body)
+        self.assertNotIn("6025550142", body.replace("-", "").replace(" ", ""))
+        self.assertIn("[PHONE ***0142]", body)
+        self.assertNotIn("Clientfake", proc.stderr + proc.stdout)
+        self.assertNotIn("text her", proc.stderr + proc.stdout)
+
+    def test_health_in_any_turn_excludes_whole_session(self) -> None:
+        sess = {"messages": [_msg("user", "she has cancer so keep it gentle"), _msg("assistant", "Understood."),
+                             _msg("user", "text her the open house time"), _msg("assistant", "Drafted.")]}
+        proc, case, out = self._export(sess)
+        self.assertEqual(proc.returncode, EXIT_EXCLUDED, proc.stderr)
+        self.assertFalse(out.exists())
+
+    def test_health_in_recorded_reply_excludes(self) -> None:
+        sess = {"owner_text": "text her the time",
+                "messages": [_msg("user", "text her the time"), _msg("assistant", "Drafted; I noted her cancer.")]}
+        proc, case, out = self._export(sess)
+        self.assertEqual(proc.returncode, EXIT_EXCLUDED, proc.stderr)
+        self.assertFalse(out.exists())
+
+    def test_modes_0600_file_0700_dir(self) -> None:
+        proc, case, out = self._export(self._long_session())
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        self.assertEqual(out.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(out.parent.stat().st_mode & 0o777, 0o700)
+
+    def test_refuses_out_inside_git_worktree(self) -> None:
+        proc, case, out = self._export(self._long_session(), out_dir=ROOT / "evals" / "milestone-zero" / "tmp-red681")
+        self.assertEqual(proc.returncode, EXIT_BLOCKED)
+        self.assertIn("out_inside_git_worktree", proc.stderr)
+        self.assertFalse(out.exists())
+        self.assertFalse((ROOT / "evals" / "milestone-zero" / "tmp-red681").exists())
+
+
+class ExportVaultRequirements(_ExportHelpers, unittest.TestCase):
+    """Vault Oct 19: source filter, whole-case redaction, owner name, perms, ids/counts-only listing."""
+
+    def test_unknown_third_party_name_and_number_redacted_in_reply_and_context(self) -> None:
+        sess = {"messages": [
+            _msg("user", "text Priya that the inspection moved"),
+            _msg("assistant", "Drafted to Priya. Why: Priya asked about the inspection. Her cell 480-555-0199."),
+            _msg("user", "also tell Marco and Priya the new time"),
+            _msg("assistant", "Drafted to Marco and Priya at 480 555 0199 and (602) 555-0123."),
+        ]}
+        proc, case, out = self._export(sess, ["--owner-name", "David"])
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        body = out.read_text(encoding="utf-8")
+        for raw in ("Priya", "Marco", "4805550199", "6025550123"):
+            self.assertNotIn(raw, body.replace("-", "").replace(" ", "").replace("(", "").replace(")", "") if raw.isdigit() else body)
+        self.assertIn("[PHONE ***0199]", body)
+        self.assertNotIn("Priya", proc.stderr + proc.stdout)
+
+    def test_owner_name_david_is_kept(self) -> None:
+        sess = {"messages": [_msg("user", "David here, text Priya I am late"),
+                             _msg("assistant", "Drafted for David to Priya.")]}
+        proc, case, _ = self._export(sess, ["--owner-name", "David"])
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        self.assertIn("David", case["input"]["owner_text"])
+        self.assertNotIn("Priya", json.dumps(case))
+
+    def test_automated_source_excluded_and_source_required(self) -> None:
+        for src in ("cron", "telegram", "webhook"):
+            proc, case, out = self._export(self._long_session(), ["--source", src])
+            self.assertEqual(proc.returncode, EXIT_EXCLUDED, src)
+            self.assertFalse(out.exists())
+        sess = dict(self._long_session(), source="cron")
+        proc, case, out = self._export(sess, ["--source", "cli"])
+        self.assertEqual(proc.returncode, EXIT_EXCLUDED)
+        for src in ("telnyx_sms", "cli", "api_server"):
+            proc, case, _ = self._export(self._long_session(), ["--source", src])
+            self.assertEqual(proc.returncode, EXIT_OK, src)
+            self.assertEqual(case["export_meta"]["source"], src)
+        tmp = Path(tempfile.mkdtemp())
+        sess_path = tmp / "s.json"
+        sess_path.write_text(json.dumps(self._long_session()), encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(MZ / "export_session_to_case.py"), "--session", str(sess_path),
+                               "--id", "x", "--known-names", str(FIX_MAIN / "known_names.txt"),
+                               "--out", str(tmp / "r" / "c.jsonl")], capture_output=True, text=True, cwd=str(MZ))
+        self.assertEqual(proc.returncode, EXIT_BLOCKED)
+        self.assertIn("source_required", proc.stderr)
+
+    def test_category_is_a_label_default_unlabeled(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        sess_path = tmp / "s.json"
+        sess_path.write_text(json.dumps(self._long_session()), encoding="utf-8")
+        out = tmp / "r" / "c.jsonl"
+        proc = subprocess.run([sys.executable, str(MZ / "export_session_to_case.py"), "--session", str(sess_path),
+                               "--id", "x", "--source", "cli", "--known-names", str(FIX_MAIN / "known_names.txt"),
+                               "--out", str(out)], capture_output=True, text=True, cwd=str(MZ))
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        self.assertEqual(json.loads(out.read_text())["category"], "unlabeled")
+
+    def test_loose_output_dir_or_file_fails_closed(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        rdir = tmp / "redacted"
+        rdir.mkdir(mode=0o700)
+        os.chmod(rdir, 0o770)  # what an fsGroup relabel looks like
+        proc, case, out = self._export(self._long_session(), out_dir=rdir)
+        self.assertEqual(proc.returncode, EXIT_BLOCKED)
+        self.assertIn("loose_permissions", proc.stderr)
+        self.assertFalse(out.exists())
+        os.chmod(rdir, 0o700)
+        out.write_text("", encoding="utf-8")
+        os.chmod(out, 0o660)
+        proc, case, _ = self._export(self._long_session(), out_dir=rdir)
+        self.assertEqual(proc.returncode, EXIT_BLOCKED)
+        self.assertEqual(out.read_text(), "")
+
+    def test_check_perms_reports_paths_only(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        os.chmod(tmp, 0o700)
+        (tmp / "sub").mkdir(mode=0o700)
+        f = tmp / "sub" / "c.jsonl"
+        f.write_text("SYNTHETIC-SECRET-TEXT", encoding="utf-8")
+        os.chmod(f, 0o600)
+        run = lambda: subprocess.run([sys.executable, str(MZ / "export_session_to_case.py"), "--check-perms", str(tmp)],
+                                     capture_output=True, text=True, cwd=str(MZ))
+        ok = run()
+        self.assertEqual(ok.returncode, EXIT_OK, ok.stdout)
+        os.chmod(f, 0o640)
+        os.chmod(tmp / "sub", 0o2770)
+        bad = run()
+        self.assertEqual(bad.returncode, EXIT_BLOCKED)
+        self.assertEqual(json.loads(bad.stdout)["loose_paths"], 2)
+        self.assertNotIn("SYNTHETIC-SECRET-TEXT", bad.stdout + bad.stderr)
+        os.chmod(tmp / "sub", 0o2700)  # setgid alone is fine
+        os.chmod(f, 0o600)
+        self.assertEqual(run().returncode, EXIT_OK)
+
+    def test_summarize_prints_ids_and_counts_only(self) -> None:
+        proc, case, out = self._export(self._long_session())
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        res = subprocess.run([sys.executable, str(MZ / "export_session_to_case.py"), "--summarize", str(out)],
+                             capture_output=True, text=True, cwd=str(MZ))
+        self.assertEqual(res.returncode, EXIT_OK)
+        body = json.loads(res.stdout)
+        self.assertEqual(body["cases"], 1)
+        self.assertEqual(set(body["rows"][0]), {"id", "category", "source", "context_turns_kept",
+                                                "recorded_reply_present", "redaction_counts"})
+        for frag in ("owner turn", "arin turn", "running late", "Why:"):
+            self.assertNotIn(frag, res.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
