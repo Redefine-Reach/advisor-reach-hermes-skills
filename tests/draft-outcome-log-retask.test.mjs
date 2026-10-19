@@ -18,6 +18,9 @@ const judgePath = join(here, "fixtures", "learning-loop", "judge.py");
 const OWNER = "+17145550100";
 const OWNER2 = "+17145550333";
 const STRANGER = "+17145550222";
+const OWNER_TG = "424242";
+const UNMAPPED_TG = "888888";
+const OWNER_IDENTITIES = `${OWNER}|tg:${OWNER_TG}`;
 const DEST = "+15555550199";
 const DEST2 = "+15555550200";
 const FROM = "+19283563339";
@@ -245,30 +248,50 @@ function assertDraftUnchanged(dir, id, before) {
   assert.equal(readFileSync(join(dir, "drafts", `${id}.json`), "utf8"), before);
 }
 
-test("item7 AC18 only draft approver may cancel send or re-stage", () => {
-  for (const actor of [OWNER2, STRANGER]) {
-    const dir = home();
-    const envExtra = {
-      TELNYX_SMS_ALLOWED_USERS: `${OWNER},${OWNER2}`,
-    };
-    const s = stage(dir, "You can reply when you have a moment.", envExtra);
-    assert.equal(s.payload.outcome, "staged", s.proc.stderr);
-    const id = s.payload.draft_id;
-    const before = draftSnapshot(dir, id);
-    const cancel = runSms(dir, ["cancel", "--draft-id", id, "--actor", actor], envExtra);
+test("item7 AC18 cross-channel actor map and three refusal classes", () => {
+  const envExtra = {
+    TELNYX_SMS_ALLOWED_USERS: `${OWNER},${OWNER2}`,
+    TELEGRAM_ALLOWED_USERS: `${OWNER_TG},${UNMAPPED_TG}`,
+    ARIN_OWNER_IDENTITIES: OWNER_IDENTITIES,
+  };
+  const dir = home();
+  const s = stage(dir, "Hi Dana, you can reply when you have a moment.", envExtra);
+  const id = s.payload.draft_id;
+  const before = draftSnapshot(dir, id);
+  const tgSend = runSms(
+    dir,
+    ["send", "--draft-id", id, "--confirm", "SEND", "--attest", "yes", "--actor", OWNER_TG],
+    { ...envExtra, SMS_SEND_STUB_PROVIDER: "1" },
+  );
+  assert.equal(tgSend.payload.outcome, "sent", tgSend.proc.stderr);
+  const dir2 = home();
+  const s2 = stage(dir2, "Hi Dana, app path should still send.", envExtra);
+  const id2 = s2.payload.draft_id;
+  const appSend = runSms(
+    dir2,
+    ["send", "--draft-id", id2, "--confirm", "SEND", "--attest", "yes", "--actor", OWNER],
+    { ...envExtra, SMS_SEND_STUB_PROVIDER: "1" },
+  );
+  assert.equal(appSend.payload.outcome, "sent");
+  const dir3 = home();
+  const s3 = stage(dir3, "Hi Dana, refusal path for you.", envExtra);
+  const id3 = s3.payload.draft_id;
+  const before3 = draftSnapshot(dir3, id3);
+  for (const actor of [OWNER2, UNMAPPED_TG, STRANGER]) {
+    const cancel = runSms(dir3, ["cancel", "--draft-id", id3, "--actor", actor], envExtra);
     assert.equal(cancel.payload.outcome, "refused_not_owner");
-    assert.equal(outcomeLines(dir).length, 0);
-    assertDraftUnchanged(dir, id, before);
+    assert.equal(outcomeLines(dir3).length, 0);
+    assertDraftUnchanged(dir3, id3, before3);
     const send = runSms(
-      dir,
-      ["send", "--draft-id", id, "--confirm", "SEND", "--attest", "yes", "--actor", actor],
+      dir3,
+      ["send", "--draft-id", id3, "--confirm", "SEND", "--attest", "yes", "--actor", actor],
       { ...envExtra, SMS_SEND_STUB_PROVIDER: "1" },
     );
     assert.equal(send.payload.outcome, "refused_not_owner");
-    assert.equal(outcomeLines(dir).length, 0);
-    assertDraftUnchanged(dir, id, before);
+    assert.equal(outcomeLines(dir3).length, 0);
+    assertDraftUnchanged(dir3, id3, before3);
     const restage = runSms(
-      dir,
+      dir3,
       [
         "stage",
         "--approver",
@@ -276,21 +299,21 @@ test("item7 AC18 only draft approver may cancel send or re-stage", () => {
         "--dest",
         DEST,
         "--body",
-        "You should not reach this re-stage.",
+        "Hi Dana, should not re-stage.",
         "--why",
         "Another reason for the afternoon call slot",
         "--source-kind",
         "owner_text",
         "--replaces",
-        id,
+        id3,
         "--actor",
         actor,
       ],
       envExtra,
     );
     assert.equal(restage.payload.outcome, "refused_not_owner");
-    assert.equal(outcomeLines(dir).length, 0);
-    assertDraftUnchanged(dir, id, before);
+    assert.equal(outcomeLines(dir3).length, 0);
+    assertDraftUnchanged(dir3, id3, before3);
   }
 });
 
@@ -521,6 +544,179 @@ test("item8 cancel before sweep on expired draft yields one ignored line", () =>
   runSms(dir, ["sweep-outcomes"], { SMS_NOW: "2026-10-19T12:31:00+00:00" });
   assert.equal(outcomeLines(dir).length, 1);
   assert.equal(outcomeLines(dir)[0].outcome, "cancelled");
+});
+
+test("closing opt-out at SEND writes refused opted_out", () => {
+  const dir = home();
+  const s = stage(dir, "Hi Dana, quick note before the call.");
+  writeFileSync(join(dir, "sms-opt-out.txt"), `${DEST}\n`);
+  const sent = runSms(dir, ["send", "--draft-id", s.payload.draft_id, "--confirm", "SEND", "--attest", "yes"]);
+  assert.equal(sent.payload.outcome, "refused_stop");
+  const lines = outcomeLines(dir);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].outcome, "refused");
+  assert.equal(lines[0].refuse_reason, "opted_out");
+});
+
+test("closing over-length at SEND writes refused over_length", () => {
+  const dir = home();
+  const body = `Hi Dana, ${"A".repeat(60)}`;
+  const s = stage(dir, body, { SMS_MAX_BODY_CHARS: "200" });
+  const sent = runSms(dir, ["send", "--draft-id", s.payload.draft_id, "--confirm", "SEND", "--attest", "yes"], {
+    SMS_MAX_BODY_CHARS: "10",
+  });
+  assert.equal(sent.payload.outcome, "error");
+  assert.equal(sent.payload.refuse_reason, "over_length");
+  const lines = outcomeLines(dir);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].refuse_reason, "over_length");
+});
+
+test("closing pending_blocks refuses a second open draft", () => {
+  const dir = home();
+  stage(dir, "Hi Dana, first pending draft for you.");
+  const second = stage(dir, "Hi Dana, second should be refused.");
+  assert.equal(second.payload.outcome, "refused_multi");
+  assert.equal(outcomeLines(dir).length, 0);
+});
+
+test("closing provider_no_id cannot be re-sent or re-staged", () => {
+  const dir = home();
+  const transport = join(dir, "no-id-transport.py");
+  writeFileSync(
+    transport,
+    "#!/usr/bin/env python3\nimport json,sys\njson.dump({'success':True,'message_id':'','provider_status':'accepted'},sys.stdout)\n",
+  );
+  chmodSync(transport, 0o755);
+  const s = stage(dir, "No id path for you.");
+  const id = s.payload.draft_id;
+  const fail = runSms(dir, ["send", "--draft-id", id, "--confirm", "SEND", "--attest", "yes"], {
+    SMS_SEND_TRANSPORT: transport,
+    SMS_SEND_STUB_PROVIDER: "",
+  });
+  assert.equal(fail.payload.refuse_reason, "provider_no_id");
+  const resend = runSms(dir, ["send", "--draft-id", id, "--confirm", "SEND", "--attest", "yes"]);
+  assert.notEqual(resend.payload.outcome, "sent");
+  const restage = stage(dir, "No id path fixed for you.", { replaces: id, why: "Still need them to confirm before the call" });
+  assert.equal(restage.payload.outcome, "error");
+});
+
+test("closing missing --actor fails closed on send", () => {
+  const dir = home();
+  const s = stage(dir, "Actor required on send.");
+  const base = runSms(dir, ["export-outcomes"]).env;
+  const proc = spawnSync("python3", [scriptPath, "send", "--draft-id", s.payload.draft_id, "--confirm", "SEND", "--attest", "yes"], {
+    env: base,
+    encoding: "utf8",
+  });
+  assert.notEqual(proc.status, 0);
+});
+
+test("closing refused placeholder re-stage then SEND links chain", () => {
+  const dir = home();
+  const ph = stage(dir, "Your tour is on [DATE] - please confirm.", {
+    why: "They need to confirm the tour time before we lock the slot",
+  });
+  const refused = runSms(dir, ["send", "--draft-id", ph.payload.draft_id, "--confirm", "SEND", "--attest", "yes"]);
+  assert.equal(refused.payload.outcome, "refused_unfilled_placeholder");
+  const fixed = stage(dir, "Your tour is on Tuesday - please confirm.", {
+    replaces: ph.payload.draft_id,
+    why: "They confirmed Tuesday works before we lock the slot",
+  });
+  const sent = runSms(dir, ["send", "--draft-id", fixed.payload.draft_id, "--confirm", "SEND", "--attest", "yes"], {
+    SMS_SEND_STUB_PROVIDER: "1",
+  });
+  assert.equal(sent.payload.outcome, "sent");
+  const line = outcomeLines(dir).at(-1);
+  assert.deepEqual(line.replaces_chain, [ph.payload.draft_id]);
+});
+
+test("closing edit_distance is first body to sent body across rounds", () => {
+  const dir = home();
+  const b0 = "Hi Dana, the key is under the mat.";
+  const b1 = "Hi Dana, the key is in the lockbox.";
+  const b2 = "Hi Dana, use code 4491 on the lockbox.";
+  const d0 = stage(dir, b0).payload.draft_id;
+  const d1 = stage(dir, b1, { replaces: d0, why: "Second reason for your shorter update today" }).payload.draft_id;
+  const d2 = stage(dir, b2, { replaces: d1, why: "Third reason for your final wording today" }).payload.draft_id;
+  runSms(dir, ["send", "--draft-id", d2, "--confirm", "SEND", "--attest", "yes"], { SMS_SEND_STUB_PROVIDER: "1" });
+  const dist = spawnSync(
+    "python3",
+    ["-c", "import draft_outcome_log as m; import sys; print(m.edit_distance(sys.argv[1], sys.argv[2]))", b0, b2],
+    { encoding: "utf8", env: { ...process.env, PYTHONPATH: dirname(outcomeModPath) } },
+  );
+  const expected = Number(dist.stdout.trim());
+  const line = outcomeLines(dir)[0];
+  assert.equal(line.edit_distance, expected);
+  const roundSum = spawnSync(
+    "python3",
+    [
+      "-c",
+      `import draft_outcome_log as m, sys
+a,b,c = sys.argv[1], sys.argv[2], sys.argv[3]
+print(m.edit_distance(a,b)+m.edit_distance(b,c))`,
+      b0,
+      b1,
+      b2,
+    ],
+    { encoding: "utf8", env: { ...process.env, PYTHONPATH: dirname(outcomeModPath) } },
+  );
+  const summed = Number(roundSum.stdout.trim());
+  assert.ok(summed > expected, `expected first-to-final ${expected} < summed rounds ${summed}`);
+});
+
+test("closing refused_recent_provider_failure blocks duplicate fresh stage", () => {
+  const dir = home();
+  const body = "Hi Dana, duplicate guard body for you.";
+  const transport = join(dir, "ambig-transport.py");
+  writeFileSync(
+    transport,
+    "#!/usr/bin/env python3\nimport json,sys\njson.dump({'success':False,'message_id':'','provider_status':'error','error':'timeout'},sys.stdout)\n",
+  );
+  chmodSync(transport, 0o755);
+  const s = stage(dir, body);
+  runSms(dir, ["send", "--draft-id", s.payload.draft_id, "--confirm", "SEND", "--attest", "yes"], {
+    SMS_SEND_TRANSPORT: transport,
+    SMS_SEND_STUB_PROVIDER: "",
+  });
+  const dup = stage(dir, body);
+  assert.equal(dup.payload.outcome, "refused_recent_provider_failure");
+  assert.match(dup.payload.reason, /may already have gone out/i);
+  assert.equal(outcomeLines(dir).length, 1);
+});
+
+test("closing definitive provider failed allows fresh stage of same body", () => {
+  const dir = home();
+  const body = "Hi Dana, retry after definitive fail.";
+  const transport = join(dir, "failed-transport.py");
+  writeFileSync(
+    transport,
+    "#!/usr/bin/env python3\nimport json,sys\njson.dump({'success':False,'message_id':'','provider_status':'failed','error':'rejected'},sys.stdout)\n",
+  );
+  chmodSync(transport, 0o755);
+  const s = stage(dir, body);
+  runSms(dir, ["send", "--draft-id", s.payload.draft_id, "--confirm", "SEND", "--attest", "yes"], {
+    SMS_SEND_TRANSPORT: transport,
+    SMS_SEND_STUB_PROVIDER: "",
+  });
+  const again = stage(dir, body, { why: "They still need the same note before the afternoon call" });
+  assert.equal(again.payload.outcome, "staged");
+});
+
+test("closing refused draft allows only one re-stage", () => {
+  const dir = home();
+  const ph = stage(dir, "Hi Dana, meet at [TIME] today.", { why: "They need the time before we lock the slot" });
+  runSms(dir, ["send", "--draft-id", ph.payload.draft_id, "--confirm", "SEND", "--attest", "yes"]);
+  const once = stage(dir, "Hi Dana, meet at noon today.", {
+    replaces: ph.payload.draft_id,
+    why: "Noon works before we lock the slot",
+  });
+  assert.equal(once.payload.outcome, "staged");
+  const twice = stage(dir, "Hi Dana, meet at one today.", {
+    replaces: ph.payload.draft_id,
+    why: "One pm works before we lock the slot",
+  });
+  assert.equal(twice.payload.outcome, "error");
 });
 
 test("item12 expired send keeps cancelled_reason expired with status ignored", () => {

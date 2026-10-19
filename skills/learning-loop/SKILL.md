@@ -12,7 +12,7 @@ On a text turn, the terminal and `execute_code` are refused. Call the box plugin
 - `save` stores one explicit preference, a repeated correction, or a client procedure.
 - `record` stores one draft style or acted-on signal (`action` `edit`, `send`, or `skip`; `note` only for `edit`).
 - `next` returns style notes to apply before staging another draft of that `kind`.
-- `show` lists learned draft signals (and `list` / `apply` cover saved preferences).
+- `show` lists learned draft signals; `list` covers saved preferences.
 - `forget` removes one named preference, one client procedure, or one style note (`forget --style-note`, optional `--about`).
 
 Pass the same scope, client, kind, and text the commands below use. If `learning_loop` returns an error, say that and stop.
@@ -33,7 +33,7 @@ On a text turn, call the box plugin `learning_loop` with these ops (not `execute
 | `show` | `show` or `show --kind <kind>` | what you learned from drafts |
 | `forget` | `forget --id` / `--text` (preference), `--style-note` [--about], or client procedure fields | owner names what to remove |
 | `list` | `list` | saved preferences and client procedures |
-| `apply` / `status` | use `list` and `show` (no separate plugin op) | memory questions and Daily Brief prefs |
+| memory / Daily Brief prefs | `list` and `next --kind daily-brief` | what to apply before a brief or draft |
 
 Non-owner sessions must not call `record`, `show`, or `forget`; the plugin refuses them.
 
@@ -53,11 +53,9 @@ When the owner corrects a draft or a brief, and they are not stating a new prefe
 
 ## After /new
 
-`/new` drops the chat. It does not drop the file. On the first turn of a session, including the turn right after `/new`, run `apply` before a Daily Brief or a draft:
+`/new` drops the chat. It does not drop the file. On the first turn of a session, including the turn right after `/new`, run `next --kind daily-brief` before a Daily Brief, or `next --kind <kind>` before another draft kind.
 
-`apply --kind daily-brief`
-
-Add `--client "<name>"` only when the work is about that one client. Follow every returned item for order, length, and emphasis. Owner items apply to the owner's work. A client's items apply only when that client was named. A preference does not authorize a send, a page, a job, or a CRM write.
+Add client scope only when the work is about that one client (`list --scope client --client "<name>"`). Follow every returned item for order, length, and emphasis. Owner items apply to the owner's work. A client's items apply only when that client was named. A preference does not authorize a send, a page, a job, or a CRM write.
 
 ## What you remember
 
@@ -93,7 +91,7 @@ Do not announce the record. Before the next draft of that kind, run `next --kind
 
 ## Background review
 
-Silent background review stays off. Do not run a review, do not create a review job, and do not change Hermes config. `status` reports `background_review` as `off`, `on`, or `unset`. `unset` and `off` stay as they are. If it is `on`, say so and do not start a review. This script has no command that turns it on.
+Silent background review stays off. Do not run a review, do not create a review job, and do not change Hermes config. If background review is on in Hermes config, say so and do not start a review. This script has no command that turns it on.
 
 ## What you never do
 

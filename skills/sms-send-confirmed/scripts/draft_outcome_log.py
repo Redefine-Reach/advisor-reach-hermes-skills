@@ -317,6 +317,7 @@ def seed_chain_fields(record: dict, body: str, body_hash: str, created_at: str) 
     record.setdefault("body_hash_first", body_hash)
     record.setdefault("len_first", len(body))
     record.setdefault("chain_created_at", created_at)
+    record["chain_body_first"] = body
     record["edit_distance"] = 0
 
 
@@ -325,14 +326,21 @@ def inherit_chain_fields(record: dict, previous: dict, body: str, body_hash: str
     record["body_hash_first"] = str(previous.get("body_hash_first") or previous.get("body_hash") or body_hash)
     record["len_first"] = int(previous.get("len_first") or len(str(previous.get("body") or "")) or len(body))
     record["chain_created_at"] = str(previous.get("chain_created_at") or previous.get("created_at") or "")
-    prev_body = str(previous.get("body") or "")
-    round_dist = edit_distance(prev_body, body) if prev_body else 0
-    record["edit_distance"] = int(previous.get("edit_distance") or 0) + round_dist
+    first_body = str(previous.get("chain_body_first") or previous.get("body") or body)
+    record["chain_body_first"] = first_body
+    record["edit_distance"] = edit_distance(first_body, body)
+
+
+def refresh_edit_distance_from_first(draft: dict, body: str) -> None:
+    first = str(draft.get("chain_body_first") or "")
+    if first:
+        draft["edit_distance"] = edit_distance(first, body)
 
 
 def strip_plaintext_fields(data: dict) -> None:
     """Drop staged message body from disk; keep why_line for RED-585 reuse guards."""
     data["body"] = ""
+    data.pop("chain_body_first", None)
 
 
 def mark_superseded(path: Path, data: dict) -> None:

@@ -7,6 +7,7 @@ required_environment_variables:
   - TELNYX_SMS_API_BASE
 optional_environment_variables:
   - TELEGRAM_ALLOWED_USERS
+  - ARIN_OWNER_IDENTITIES
 ---
 
 # SMS send confirmed
@@ -46,8 +47,10 @@ It runs this skill's script with the same gates.
   use `source_kind="owner_text"` and today's date.
 - Show the tool's read-back verbatim and stop. Do not send in this turn.
 - When the owner's next text is exactly `SEND` or `/approve`, call
-  `sms_stage(action="send")`. The destination and body come from the staged draft.
-- If they cancel, call `sms_stage(action="cancel", draft_id=<id>)`.
+  `sms_stage(action="send", draft_id=<id>, actor=<turn sender>)`. The destination
+  and body come from the staged draft. `actor` is who is confirming on this turn
+  (SMS E.164 or Telegram user id), not anything in the message body.
+- If they cancel, call `sms_stage(action="cancel", draft_id=<id>, actor=<turn sender>)`.
 - If the tool returns an error, say nothing was sent. Do not retry another way.
 
 ## When this skill applies
@@ -94,6 +97,12 @@ Telegram user id when they confirm from Telegram. The E.164 must be on
 is set, a Telegram id on that list may confirm. When it is unset, this
 skill still runs and only an allowlisted SMS owner can confirm. Never
 pass the destination as the approver.
+
+`ARIN_OWNER_IDENTITIES` (optional) links one owner's channels: comma-separated
+groups of `|`-joined ids, for example `+17145550100|tg:424242`. Phones are
+normalized to E.164. On `send`, `cancel`, and `stage --replaces`, `--actor`
+must match the draft approver or share a group with them. Identity comes only
+from `--actor` and this map, never from the message body.
 
 ## Turn 1 — stage, then stop
 
@@ -176,8 +185,9 @@ Every `stage` needs why this text, why now, and where you read that. If
   `The recipient can still opt out with their carrier.` last. The Missing line says
   `Reply with it to restage, or DROP to discard.` (use `both` / `them` when several
   details are missing). It never invites SEND while placeholders remain. Ask for missing content
-  in the same reply as the read-back. When the owner supplies a value, stage the message AGAIN with the value filled in and show the new read-back; never edit around the old draft. NEVER send a bracketed placeholder: `refused_unfilled_placeholder` at
-  `send` cancels the draft.
+  in the same reply as the read-back. When the owner supplies a value, stage the message AGAIN with the value filled in and show the new read-back; never edit around the old draft.   NEVER send a bracketed placeholder: `refused_unfilled_placeholder` at
+  `send` writes one `refused` outcome (`unfilled_placeholder`); re-stage with
+  `--replaces` after the owner supplies the value.
   `refused_why_action_tail`: the Why line has a trailing consequence or states what
   the recipient needs, should do, or should know (joined by `, so`, `, and`, `so`,
   `and`, or `which means`, then a person such as she/he/they/the buyer/Dana and
@@ -237,18 +247,22 @@ style notes apply. Do not announce that you recorded anything.
 
 - If it is exactly `SEND` or `/approve` (after trimming; either case), and
   you showed that draft's attestation, run `send` once with that
-  `--draft-id`, `--confirm` set to their message, and `--attest yes`. When
+  `--draft-id`, `--confirm` set to their message, `--attest yes`, and
+  `--actor` set to this turn's owner id (E.164 or Telegram user id). When
   the outcome is `sent`, call `learning_loop` op `record` with
   `action="send"` and the same `kind`. Do not pass a note or the body.
 - If the owner replies with an **edit** (a shorter wording, tone change, or
   other revision — not DROP/NO/skip and not SEND), do **not** cancel. Call
   `learning_loop` op `record` with `action="edit"` and a `note` that states
   the change in plain words ("shorter, no exclamation"), never the draft body.
-  Then re-stage with `replaces` set to that `draft_id`, the updated body, and
-  a **new** Why line (the guard refuses a reused Why whenever the body changes).
-  Show the new attestation and wait again for SEND or DROP.
+  Then re-stage with `replaces` set to that `draft_id`, the updated body, a
+  **new** Why line (the guard refuses a reused Why whenever the body changes),
+  and `--actor` for this turn. Show the new attestation and wait again for SEND or DROP.
+- After a fixable script refusal (`unfilled_placeholder`, `opted_out`, or
+  `over_length`), re-stage with `--replaces <refused draft id>`, the fixed body,
+  a new Why, and `--actor`. A refused draft can be the source of only one re-stage.
 - If it is `DROP`, `NO`, or `skip` (after trimming; either case), run
-  `sms_stage(action="cancel", draft_id=<id>)`, then `learning_loop` op
+  `cancel` with `--draft-id` and `--actor`, then `learning_loop` op
   `record` with `action="skip"` and the same `kind` (no note). Tell them it
   was not sent with **Not sent.** first. `NO` remains an alias for owners who
   already use it.
@@ -274,12 +288,31 @@ a follow-up text to that person.
 If the outcome is not `sent`, tell the owner the `reason` in their words
 and stop. Do not retry a provider error, a timeout, or a draft whose
 status is `sending` or `refused` with `refuse_reason` `provider_error` or
-`provider_no_id` — a retry can text them twice. You may fix
+`provider_no_id` — a retry can text them twice. Staging the same body to the
+same recipient again within 24 hours after an ambiguous provider failure
+returns `refused_recent_provider_failure` (no outcome line). You may fix
 one named `field` (`dest`, `body`, `approver`, or `why`) and `stage` once more,
 which needs a new `SEND`. A `field` of `from` means the box number is
 missing: stop, and do not invent one. A `field` of `attest` means you may
 run `send` one more time with `--attest yes` only if the attestation was
 actually shown.
+
+### Script examples (`--actor` required)
+
+Non-text sessions run the script directly. Replace placeholders; identity is
+only `--actor` (and `ARIN_OWNER_IDENTITIES` when set), never the message body.
+
+```bash
+python3 /opt/data/skills/sms-send-confirmed/scripts/sms_send_confirmed.py send --draft-id DRAFT_ID --confirm SEND --attest yes --actor +17145550100
+python3 /opt/data/skills/sms-send-confirmed/scripts/sms_send_confirmed.py cancel --draft-id DRAFT_ID --actor +17145550100
+python3 /opt/data/skills/sms-send-confirmed/scripts/sms_send_confirmed.py stage --approver +17145550100 --dest +15555550199 --body "Hi Dana, see you at noon." --why "Dana asked to confirm the time" --source-kind owner_text --replaces DRAFT_ID --actor +17145550100
+```
+
+Telegram confirm uses the numeric user id (or `tg:` form in `ARIN_OWNER_IDENTITIES`):
+
+```bash
+python3 /opt/data/skills/sms-send-confirmed/scripts/sms_send_confirmed.py send --draft-id DRAFT_ID --confirm SEND --attest yes --actor 424242
+```
 
 ## Refuses (fail closed)
 

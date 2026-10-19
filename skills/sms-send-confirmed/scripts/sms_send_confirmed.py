@@ -62,6 +62,11 @@ ATTESTATION_VERSION = "red-390-v3"
 DEFAULT_MAX_BODY_CHARS = 640
 DEFAULT_DRAFT_TTL_SECONDS = 1800
 DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
+DOUBLE_SEND_GUARD_HOURS = 24
+RECENT_PROVIDER_FAILURE_REASON = (
+    "That text may already have gone out a moment ago. I won't resend it automatically."
+)
+DEFINITIVE_PROVIDER_FAIL_STATUSES = frozenset({"failed", "rejected"})
 CONFIRM_TOKENS = frozenset({"send", "/approve"})
 DROP_TOKENS = frozenset({"no", "skip", "drop"})
 ATTEST_YES = frozenset({"yes", "y", "true", "1"})
@@ -1040,6 +1045,53 @@ def phone_allowlist(environ: Mapping[str, str] | None = None, *, enforce_closed:
     return owners
 
 
+def normalize_identity_token(raw: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    if lowered.startswith("tg:"):
+        rest = text[3:].strip()
+        if TELEGRAM_ID_RE.fullmatch(rest):
+            return rest
+    if TELEGRAM_ID_RE.fullmatch(text):
+        return text
+    kind, number = classify_phone(text)
+    if kind == "ok" and number:
+        return number
+    return text
+
+
+def owner_identity_groups(environ: Mapping[str, str] | None = None) -> list[frozenset[str]]:
+    env = os.environ if environ is None else environ
+    raw = str(env.get("ARIN_OWNER_IDENTITIES", "")).strip()
+    if not raw:
+        return []
+    groups: list[frozenset[str]] = []
+    for group_part in raw.split(","):
+        members: set[str] = set()
+        for token in group_part.split("|"):
+            normalized = normalize_identity_token(token.strip())
+            if normalized:
+                members.add(normalized)
+        if members:
+            groups.append(frozenset(members))
+    return groups
+
+
+def actor_matches_approver(actor: str, approver: str, groups: list[frozenset[str]]) -> bool:
+    a = normalize_identity_token(actor)
+    ap = normalize_identity_token(approver)
+    if a == ap:
+        return True
+    if not groups:
+        return False
+    for group in groups:
+        if a in group and ap in group:
+            return True
+    return False
+
+
 def telegram_allowlist(environ: Mapping[str, str] | None = None) -> set[str]:
     env = os.environ if environ is None else environ
     raw = str(env.get("TELEGRAM_ALLOWED_USERS", "")).strip()
@@ -1585,6 +1637,7 @@ def context() -> dict:
         "phones": phones,
         "telegram": telegram,
         "owners": phones | telegram,
+        "owner_identity_groups": owner_identity_groups(),
         "from": sender,
         "store": store,
     }
@@ -1677,23 +1730,80 @@ def resolve_turn_actor(raw: str, *, field: str = "actor") -> str:
             field=field,
             status=EXIT_ERROR,
         )
-    if TELEGRAM_ID_RE.fullmatch(text):
-        return text
+    normalized = normalize_identity_token(text)
+    if TELEGRAM_ID_RE.fullmatch(normalized):
+        return normalized
     kind, number = classify_phone(text)
     if kind == "ok" and number:
         return number
     raise GateFailure("error", "actor is not valid", field=field, status=EXIT_ERROR)
 
 
-def assert_actor_is_draft_approver(draft: dict, actor: str, *, draft_id: str) -> None:
+def assert_actor_is_draft_approver(
+    draft: dict,
+    actor: str,
+    *,
+    draft_id: str,
+    groups: list[frozenset[str]] | None = None,
+) -> None:
     approver = str(draft.get("approver") or "")
-    if actor != approver:
+    identity_groups = groups if groups is not None else owner_identity_groups()
+    if not actor_matches_approver(actor, approver, identity_groups):
         raise GateFailure(
             "refused_not_owner",
             "only the draft approver may act on this draft",
             field="actor",
             extra={"draft_id": draft_id, "dest": str(draft.get("dest") or "")},
         )
+
+
+def provider_send_is_definitively_failed(result: dict) -> bool:
+    if result.get("success"):
+        return False
+    status = str(result.get("provider_status") or "").strip().lower()
+    return status in DEFINITIVE_PROVIDER_FAIL_STATUSES
+
+
+def provider_send_triggers_double_send_guard(result: dict) -> bool:
+    if result.get("success"):
+        return not str(result.get("message_id") or "").strip()
+    return not provider_send_is_definitively_failed(result)
+
+
+def apply_double_send_guard(draft: dict, dest: str, body: str, when: datetime) -> None:
+    draft["double_send_guard_dest"] = dest
+    draft["double_send_guard_body_hash"] = body_hash(body)
+    draft["double_send_guard_at"] = iso(when)
+
+
+def assert_no_recent_double_send_guard(store: dict[str, Path], dest: str, body: str, now: datetime) -> None:
+    digest = body_hash(body)
+    cutoff = now - timedelta(hours=DOUBLE_SEND_GUARD_HOURS)
+    directory = store["drafts"]
+    for path in directory.glob("*.json"):
+        try:
+            data = read_draft(path)
+        except Exception:
+            continue
+        if str(data.get("double_send_guard_dest") or "") != dest:
+            continue
+        if str(data.get("double_send_guard_body_hash") or "") != digest:
+            continue
+        raw = str(data.get("double_send_guard_at") or "")
+        if not raw:
+            continue
+        try:
+            guarded_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if guarded_at.tzinfo is None:
+            guarded_at = guarded_at.replace(tzinfo=timezone.utc)
+        if guarded_at >= cutoff:
+            raise GateFailure(
+                "refused_recent_provider_failure",
+                RECENT_PROVIDER_FAILURE_REASON,
+                field="body",
+            )
 
 
 def new_draft_id() -> str:
@@ -1705,6 +1815,7 @@ def new_draft_id() -> str:
 
 
 def snapshot_for_outcome(draft: dict, body: str) -> None:
+    _draft_outcomes.refresh_edit_distance_from_first(draft, body)
     draft["body_hash_final"] = str(draft.get("body_hash") or "")
     draft["len_final"] = len(body)
 
@@ -1742,8 +1853,11 @@ def finalize_script_refused_draft(
     box_id: str,
     refuse_reason: str,
     body: str,
+    provider_result: dict | None = None,
 ) -> None:
     """Terminal script refusal: one refused outcome line; draft stays re-stageable via replaces."""
+    if provider_result is not None and provider_send_triggers_double_send_guard(provider_result):
+        apply_double_send_guard(draft, str(draft.get("dest") or ""), body, utc_now())
     snapshot_for_outcome(draft, body)
     maybe_finalize_draft_outcome(
         store,
@@ -1830,13 +1944,12 @@ def stage(
                         status=EXIT_ERROR,
                     )
                 actor = resolve_turn_actor(actor_raw, field="actor")
-                if actor != approver:
-                    raise GateFailure(
-                        "refused_not_owner",
-                        "actor must match the staging approver",
-                        field="actor",
-                    )
-                assert_actor_is_draft_approver(previous, actor, draft_id=replaces_id)
+                assert_actor_is_draft_approver(
+                    previous,
+                    actor,
+                    draft_id=replaces_id,
+                    groups=ctx["owner_identity_groups"],
+                )
                 prev_refuse = str(previous.get("refuse_reason") or "")
                 if prev_status == "refused" and prev_refuse not in _draft_outcomes.RESTAGEABLE_REFUSE_REASONS:
                     raise GateFailure(
@@ -1874,6 +1987,7 @@ def stage(
                     "a draft is already waiting for SEND; cancel it before staging another",
                 )
             if not replaces_id:
+                assert_no_recent_double_send_guard(ctx["store"], dest, body, now)
                 guard_why_not_reused(
                     latest_draft_for_approver(ctx["store"]["drafts"], approver),
                     dest=dest,
@@ -1907,7 +2021,7 @@ def stage(
             }
             if previous is not None:
                 _draft_outcomes.inherit_chain_fields(record, previous, body, body_digest)
-                if str(previous.get("status") or "") == "pending":
+                if str(previous.get("status") or "") in {"pending", "refused"}:
                     _draft_outcomes.mark_superseded(
                         draft_path(ctx["store"]["drafts"], replaces_id),
                         previous,
@@ -2007,7 +2121,12 @@ def send(draft_id: str, confirm: str, attest: str, actor_raw: str = "") -> int:
                     extra={"draft_id": draft_id, "dest": dest},
                 )
             actor = resolve_turn_actor(actor_raw, field="actor")
-            assert_actor_is_draft_approver(draft, actor, draft_id=draft_id)
+            assert_actor_is_draft_approver(
+                draft,
+                actor,
+                draft_id=draft_id,
+                groups=ctx["owner_identity_groups"],
+            )
             assert_draft_owner(ctx, draft, draft_id=draft_id)
             if utc_now() >= parse_expiry(draft):
                 snapshot_for_outcome(draft, body)
@@ -2114,6 +2233,7 @@ def send(draft_id: str, confirm: str, attest: str, actor_raw: str = "") -> int:
                         box_id=ctx["box_id"],
                         refuse_reason="provider_no_id",
                         body=body,
+                        provider_result=result,
                     )
                     audit(
                         ctx["store"],
@@ -2208,6 +2328,7 @@ def send(draft_id: str, confirm: str, attest: str, actor_raw: str = "") -> int:
                 box_id=ctx["box_id"],
                 refuse_reason="provider_error",
                 body=body,
+                provider_result=result,
             )
             audit(
                 ctx["store"],
@@ -2283,7 +2404,12 @@ def cancel(draft_id: str, actor_raw: str = "") -> int:
                 raise GateFailure("error", "draft was not found", field="draft_id", status=EXIT_ERROR)
             draft = read_draft(path)
             actor = resolve_turn_actor(actor_raw, field="actor")
-            assert_actor_is_draft_approver(draft, actor, draft_id=draft_id)
+            assert_actor_is_draft_approver(
+                draft,
+                actor,
+                draft_id=draft_id,
+                groups=ctx["owner_identity_groups"],
+            )
             assert_draft_owner(ctx, draft, draft_id=draft_id)
             data, transitioned = cancel_draft(ctx["store"]["drafts"], draft_id, "owner cancelled")
         if data is None:
