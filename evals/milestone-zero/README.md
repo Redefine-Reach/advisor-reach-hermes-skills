@@ -66,12 +66,16 @@ Credential vars cleared in the child process include Composio, GHL, FUB, and Gma
 
 For harness CI without a binary: `ARIN_EVAL_STUB_HERMES=1` exercises live path + outbound stub using fixture text.
 
-## MVQ grader (RED-681), v0.2.0
+## MVQ grader (RED-681), v0.3.0 (rubric locked Oct 19, spec v0.2)
 
 Two layers, scored **after selection** (case list hashed and frozen, behavior checks run, then every selected case is scored; behavior failures are recorded, not dropped):
 
 1. **Deterministic (always):** `grader/routes/deterministic.py` regex rubric (R1-R5, fixed reason codes) + `grader/hard_fail.py` H1-H4. No model, nothing leaves the process.
-2. **Judge (optional):** `ARIN_MVQ_GRADER_MODEL_ROUTE` (`fixture` in CI, `http`, or `grader/routes/<name>.py`). Unset / `deterministic` / `none` = deterministic only. A judge that errors or returns malformed output makes the case **unscored**, never a fail; `det_*` fields keep the deterministic result. Hard fails are OR'd; H1/H2 force R4 = 0.
+2. **Judge (optional):** `ARIN_MVQ_GRADER_MODEL_ROUTE` (`fixture` in CI, `http`, or `grader/routes/<name>.py`). Unset / `deterministic` / `none` = deterministic only. A judge that errors or returns malformed output makes the case **unscored**, never a fail; `det_*` fields keep the deterministic result. Hard fails are OR'd; only H1 forces R4 = 0.
+
+Rubric v0.3.0 (Jerry, locked): pass = total >= 8/10 **and** no hard fail, per case. `draft_expected: false` makes line 5 n/a and the total is rescaled over applicable lines (7/8 -> 8.75). Lines 1-5 judge the last reply only; H1-H4 are checked across every ARIN turn. "Sent!" on an unsent draft is H1; H2 is only a delivered send without an approved SEND. Line 2 style sample = last 5 owner turns; ARIN's own words >220 chars = 1, >400 = 0, drafted text exempt. Unscored cases are reported separately and left out of averages.
+
+Case sets (`grader/cases.py`): `--cases` is repeatable; the default loads ours (`cases_mvq_synthetic.jsonl`, `mvq-syn-NNN`) and Jerry's (`cases_mvq_jerry/`, `syn-NNN`) into one frozen, hashed list. The load fails on a schema error or a duplicate id. Every case carries `synthetic`; the 10-per-user cap, "struggled (real): N of 8 target" and the real coverage line (4 send_draft, 2 each of scheduling, buyer_profile, follow_up, reask_context, email_draft) count real cases only. Jerry's cases have no canned reply, so on the fixture route they are unscored; they score under `--live`.
 
 Stub-only; **any delivered SMS in the outbound log fails the whole run** (exit 3).
 
@@ -89,7 +93,7 @@ Real redacted cases (**ARIN TEST e23fjkv6 only**, run by Keel as `hermes`):
 umask 077
 D=/opt/data/eval-export/red667-20261017
 python3 <checkout>/evals/milestone-zero/run_mvq.py --real --live --skip-behavior-checks \
-  --cases $D/redacted/cases-export.jsonl --evidence-dir $D/mvq-v0.2.0 \
+  --cases $D/redacted/cases-export.jsonl --evidence-dir $D/mvq-v0.3.0 \
   --build-image arin-v1.5-5ce17af
 ```
 
@@ -99,7 +103,7 @@ python3 <checkout>/evals/milestone-zero/run_mvq.py --real --live --skip-behavior
 
 Tuning: `ARIN_MVQ_GRADER_BAR` (default `8`), `ARIN_MVQ_GRADER_LINE_WEIGHTS`, `ARIN_MVQ_GRADER_ENABLED_HARD_FAILS`, optional `ARIN_MVQ_GRADER_CONFIG`. HTTP judge needs `ARIN_MVQ_GRADER_HTTP_URL` (no API keys in repo).
 
-Grader prompt version: `grader/prompts/mvq-grader-v0.2.0.md` (`GRADER_VERSION` in `grader/version.py`).
+Grader prompt version: `grader/prompts/mvq-grader-v0.3.0.md` (`GRADER_VERSION` in `grader/version.py`).
 
 ## Model grader policy
 

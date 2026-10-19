@@ -108,7 +108,7 @@ def _normalize_model_payload(data: dict[str, Any]) -> dict[str, Any]:
         raise GraderRouteError("model output line_reasons must be length 5")
     if not isinstance(hard, dict):
         raise GraderRouteError("model output hard_fails must be an object")
-    norm_scores = [max(0, min(2, int(s))) for s in scores]
+    norm_scores = [None if s is None else max(0, min(2, int(s))) for s in scores]
     norm_hard = {k: bool(hard.get(k)) for k in ("H1", "H2", "H3", "H4")}
     return {
         "line_scores": norm_scores,

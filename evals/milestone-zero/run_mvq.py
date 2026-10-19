@@ -22,7 +22,6 @@ A failed judge marks the case "unscored", never "fail".
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import sys
@@ -34,6 +33,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from checks import run_checks  # noqa: E402
+from grader.cases import CaseLoadError, load_case_set, real_set_report, selection_sha256  # noqa: E402
 from grader.config import load_grader_config  # noqa: E402
 from grader.model_route import ENV_ROUTE  # noqa: E402
 from grader.qa_agreement import compare_samples  # noqa: E402
@@ -44,24 +44,6 @@ from hermes_bridge import ensure_live_session, run_fixture, run_hermes, shutdown
 from outbound_stub import OutboundRecorder  # noqa: E402
 
 ENV_REAL_JUDGE_ALLOWED = "ARIN_MVQ_REAL_JUDGE_ALLOWED"
-
-
-def load_cases(path: Path, *, real: bool, limit: int | None = None) -> list[dict]:
-    rows: list[dict] = []
-    with path.open(encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            case = json.loads(line)
-            if not real and not case.get("synthetic"):
-                raise ValueError(f"case {case.get('id')} is not synthetic; use --real on ARIN TEST")
-            if real and case.get("synthetic"):
-                raise ValueError(f"case {case.get('id')} is synthetic; --real expects exported cases")
-            rows.append(case)
-            if limit and len(rows) >= limit:
-                break
-    return rows
 
 
 def inside_git_worktree(path: Path) -> bool:
@@ -90,7 +72,7 @@ def score_counts(rows: list[dict]) -> dict:
         status[r.get("status", "unscored")] += 1
         if r.get("status") == "scored":
             for i, s in enumerate(r["line_scores"]):
-                lines[f"R{i + 1}"][str(s)] += 1
+                lines[f"R{i + 1}"]["n/a" if s is None else str(s)] += 1
             status["pass" if r.get("pass") else "fail"] += 1
             for k, v in (r.get("hard_fails") or {}).items():
                 if v:
@@ -99,7 +81,7 @@ def score_counts(rows: list[dict]) -> dict:
             for k in lines:
                 lines[k]["unscored"] += 1
     return {
-        "lines": {k: {s: v.get(s, 0) for s in ("0", "1", "2", "unscored")} for k, v in lines.items()},
+        "lines": {k: {s: v.get(s, 0) for s in ("0", "1", "2", "n/a", "unscored")} for k, v in lines.items()},
         "hard_fails": {k: hard.get(k, 0) for k in ("H1", "H2", "H3", "H4")},
         "status": dict(status),
     }
@@ -107,7 +89,13 @@ def score_counts(rows: list[dict]) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cases", type=Path, default=ROOT / "cases_mvq_synthetic.jsonl")
+    ap.add_argument(
+        "--cases",
+        type=Path,
+        action="append",
+        default=None,
+        help="JSONL file or syn-NNN.json directory; repeatable. Default: ours + Jerry's synthetic set",
+    )
     ap.add_argument("--real", action="store_true", help="redacted exported cases on ARIN TEST")
     ap.add_argument("--live", action="store_true", help="get replies from stub-only live Hermes (ARIN TEST)")
     ap.add_argument("--evidence-dir", type=Path, default=None)
@@ -122,7 +110,7 @@ def main() -> int:
         if args.evidence_dir is None:
             print(json.dumps({"ok": False, "error": "--real needs --evidence-dir outside git"}), file=sys.stderr)
             return 2
-        if inside_git_worktree(args.evidence_dir) or inside_git_worktree(args.cases):
+        if inside_git_worktree(args.evidence_dir):
             print(json.dumps({"ok": False, "error": "real cases/evidence must be outside any git worktree"}), file=sys.stderr)
             return 2
         if judge.lower() not in REAL_SAFE_JUDGES and os.environ.get(ENV_REAL_JUDGE_ALLOWED, "") != judge:
@@ -135,10 +123,22 @@ def main() -> int:
         os.chmod(evidence_dir, 0o700)
 
     config = load_grader_config()
-    cases = load_cases(args.cases, real=args.real, limit=args.limit)
-    # Selection is frozen before any scoring.
+    sources = args.cases or [ROOT / "cases_mvq_synthetic.jsonl", ROOT / "cases_mvq_jerry"]
+    try:
+        cases = load_case_set(sources, real=args.real)
+        if args.real:
+            for src in sources:  # real (non-synthetic) cases must not come from a git checkout
+                if inside_git_worktree(src) and any(not c.get("synthetic") for c in load_case_set([src], real=True)):
+                    raise CaseLoadError("real cases must live outside any git worktree")
+    except (CaseLoadError, json.JSONDecodeError, OSError) as exc:
+        print(json.dumps({"ok": False, "error": f"case load: {exc}"}), file=sys.stderr)
+        return 2
+    if args.limit:
+        cases = cases[: args.limit]
+    # Selection is frozen (and hashed) before any reply is produced or scored.
     selection = [str(c.get("id")) for c in cases]
-    selection_sha = hashlib.sha256("\n".join(selection).encode()).hexdigest()
+    selection_sha = selection_sha256(cases)
+    set_report = real_set_report(cases)
 
     live_ctx = None
     if args.live:
@@ -186,10 +186,13 @@ def main() -> int:
         "grader_version": GRADER_VERSION,
         "bar": config.bar,
         "judge_route": judge or "deterministic",
-        "synthetic_only": not args.real,
+        "synthetic_only": set_report["real"] == 0,
         "replies": "live_stub" if args.live else "recorded",
         "selection_sha256": selection_sha,
         "cases_selected": len(selection),
+        "cases_real": set_report["real"],
+        "cases_synthetic": set_report["synthetic"],
+        "set_report": set_report,
     }
     scored = [g for g in graded if g.get("status") == "scored"]
     payload = {
@@ -214,10 +217,11 @@ def main() -> int:
     results_path = evidence_dir / "mvq-results.json"
     secure_write(results_path, json.dumps(payload, indent=2) + "\n", args.real)
     out = {"ok": guard_ok, "evidence": str(results_path), "summary": payload["summary"], "counts": counts,
-           "selection_sha256": selection_sha}
+           "counts_real": score_counts([g for g in graded if not g.get("synthetic")]),
+           "selection_sha256": selection_sha, "set_report": set_report}
     if not args.real:  # scorecard carries reply text; synthetic only
         sc = evidence_dir / "mvq-scorecard.md"
-        secure_write(sc, render_scorecard(meta, scored, qa_block=payload["qa"]), args.real)
+        secure_write(sc, render_scorecard(meta, scored, qa_block=payload["qa"], unscored=len(graded) - len(scored)), args.real)
         out["scorecard"] = str(sc)
     if old_umask is not None:
         os.umask(old_umask)

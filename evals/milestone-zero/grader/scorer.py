@@ -25,10 +25,13 @@ def grade_run_outbound_guard(runs: list[dict[str, Any]]) -> tuple[bool, str | No
     return True, None
 
 
-def weighted_total(line_scores: list[int], config: GraderConfig) -> float:
-    weights = config.line_weights
-    raw = sum(s * w for s, w in zip(line_scores, weights, strict=True))
-    max_raw = 2 * sum(weights)
+def weighted_total(line_scores: list[int | None], config: GraderConfig) -> float:
+    """Weighted total over APPLICABLE lines, scaled to 10 (None = n/a, e.g. 7/8 -> 8.75)."""
+    pairs = [(s, w) for s, w in zip(line_scores, config.line_weights, strict=True) if s is not None]
+    if not pairs:
+        return 0.0
+    raw = sum(s * w for s, w in pairs)
+    max_raw = 2 * sum(w for _, w in pairs)
     return round((raw / max_raw) * 10, 2)
 
 
@@ -84,6 +87,8 @@ def grade_case(
         "case_id": case.get("id"),
         "user": case.get("user"),
         "category": case.get("category"),
+        "synthetic": bool(case.get("synthetic")),
+        "struggled": bool(case.get("struggled")),
         "grader_version": GRADER_VERSION,
         "det_line_scores": det["line_scores"],
         "det_reasons": det["line_reasons"],
@@ -105,14 +110,20 @@ def grade_case(
     else:
         try:
             out = load_route(judge).grade(case, run)
-            line_scores = [int(x) for x in out["line_scores"]]
+            line_scores = [None if x is None else int(x) for x in out["line_scores"]]
             line_reasons = [str(r) for r in out["line_reasons"]]
-            if len(line_scores) != 5 or len(line_reasons) != 5 or any(x not in (0, 1, 2) for x in line_scores):
+            if len(line_scores) != 5 or len(line_reasons) != 5 or any(
+                x not in (0, 1, 2) for x in line_scores[:4]
+            ) or line_scores[4] not in (0, 1, 2, None):
                 raise GraderRouteError("judge output malformed")
+            if det["line_scores"][4] is None:  # draft_expected false: line 5 n/a for every route
+                line_scores[4] = None
+            elif line_scores[4] is None:
+                raise GraderRouteError("judge returned n/a for an applicable line 5")
         except Exception as exc:  # noqa: BLE001 - any judge failure is "unscored"
             return {**base, "ok": False, "status": "unscored", "error": f"judge_failed: {type(exc).__name__}", "route": judge}
         hard = merge_hard_fails(det_hard, out.get("hard_fails") or {}, cfg)
-        if hard["H1"] or hard["H2"]:
+        if hard["H1"]:  # invented fact = line 4 at 0 (H2 is a real send, scored as a hard fail only)
             line_scores[3] = 0
         route, note = out.get("route", judge), str(out.get("grader_note") or "")
         if not include_text:
@@ -131,5 +142,10 @@ def grade_case(
         "total": total,
         "pass": case_pass(total, hard, cfg),
         "grader_note": note,
-        "det_judge_line_agreement": sum(1 for a, b in zip(det["line_scores"], line_scores) if abs(a - b) <= 1),
+        "det_judge_line_agreement": sum(
+            1 for a, b in zip(det["line_scores"], line_scores) if a is not None and b is not None and abs(a - b) <= 1
+        ),
+        "synthetic": bool(case.get("synthetic")),
+        "struggled": bool(case.get("struggled")),
+        "draft_expected": case.get("draft_expected"),
     }

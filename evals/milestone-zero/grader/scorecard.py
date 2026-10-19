@@ -7,16 +7,25 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-def _avg_line_scores(cases: list[dict[str, Any]]) -> list[float]:
-    if not cases:
-        return [0.0] * 5
+def _avg_line_scores(cases: list[dict[str, Any]]) -> list[float | None]:
+    """Per-line average over cases where the line applies (line 5: draft_expected cases)."""
     sums = [0.0] * 5
+    ns = [0] * 5
     for row in cases:
-        scores = row.get("line_scores") or [0] * 5
-        for i, s in enumerate(scores):
-            sums[i] += float(s)
-    n = len(cases)
-    return [round(s / n, 2) for s in sums]
+        for i, s in enumerate(row.get("line_scores") or [None] * 5):
+            if s is not None:
+                sums[i] += float(s)
+                ns[i] += 1
+    return [round(sums[i] / ns[i], 2) if ns[i] else None for i in range(5)]
+
+
+def _overall(cases: list[dict[str, Any]]) -> tuple[float, int, float, int]:
+    vals = [float(c.get("total") or 0) for c in cases]
+    avg = round(sum(vals) / len(vals), 2) if vals else 0.0
+    passed = sum(1 for c in cases if c.get("pass"))
+    rate = round(passed / len(cases), 3) if cases else 0.0
+    hard = sum(1 for c in cases if any((c.get("hard_fails") or {}).values()))
+    return avg, passed, rate, hard
 
 
 def _group_pass_rate(rows: list[dict[str, Any]], key: str) -> dict[str, dict[str, float]]:
@@ -45,44 +54,58 @@ def render_scorecard(
     qa_block: dict[str, Any] | None = None,
     david_sample: list[dict[str, Any]] | None = None,
     regression_cases: list[str] | None = None,
+    unscored: int = 0,
 ) -> str:
     bar = float((cases[0].get("config") or {}).get("bar", 8) if cases else meta.get("bar", 8))
     grader_version = meta.get("grader_version", "unknown")
     build = meta.get("build_image", "synthetic-fixture")
     generated = meta.get("generated_at") or datetime.now(timezone.utc).isoformat()
 
-    totals = [float(c.get("total") or 0) for c in cases]
-    avg_total = round(sum(totals) / len(totals), 2) if totals else 0.0
-    pass_count = sum(1 for c in cases if c.get("pass"))
-    pass_rate = round(pass_count / len(cases), 3) if cases else 0.0
-    hard_fail_count = sum(1 for c in cases if any((c.get("hard_fails") or {}).values()))
-
+    avg_total, pass_count, pass_rate, hard_fail_count = _overall(cases)
+    real_cases = [c for c in cases if not c.get("synthetic")]
+    r_avg, r_pass, r_rate, r_hard = _overall(real_cases)
     line_avgs = _avg_line_scores(cases)
-    weakest_idx = min(range(5), key=lambda i: line_avgs[i])
-    per_user = _group_pass_rate(cases, "user")
+    present = [i for i in range(5) if line_avgs[i] is not None]
+    weakest_idx = min(present, key=lambda i: line_avgs[i]) if present else -1
+    per_user = _group_pass_rate([dict(c, user="synthetic") if c.get("synthetic") else c for c in cases], "user")
     per_category = _group_pass_rate(cases, "category")
+    set_report = meta.get("set_report") or {}
+    struggled = set_report.get("struggled_real", sum(1 for c in real_cases if c.get("struggled")))
+    struggled_target = set_report.get("struggled_target", 8)
+    weights = (cases[0].get("config") or {}).get("line_weights", [1, 1, 1, 1, 1]) if cases else [1, 1, 1, 1, 1]
 
     lines: list[str] = [
         "# MVQ scorecard",
         "",
         f"- **Build/image:** {build}",
         f"- **Date (UTC):** {generated}",
-        f"- **Cases run:** {len(cases)}",
+        f"- **Cases run:** {len(cases) + unscored} (real {meta.get('cases_real', len(real_cases))} / synthetic "
+        f"{meta.get('cases_synthetic', len(cases) - len(real_cases))}); scored {len(cases)}; unscored {unscored} "
+        "(excluded from averages and pass rate)",
         f"- **Grader version:** {grader_version}",
-        f"- **Bar:** {bar}/10",
+        f"- **Bar:** {bar}/10 per case, and no hard fail",
+        f"- **Line weights:** {weights}",
+        f"- **Selection sha256:** {meta.get('selection_sha256', 'n/a')}",
         "",
         "## Overall",
         "",
-        f"- Average total: **{avg_total}/10**",
-        f"- Pass rate (≥ bar, no hard fail): **{pass_rate:.1%}** ({pass_count}/{len(cases)})",
-        f"- Hard-fail count: **{hard_fail_count}**",
+        f"- All scored: average **{avg_total}/10**; pass rate **{pass_rate:.1%}** ({pass_count}/{len(cases)}); hard fails **{hard_fail_count}**",
+        (f"- Real only: average **{r_avg}/10**; pass rate **{r_rate:.1%}** ({r_pass}/{len(real_cases)}); hard fails **{r_hard}**"
+         if real_cases else "- Real only: n/a (no real cases scored)"),
+        f"- struggled (real): {struggled} of {struggled_target} target",
         "",
-        "## Per-rubric-line average (R1–R5)",
+        "## Real-case coverage by category (synthetic not counted)",
         "",
     ]
+    for cat, cov in (set_report.get("coverage_real") or {}).items():
+        mark = "" if cov["have"] >= cov["need"] else " (short)"
+        lines.append(f"- {cat}: {cov['have']} of {cov['need']}{mark}")
+    if set_report.get("users_over_cap"):
+        lines.append(f"- Real users over the 10-case cap: {', '.join(set_report['users_over_cap'])}")
+    lines.extend(["", "## Per-rubric-line average (R1–R5; R5 over draft_expected cases only)", ""])
     for i, avg in enumerate(line_avgs, start=1):
         mark = " ← weakest" if i - 1 == weakest_idx else ""
-        lines.append(f"- R{i}: {avg}{mark}")
+        lines.append(f"- R{i}: {'n/a' if avg is None else avg}{mark}")
     lines.extend(["", "## Per-user pass rate", ""])
     for user, stats in sorted(per_user.items()):
         lines.append(f"- {user}: {stats['pass_rate']:.1%} ({stats['cases']} cases)")
@@ -99,7 +122,7 @@ def render_scorecard(
         ]
     )
     for row in cases:
-        scores = row.get("line_scores") or [0] * 5
+        scores = ["n/a" if x is None else x for x in (row.get("line_scores") or [0] * 5)]
         hard = row.get("hard_fails") or {}
         hard_txt = ",".join(k for k, v in hard.items() if v) or "—"
         note = (row.get("grader_note") or "").replace("|", "/")

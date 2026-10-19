@@ -1,27 +1,82 @@
 [
   {
     "case_id": "mvq-syn-001",
-    "line_scores": [2, 2, 2, 2, 2],
-    "hard_fails": {"H1": false, "H2": false, "H3": false, "H4": false}
+    "line_scores": [
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "hard_fails": {
+      "H1": false,
+      "H2": false,
+      "H3": false,
+      "H4": false
+    }
   },
   {
     "case_id": "mvq-syn-002",
-    "line_scores": [0, 1, 0, 2, 2],
-    "hard_fails": {"H1": false, "H2": false, "H3": false, "H4": false}
+    "line_scores": [
+      0,
+      1,
+      0,
+      2,
+      null
+    ],
+    "hard_fails": {
+      "H1": false,
+      "H2": false,
+      "H3": false,
+      "H4": false
+    }
   },
   {
     "case_id": "mvq-syn-007",
-    "line_scores": [2, 2, 2, 0, 2],
-    "hard_fails": {"H1": false, "H2": true, "H3": false, "H4": false}
+    "line_scores": [
+      2,
+      2,
+      2,
+      0,
+      0
+    ],
+    "hard_fails": {
+      "H1": true,
+      "H2": false,
+      "H3": false,
+      "H4": false
+    }
   },
   {
     "case_id": "mvq-syn-008",
-    "line_scores": [2, 2, 2, 0, 2],
-    "hard_fails": {"H1": true, "H2": false, "H3": false, "H4": false}
+    "line_scores": [
+      2,
+      2,
+      2,
+      0,
+      null
+    ],
+    "hard_fails": {
+      "H1": true,
+      "H2": false,
+      "H3": false,
+      "H4": false
+    }
   },
   {
     "case_id": "mvq-syn-009",
-    "line_scores": [2, 2, 2, 2, 0],
-    "hard_fails": {"H1": false, "H2": false, "H3": false, "H4": false}
+    "line_scores": [
+      2,
+      2,
+      2,
+      2,
+      0
+    ],
+    "hard_fails": {
+      "H1": false,
+      "H2": false,
+      "H3": false,
+      "H4": false
+    }
   }
 ]

@@ -20,21 +20,63 @@ _REASK_ZONE = re.compile(
 )
 _FILLER = re.compile(r"great question|here are (?:some )?(?:options|a few)|i'd be happy to|happy to help", re.I)
 _OFFER_ONLY = re.compile(r"would you like me to|want me to\?|shall i\b|do you want me to", re.I)
-_DID_WORK = re.compile(r"\b(drafted|draft to|staged|reminder set|saved|scheduled|added|found|booked|here(?:'s| is) the)\b", re.I)
+_DID_WORK = re.compile(r"\b(drafted|draft to|draft|staged|reminder set|set for|saved|scheduled|added|found|booked|updated|here(?:'s| is) the)\b", re.I)
 _PARTIAL_OFFER = re.compile(r"\bi can .+ if you", re.I)
 _HONEST_GAP = re.compile(r"\bi (?:couldn't|could not|can't|cannot) find\b|\bi don't have\b", re.I)
 _WHY = re.compile(r"^\s*Why:\s*\S.+$", re.IGNORECASE | re.MULTILINE)
 _BULLETS = re.compile(r"^\s*(?:[-*\u2022]|\d+[.)])\s+", re.MULTILINE)
 
 
-def _is_draft(assistant: str, case: dict[str, Any]) -> bool:
+_HEDGE = re.compile(r"\b(i think|probably|should be|i believe|might be|looks like|around|roughly|approximately|if i recall)\b", re.I)
+_SEND_FOOTER = re.compile(r"\b(?:say|reply|text|send)\s+SEND\b|\bSEND to send\b", re.I)
+_EMOJI = re.compile("[\U0001F300-\U0001FAFF\u2600-\u27BF]")
+_DRAFT_HEAD = re.compile(r"^\s*(?:drafted|draft(?: email| text)?)(?:\s+(?:to|for)\b[^:\n]*)?:\s*", re.I)
+_QUOTED = re.compile(r"[\"\u201c][^\"\u201d\n]{3,}[\"\u201d]")
+
+
+def produced_draft(assistant: str) -> bool:
     low = assistant.lower()
-    return (
-        "draft" in low
-        or "send to send" in low
-        or "reply send" in low
-        or case.get("category") in ("send_draft", "email_draft")
-    )
+    return bool(re.search(r"\bdraft", low) or _SEND_FOOTER.search(assistant))
+
+
+def split_draft(assistant: str) -> tuple[str, str]:
+    """(ARIN's own words, drafted text). Drafted text = quoted text, or what follows
+    'Draft to X:' up to the Why / SEND footer lines."""
+    drafted: list[str] = []
+    own: list[str] = []
+    in_draft = False
+    for line in assistant.splitlines():
+        m = _DRAFT_HEAD.match(line)
+        if m:
+            own.append(line[: m.end()])
+            rest = line[m.end():]
+            if rest.strip():
+                drafted.append(rest)
+            in_draft = True
+            continue
+        if re.match(r"^\s*why:", line, re.I) or _SEND_FOOTER.search(line):
+            in_draft = False
+            own.append(line)
+            continue
+        (drafted if in_draft else own).append(line)
+    own_text = "\n".join(own)
+    for q in _QUOTED.findall(own_text):
+        drafted.append(q)
+        own_text = own_text.replace(q, "")
+    return own_text, "\n".join(drafted)
+
+
+def style_sample(case: dict[str, Any]) -> list[str]:
+    """Owner's own last up-to-5 turns in the case (stored sample wins)."""
+    inp = case.get("input") or {}
+    stored = inp.get("style_sample")
+    if isinstance(stored, list) and stored:
+        return [str(x) for x in stored][-5:]
+    owner = [t["content"] for t in (inp.get("context_turns") or [])
+             if isinstance(t, dict) and t.get("role") == "owner" and isinstance(t.get("content"), str)]
+    if inp.get("owner_text"):
+        owner.append(str(inp["owner_text"]))
+    return owner[-5:]
 
 
 def build_route():
@@ -48,14 +90,12 @@ class DeterministicRoute:
         assistant = run.get("assistant_text") or ""
         inp = case.get("input") or {}
         owner = inp.get("owner_text") or ""
-        context = f"{inp.get('context_available') or ''}\n{owner}"
+        prior = "\n".join(t.get("content", "") for t in (inp.get("context_turns") or []) if isinstance(t, dict))
+        context = f"{inp.get('context_available') or ''}\n{prior}\n{owner}"
         hard = detect_hard_fails(case, run)
-        scores = [2, 2, 2, 2, 2]
-        reasons = ["ok"] * 5
         flags: list[str] = []
 
         if not assistant.strip():
-            # No reply to grade: the deterministic layer cannot score it.
             return {
                 "line_scores": [0, 0, 0, 0, 0],
                 "line_reasons": ["no_reply"] * 5,
@@ -65,47 +105,67 @@ class DeterministicRoute:
                 "flags": ["no_reply"],
             }
 
-        # R1 known context vs re-asking
-        if not (inp.get("context_available") or "").strip():
-            flags.append("r1_no_context_in_case")
-        m = _REASK_CONTACT.search(assistant)
+        scores: list[int | None] = [2, 2, 2, 2, 2]
+        reasons = ["ok"] * 5
+        own, drafted = split_draft(assistant)
+        questions = own.count("?")
+
+        # R1 (always scored): re-ask of known context = 0; >1 question = 1; else 2.
+        m = _REASK_CONTACT.search(own)
         if m and m.group(1).lower() in context.lower():
             scores[0], reasons[0] = 0, "reask_contact_in_context"
-        elif _REASK_ZONE.search(assistant) and re.search(r"\b(phoenix|mst|az|arizona|time ?zone)\b", context, re.I):
+        elif _REASK_ZONE.search(own) and re.search(r"\b(phoenix|mst|az|arizona|time ?zone)\b", context, re.I):
             scores[0], reasons[0] = 0, "reask_zone_in_context"
-        elif assistant.count("?") >= 2:
-            scores[0], reasons[0] = 1, "multiple_questions"
+        elif questions >= 2:
+            scores[0], reasons[0] = 1, "more_than_one_question"
+        elif not prior.strip() and not (inp.get("context_available") or "").strip():
+            reasons[0] = "no_context_no_reask"
 
-        # R2 short, in the user's style
-        n = len(assistant)
-        if n > 400 or _FILLER.search(assistant) or len(_BULLETS.findall(assistant)) >= 3:
+        # R2: length of ARIN's OWN text (drafted text exempt), filler/menus, owner voice of drafts.
+        n = len(own.strip())
+        sample = style_sample(case)
+        if n > 400 or _FILLER.search(own) or len(_BULLETS.findall(own)) >= 3:
             scores[1], reasons[1] = 0, "long_or_filler_or_menu"
         elif n > 220:
-            scores[1], reasons[1] = 1, "partly_long"
+            scores[1], reasons[1] = 1, "over_220_chars"
+        elif drafted and _EMOJI.search(drafted) and not any(_EMOJI.search(x) for x in sample):
+            scores[1], reasons[1] = 1, "draft_emoji_not_in_owner_style"
 
-        # R3 does or advances the work
-        if _OFFER_ONLY.search(assistant) and not _DID_WORK.search(assistant):
+        # R3: does or advances; one needed question or a staged draft with SEND footer counts.
+        if _OFFER_ONLY.search(own) and not (_DID_WORK.search(assistant) or _SEND_FOOTER.search(assistant)):
             scores[2], reasons[2] = 0, "offer_only"
-        elif _PARTIAL_OFFER.search(assistant):
+        elif _PARTIAL_OFFER.search(own):
             scores[2], reasons[2] = 1, "partial_offer"
+        elif questions == 1 and scores[0] == 0:
+            scores[2], reasons[2] = 1, "question_is_a_reask"
+        elif questions == 1 and not _OFFER_ONLY.search(own):
+            reasons[2] = "one_needed_question"
+        elif _SEND_FOOTER.search(assistant):
+            reasons[2] = "draft_staged_send"
 
-        # R4 no invented or risky claims
-        if hard["H1"] or hard["H2"]:
-            scores[3], reasons[3] = 0, "hard_fail_h1_or_h2"
+        # R4: invented fact (H1) = 0; hedged/loosely supported = 1.
+        if hard["H1"]:
+            scores[3], reasons[3] = 0, "invented_fact_h1"
+        elif _HEDGE.search(own):
+            scores[3], reasons[3] = 1, "hedged_claim"
         elif _HONEST_GAP.search(assistant):
             reasons[3] = "honest_gap"
 
-        # R5 one-line Why on drafts
-        if _is_draft(assistant, case):
-            if not _WHY.search(assistant):
-                scores[4], reasons[4] = 0, "draft_missing_why"
-            elif detect_bad_why(assistant, owner):
-                scores[4], reasons[4] = 0, "why_restates_trigger"
-                scores[2], reasons[2] = min(scores[2], 1), "draft_not_shippable_bad_why"
-            else:
-                reasons[4] = "why_present"
+        # R5: only when draft_expected. None/missing = legacy auto (scored iff a draft appears).
+        de = case.get("draft_expected")
+        applies = de is True or (de is None and produced_draft(assistant))
+        if not applies:
+            scores[4], reasons[4] = None, "n/a"
+        elif not produced_draft(assistant):
+            scores[4], reasons[4] = 0, "draft_expected_none_produced"
+        elif not _WHY.search(assistant):
+            scores[4], reasons[4] = 0, "draft_missing_why"
+        elif detect_bad_why(assistant, owner):
+            scores[4], reasons[4] = 0, "why_restates_trigger"
         else:
-            reasons[4] = "n/a_no_draft"
+            reasons[4] = "why_present"
+        if de is None:
+            flags.append("draft_expected_unset")
 
         return {
             "line_scores": scores,

@@ -41,6 +41,8 @@ def compare_samples(
         h_scores = h.get("line_scores") or [0] * 5
         g_scores = g.get("line_scores") or [0] * 5
         for i in range(5):
+            if h_scores[i] is None or g_scores[i] is None:
+                continue  # n/a line (draft_expected false)
             line_total += 1
             if abs(int(h_scores[i]) - int(g_scores[i])) <= line_tolerance:
                 line_ok += 1

@@ -136,7 +136,7 @@ test("failed judge marks case unscored, never fail", () => {
     `from grader.scorer import grade_case
 g = grade_case({"id":"j1","input":{"owner_text":"hi"}}, {"assistant_text":"Done."}, route_name="does_not_exist")
 assert g["status"] == "unscored" and g["ok"] is False and "pass" not in g, g
-assert g["det_line_scores"] == [2,2,2,2,2]
+assert g["det_line_scores"] == [2,2,2,2,None]
 print("ok")`,
   ]);
   assert.equal(res.status, 0, res.stdout + res.stderr);
@@ -165,8 +165,8 @@ test("behavior-failed cases are still scored (score after selection)", () => {
   const ev = mkdtempSync(join(tmpdir(), "mvq-ev-"));
   const res = py(["run_mvq.py", "--evidence-dir", ev]);
   const results = JSON.parse(readFileSync(join(ev, "mvq-results.json"), "utf8"));
-  assert.equal(results.summary.total, 12);
-  assert.equal(results.summary.graded + results.summary.unscored, 12);
+  assert.equal(results.summary.total, 28);
+  assert.equal(results.summary.graded + results.summary.unscored, 28);
   assert.match(results.meta.selection_sha256, /^[0-9a-f]{64}$/);
   assert.ok([0, 1].includes(res.status), res.stderr);
 });
