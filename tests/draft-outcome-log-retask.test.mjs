@@ -136,6 +136,58 @@ test("item3 cancel twice and cancel superseded or sent write one line per chain"
   assert.equal(outcomeLines(dir).length, 2);
 });
 
+test("item4 Jerry refused outcome on provider failure with re-stage chain and export bucket", () => {
+  const dir = home();
+  const transport = join(dir, "fail-transport.py");
+  writeFileSync(
+    transport,
+    "#!/usr/bin/env python3\nimport json,sys\njson.dump({'success':False,'message_id':'','provider_status':'error','error':'rejected'},sys.stdout)\n",
+  );
+  chmodSync(transport, 0o755);
+  const staged = stage(dir, "Provider fail path for you.");
+  const refusedId = staged.payload.draft_id;
+  const fail = runSms(dir, ["send", "--draft-id", refusedId, "--confirm", "SEND", "--attest", "yes"], {
+    SMS_SEND_TRANSPORT: transport,
+    SMS_SEND_STUB_PROVIDER: "",
+  });
+  assert.equal(fail.payload.outcome, "refused");
+  assert.equal(fail.payload.refuse_reason, "provider_error");
+  const lines = outcomeLines(dir);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].outcome, "refused");
+  assert.equal(lines[0].refuse_reason, "provider_error");
+  assert.doesNotMatch(JSON.stringify(lines[0]), /rejected/);
+  const loopBefore = runLoop(dir, ["show"]);
+  assert.equal(loopBefore.store?.signals?.length ?? 0, 0);
+  const fixed = stage(dir, "Provider fail path fixed for you.", {
+    replaces: refusedId,
+    why: "They still need the confirmation before the afternoon call",
+  });
+  assert.equal(fixed.payload.outcome, "staged");
+  runSms(
+    dir,
+    ["send", "--draft-id", fixed.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
+    { SMS_SEND_STUB_PROVIDER: "1" },
+  );
+  assert.equal(outcomeLines(dir).length, 2);
+  assert.equal(outcomeLines(dir)[0].outcome, "refused");
+  const sentLine = outcomeLines(dir)[1];
+  assert.deepEqual(sentLine.replaces_chain, [refusedId]);
+  const cancelled = stage(dir, "You asked to drop this follow-up entirely.", {
+    why: "They asked to drop this follow-up before the afternoon call",
+  });
+  assert.equal(cancelled.payload.outcome, "staged");
+  runSms(dir, ["cancel", "--draft-id", cancelled.payload.draft_id]);
+  const rows = runSms(dir, ["export-outcomes"]).payload.rows;
+  const refusedRow = rows.find((r) => r.outcome === "refused");
+  const cancelledRow = rows.find((r) => r.outcome === "cancelled");
+  assert.ok(refusedRow && refusedRow.count === 1);
+  assert.ok(cancelledRow && cancelledRow.count === 1);
+  assert.notEqual(refusedRow.day, undefined);
+  const loopAfter = runLoop(dir, ["show"]);
+  assert.equal(loopAfter.store?.signals?.length ?? 0, 0);
+});
+
 test("item4 non-SEND reply and unfilled placeholder write cancelled outcomes", () => {
   const dir = home();
   const s = stage(dir, "Ping when you can reply.");

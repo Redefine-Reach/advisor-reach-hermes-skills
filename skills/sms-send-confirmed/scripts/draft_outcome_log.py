@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Mapping
 
 OUTCOME_KIND = "sms"
-OUTCOME_NAMES = frozenset({"sent_as_is", "sent_after_edit", "cancelled", "ignored"})
+OUTCOME_NAMES = frozenset({"sent_as_is", "sent_after_edit", "cancelled", "ignored", "refused"})
+REFUSE_REASON_RE = re.compile(r"^[a-z][a-z_]{0,31}$")
 OUTCOME_LINE_KEYS = frozenset(
     {
         "ts",
@@ -29,6 +30,7 @@ OUTCOME_LINE_KEYS = frozenset(
         "len_final",
         "hours_to_decision",
         "box_slug",
+        "refuse_reason",
     }
 )
 EXPORT_ROW_KEYS = frozenset({"day", "box", "kind", "outcome", "count"})
@@ -150,13 +152,25 @@ def validate_outcome_line(line: dict) -> None:
     if set(line.keys()) - OUTCOME_LINE_KEYS:
         extra = set(line.keys()) - OUTCOME_LINE_KEYS
         raise ValueError(f"unexpected outcome fields: {sorted(extra)}")
-    for key in OUTCOME_LINE_KEYS - {"box_slug"}:
+    outcome_name = str(line.get("outcome") or "")
+    required = OUTCOME_LINE_KEYS - {"box_slug", "refuse_reason"}
+    if outcome_name == "refused":
+        required = required | {"refuse_reason"}
+    for key in required:
         if key not in line:
             raise ValueError(f"missing outcome field: {key}")
+    if outcome_name != "refused" and "refuse_reason" in line:
+        raise ValueError("refuse_reason only allowed when outcome is refused")
     if line.get("kind") != OUTCOME_KIND:
         raise ValueError("kind must be sms")
-    if line.get("outcome") not in OUTCOME_NAMES:
+    if outcome_name not in OUTCOME_NAMES:
         raise ValueError("invalid outcome name")
+    if outcome_name == "refused":
+        reason = str(line.get("refuse_reason") or "")
+        if not REFUSE_REASON_RE.fullmatch(reason):
+            raise ValueError("invalid refuse_reason code")
+        if DIGIT_RUN_RE.search(reason):
+            raise ValueError("refuse_reason must not contain digits")
     if not DRAFT_ID_RE.fullmatch(str(line.get("draft_id") or "")):
         raise ValueError("draft_id must be 16 hex chars")
     if not isinstance(line.get("replaces_chain"), list):
@@ -220,9 +234,14 @@ def outcome_from_draft(
     drafts_dir: Path,
     box_slug: str | None,
     decided_at: datetime | None = None,
+    refuse_reason: str | None = None,
 ) -> dict:
     if outcome not in OUTCOME_NAMES and outcome != "sent":
         raise ValueError(outcome)
+    if outcome == "refused" and not refuse_reason:
+        raise ValueError("refuse_reason required for refused outcomes")
+    if outcome != "refused" and refuse_reason:
+        raise ValueError("refuse_reason only for refused outcomes")
     body = str(draft.get("body") or "")
     body_hash_final = str(draft.get("body_hash") or "")
     if body and not body_hash_final:
@@ -255,6 +274,8 @@ def outcome_from_draft(
     }
     if box_slug:
         line["box_slug"] = box_slug
+    if outcome == "refused":
+        line["refuse_reason"] = str(refuse_reason or "")
     return line
 
 
@@ -265,6 +286,7 @@ def record_outcome(
     outcome: str,
     box_slug: str | None = None,
     decided_at: datetime | None = None,
+    refuse_reason: str | None = None,
 ) -> dict:
     line = outcome_from_draft(
         draft,
@@ -272,6 +294,7 @@ def record_outcome(
         drafts_dir=store_paths["drafts"],
         box_slug=box_slug,
         decided_at=decided_at,
+        refuse_reason=refuse_reason,
     )
     out_path = store_paths.get("draft_outcomes") or outcomes_path()
     if draft_has_final_line(out_path, str(draft.get("draft_id") or "")):

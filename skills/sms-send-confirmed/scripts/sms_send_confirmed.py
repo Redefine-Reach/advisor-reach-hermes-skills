@@ -1679,6 +1679,7 @@ def maybe_finalize_draft_outcome(
     outcome: str,
     *,
     box_id: str,
+    refuse_reason: str | None = None,
 ) -> None:
     try:
         _draft_outcomes.record_outcome(
@@ -1686,6 +1687,7 @@ def maybe_finalize_draft_outcome(
             draft,
             outcome=outcome,
             box_slug=box_id or None,
+            refuse_reason=refuse_reason,
         )
     except Exception as exc:
         audit_outcome_log_failed(
@@ -1694,6 +1696,30 @@ def maybe_finalize_draft_outcome(
             draft_id=str(draft.get("draft_id") or "") or None,
             reason_class=exc.__class__.__name__,
         )
+
+
+def finalize_script_refused_draft(
+    store: dict[str, Path],
+    draft: dict,
+    path: Path,
+    *,
+    box_id: str,
+    refuse_reason: str,
+    body: str,
+) -> None:
+    """Terminal script refusal: one refused outcome line; draft stays re-stageable via replaces."""
+    snapshot_for_outcome(draft, body)
+    maybe_finalize_draft_outcome(
+        store,
+        draft,
+        "refused",
+        box_id=box_id,
+        refuse_reason=refuse_reason,
+    )
+    draft["status"] = "refused"
+    draft["refuse_reason"] = refuse_reason
+    _draft_outcomes.strip_plaintext_fields(draft)
+    write_draft(path, draft)
 
 
 def stage(
@@ -1758,10 +1784,11 @@ def stage(
                         status=EXIT_ERROR,
                     )
                 previous = read_draft(prev_path)
-                if str(previous.get("status") or "") != "pending":
+                prev_status = str(previous.get("status") or "")
+                if prev_status not in {"pending", "refused"}:
                     raise GateFailure(
                         "error",
-                        "replaces draft is not pending",
+                        "replaces draft is not pending or refused",
                         field="replaces",
                         status=EXIT_ERROR,
                     )
@@ -1822,10 +1849,11 @@ def stage(
             }
             if previous is not None:
                 _draft_outcomes.inherit_chain_fields(record, previous, body, body_digest)
-                _draft_outcomes.mark_superseded(
-                    draft_path(ctx["store"]["drafts"], replaces_id),
-                    previous,
-                )
+                if str(previous.get("status") or "") == "pending":
+                    _draft_outcomes.mark_superseded(
+                        draft_path(ctx["store"]["drafts"], replaces_id),
+                        previous,
+                    )
             else:
                 _draft_outcomes.seed_chain_fields(record, body, body_digest, created_at)
             write_draft(draft_path(ctx["store"]["drafts"], draft_id), record)
@@ -1997,12 +2025,43 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
             if result.get("success"):
                 message_id = str(result.get("message_id") or "")
                 if not message_id:
-                    result = {
-                        "success": False,
-                        "message_id": "",
-                        "provider_status": result.get("provider_status") or "accepted",
-                        "error": "provider returned no message id; this draft will not be retried",
-                    }
+                    finalize_script_refused_draft(
+                        ctx["store"],
+                        draft,
+                        path,
+                        box_id=ctx["box_id"],
+                        refuse_reason="provider_no_id",
+                        body=body,
+                    )
+                    audit(
+                        ctx["store"],
+                        box_id=ctx["box_id"],
+                        approver=approver,
+                        dest=dest,
+                        from_number_value=ctx["from"],
+                        body=body,
+                        outcome="refused",
+                        reason="provider_no_id",
+                        approved_at=approved_at,
+                        draft_id=draft_id,
+                        telnyx_message_id=None,
+                        provider_status=result.get("provider_status") or "accepted",
+                        provider_called=provider_called,
+                    )
+                    return emit(
+                        {
+                            "ok": False,
+                            "outcome": "refused",
+                            "reason": "provider returned no message id; stage again with replaces to retry",
+                            "draft_id": draft_id,
+                            "dest": dest,
+                            "from": ctx["from"],
+                            "provider_status": result.get("provider_status") or "accepted",
+                            "provider_called": provider_called,
+                            "refuse_reason": "provider_no_id",
+                        },
+                        EXIT_ERROR,
+                    )
                 else:
                     snapshot_for_outcome(draft, body)
                     maybe_finalize_draft_outcome(ctx["store"], draft, "sent", box_id=ctx["box_id"])
@@ -2060,11 +2119,14 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                         },
                         EXIT_OK,
                     )
-            draft["status"] = "error"
-            draft["provider_error"] = result.get("error") or "provider rejected the send"
-            draft["body"] = ""
-            write_draft(path, draft)
-            reason = str(result.get("error") or "provider rejected the send")
+            finalize_script_refused_draft(
+                ctx["store"],
+                draft,
+                path,
+                box_id=ctx["box_id"],
+                refuse_reason="provider_error",
+                body=body,
+            )
             audit(
                 ctx["store"],
                 box_id=ctx["box_id"],
@@ -2072,8 +2134,8 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                 dest=dest,
                 from_number_value=ctx["from"],
                 body=body,
-                outcome="error",
-                reason=reason,
+                outcome="refused",
+                reason="provider_error",
                 approved_at=approved_at,
                 draft_id=draft_id,
                 telnyx_message_id=result.get("message_id") or None,
@@ -2083,13 +2145,14 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
             return emit(
                 {
                     "ok": False,
-                    "outcome": "error",
-                    "reason": reason,
+                    "outcome": "refused",
+                    "reason": "provider rejected the send; stage again with replaces to retry",
                     "draft_id": draft_id,
                     "dest": dest,
                     "from": ctx["from"],
                     "provider_status": result.get("provider_status") or "error",
-                    "provider_called": True,
+                    "provider_called": provider_called,
+                    "refuse_reason": "provider_error",
                 },
                 EXIT_ERROR,
             )
