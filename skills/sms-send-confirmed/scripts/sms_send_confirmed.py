@@ -36,6 +36,11 @@ from pathlib import Path
 from typing import Mapping, NoReturn
 from urllib.parse import urlparse
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+import draft_outcome_log as _draft_outcomes
+
 # Hermes is on the box interpreter only. A top-level import would make the
 # gate unusable in CI and in any python that is not the gateway venv.
 try:
@@ -237,10 +242,16 @@ def utc_now() -> datetime:
     if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
         raw = str(os.environ.get("SMS_NOW", "")).strip()
         if raw:
-            parsed = datetime.fromisoformat(raw)
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=timezone.utc)
             return parsed
+    raw = str(os.environ.get("DRAFT_OUTCOME_NOW", "")).strip()
+    if raw:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
     return datetime.now(timezone.utc)
 
 
@@ -898,12 +909,16 @@ def paths(environ: Mapping[str, str] | None = None) -> dict[str, Path]:
     drafts = Path(env.get("SMS_DRAFT_DIR", "/opt/data/audit/sms-drafts"))
     sessions = Path(env.get("SMS_SESSION_DIR", "/opt/data/sms-sessions"))
     events = Path(env.get("SMS_EVENT_DIR", "/opt/data/sms-events"))
+    draft_outcomes = Path(
+        env.get("DRAFT_OUTCOMES_PATH", "/opt/data/audit/draft-outcomes.jsonl")
+    )
     return {
         "audit": audit,
         "opt_out": opt_out,
         "drafts": drafts,
         "sessions": sessions,
         "events": events,
+        "draft_outcomes": draft_outcomes,
     }
 
 
@@ -1472,6 +1487,16 @@ def resolve_standalone_sender(discover, resolve_all, get_entry, load_config, pla
 
 def deliver(dest: str, body: str) -> dict:
     """One adapter send. Test mode never falls through to the plugin."""
+    stub = str(os.environ.get("SMS_SEND_STUB_PROVIDER", "")).strip().lower()
+    if stub in {"1", "true", "yes", "on"}:
+        digest = hashlib.sha256(f"{dest}\0{body}".encode("utf-8")).hexdigest()[:16]
+        return {
+            "success": True,
+            "message_id": f"stub-{digest}",
+            "provider_status": "stubbed",
+            "error": "",
+            "stubbed": True,
+        }
     if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
         transport = os.environ.get("SMS_SEND_TRANSPORT", "").strip()
         if not transport:
@@ -1590,6 +1615,24 @@ def refuse_context(failure: GateFailure, *, approver: str = "", dest: str = "", 
     return emit(payload, failure.status)
 
 
+def finalize_draft_outcome(
+    store: dict[str, Path],
+    draft: dict,
+    outcome: str,
+    *,
+    box_id: str,
+) -> None:
+    try:
+        _draft_outcomes.record_outcome(
+            store,
+            draft,
+            outcome=outcome,
+            box_slug=box_id or None,
+        )
+    except Exception:
+        return
+
+
 def stage(
     approver_raw: str,
     dest_raw: str,
@@ -1599,6 +1642,7 @@ def stage(
     source_date_raw: str = "",
     source_name_raw: str = "",
     source_ref_raw: str = "",
+    replaces_raw: str = "",
 ) -> int:
     try:
         ctx = context()
@@ -1638,20 +1682,48 @@ def stage(
             source_ref_raw,
         )
         now = utc_now()
+        replaces_id = str(replaces_raw or "").strip()
         with DraftLock(ctx["store"]["drafts"]):
-            if pending_blocks(ctx["store"]["drafts"], now):
+            previous: dict | None = None
+            if replaces_id:
+                prev_path = draft_path(ctx["store"]["drafts"], replaces_id)
+                if not prev_path.is_file():
+                    raise GateFailure(
+                        "error",
+                        "replaces draft was not found",
+                        field="replaces",
+                        status=EXIT_ERROR,
+                    )
+                previous = read_draft(prev_path)
+                if str(previous.get("status") or "") != "pending":
+                    raise GateFailure(
+                        "error",
+                        "replaces draft is not pending",
+                        field="replaces",
+                        status=EXIT_ERROR,
+                    )
+                if str(previous.get("approver") or "") != approver:
+                    raise GateFailure(
+                        "refused_not_owner",
+                        "replaces draft belongs to another approver",
+                        field="replaces",
+                    )
+            elif pending_blocks(ctx["store"]["drafts"], now):
                 raise GateFailure(
                     "refused_multi",
                     "a draft is already waiting for SEND; cancel it before staging another",
                 )
-            guard_why_not_reused(
-                latest_draft_for_approver(ctx["store"]["drafts"], approver),
-                dest=dest,
-                body=body,
-                why_line=why_line,
-            )
+            if not replaces_id:
+                guard_why_not_reused(
+                    latest_draft_for_approver(ctx["store"]["drafts"], approver),
+                    dest=dest,
+                    body=body,
+                    why_line=why_line,
+                )
             draft_id = os.urandom(8).hex()
             expires = now + draft_ttl()
+            created_at = iso(now)
+            body_digest = body_hash(body)
             record = {
                 "draft_id": draft_id,
                 "status": "pending",
@@ -1660,7 +1732,7 @@ def stage(
                 "dest": dest,
                 "from": ctx["from"],
                 "body": body,
-                "body_hash": body_hash(body),
+                "body_hash": body_digest,
                 "why": why,
                 "source_kind": source_kind,
                 "source_date": source_date,
@@ -1670,9 +1742,17 @@ def stage(
                 "source_kind": source_kind,
                 "source_date": source_date,
                 "source_ref": source_ref,
-                "created_at": iso(now),
+                "created_at": created_at,
                 "expires_at": iso(expires),
             }
+            if previous is not None:
+                _draft_outcomes.inherit_chain_fields(record, previous, body, body_digest)
+                _draft_outcomes.mark_superseded(
+                    draft_path(ctx["store"]["drafts"], replaces_id),
+                    previous,
+                )
+            else:
+                _draft_outcomes.seed_chain_fields(record, body, body_digest, created_at)
             write_draft(draft_path(ctx["store"]["drafts"], draft_id), record)
         missing_line = format_missing_line(content_placeholders(body))
         shown = attestation_text(ctx["from"], dest, body, why_line, missing_line)
@@ -1694,6 +1774,8 @@ def stage(
             "attestation": shown,
             "provider_called": False,
         }
+        if record.get("replaces"):
+            staged_payload["replaces"] = record["replaces"]
         if missing_line:
             staged_payload["missing_line"] = missing_line
             staged_payload["content_placeholders"] = content_placeholders(body)
@@ -1762,8 +1844,10 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                     extra={"draft_id": draft_id, "dest": dest},
                 )
             if utc_now() >= parse_expiry(draft):
-                draft["status"] = "cancelled"
-                draft["cancelled_reason"] = "expired"
+                draft["body_hash_final"] = str(draft.get("body_hash") or "")
+                draft["len_final"] = len(body)
+                finalize_draft_outcome(ctx["store"], draft, "ignored", box_id=ctx["box_id"])
+                draft["status"] = "ignored"
                 draft["body"] = ""
                 write_draft(path, draft)
                 raise GateFailure(
@@ -1783,6 +1867,10 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                 draft["cancelled_reason"] = (
                     "owner replied NO, DROP, or skip" if dropped else "confirm was not SEND"
                 )
+                if dropped:
+                    draft["body_hash_final"] = str(draft.get("body_hash") or "")
+                    draft["len_final"] = len(body)
+                    finalize_draft_outcome(ctx["store"], draft, "cancelled", box_id=ctx["box_id"])
                 draft["body"] = ""
                 write_draft(path, draft)
                 raise GateFailure(
@@ -1833,7 +1921,7 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                     "provider_status": "error",
                     "error": exc.__class__.__name__,
                 }
-            provider_called = True
+            provider_called = not bool(result.get("stubbed"))
             if result.get("success"):
                 message_id = str(result.get("message_id") or "")
                 if not message_id:
@@ -1844,6 +1932,9 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                         "error": "provider returned no message id; this draft will not be retried",
                     }
                 else:
+                    draft["body_hash_final"] = str(draft.get("body_hash") or "")
+                    draft["len_final"] = len(body)
+                    finalize_draft_outcome(ctx["store"], draft, "sent", box_id=ctx["box_id"])
                     draft["status"] = "sent"
                     draft["telnyx_message_id"] = message_id
                     draft["approved_at"] = approved_at
@@ -1890,7 +1981,7 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                             "from": ctx["from"],
                             "telnyx_message_id": message_id,
                             "provider_status": result.get("provider_status") or "accepted",
-                            "provider_called": True,
+                            "provider_called": provider_called,
                             "auto_reply": False,
                             "session_recorded": session_recorded,
                             "session_ttl_expires_at": ttl_expires_at if session_recorded else None,
@@ -1971,6 +2062,10 @@ def cancel(draft_id: str) -> int:
             data = cancel_draft(ctx["store"]["drafts"], draft_id, "owner cancelled")
         if data is None:
             raise GateFailure("error", "draft was not found", field="draft_id", status=EXIT_ERROR)
+        body = str(data.get("body") or "")
+        data["body_hash_final"] = str(data.get("body_hash") or "")
+        data["len_final"] = len(body)
+        finalize_draft_outcome(ctx["store"], data, "cancelled", box_id=ctx["box_id"])
         audit(
             ctx["store"],
             box_id=ctx["box_id"],
@@ -2401,6 +2496,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage_cmd.add_argument("--source-date", default="")
     stage_cmd.add_argument("--source-name", default="")
     stage_cmd.add_argument("--source-ref", default="")
+    stage_cmd.add_argument("--replaces", default="", help="Previous draft_id when re-staging after an edit.")
 
     send_cmd = sub.add_parser("send", help="Send one staged draft after SEND and attestation.")
     send_cmd.add_argument("--draft-id", required=True)
@@ -2424,6 +2520,9 @@ def build_parser() -> argparse.ArgumentParser:
     dismiss_cmd = sub.add_parser("dismiss", help="Dismiss one owner event. Does not send.")
     dismiss_cmd.add_argument("--approver", required=True)
     dismiss_cmd.add_argument("--event-id", required=True)
+
+    sub.add_parser("sweep-outcomes", help="Expire silent drafts as ignored. Does not send.")
+    sub.add_parser("export-outcomes", help="Export draft outcome counts. Does not send.")
     return parser
 
 
@@ -2440,6 +2539,7 @@ def main(argv: list[str] | None = None) -> int:
             args.source_date,
             args.source_name,
             args.source_ref,
+            args.replaces,
         )
     if args.cmd == "send":
         return send(args.draft_id, args.confirm, args.attest)
@@ -2453,6 +2553,25 @@ def main(argv: list[str] | None = None) -> int:
         return list_events()
     if args.cmd == "dismiss":
         return dismiss(args.approver, args.event_id)
+    if args.cmd == "sweep-outcomes":
+        store = paths()
+        lines = _draft_outcomes.sweep_expired(store, box_slug=resolve_box_id())
+        return emit(
+            {
+                "ok": True,
+                "outcome": "swept",
+                "ignored": len(lines),
+                "provider_called": False,
+                "auto_reply": False,
+            },
+            EXIT_OK,
+        )
+    if args.cmd == "export-outcomes":
+        rows = _draft_outcomes.export_counts(paths()["draft_outcomes"])
+        return emit(
+            {"ok": True, "outcome": "exported", "rows": rows, "provider_called": False, "auto_reply": False},
+            EXIT_OK,
+        )
     return emit({"ok": False, "outcome": "error", "reason": "unknown command", "auto_reply": False}, EXIT_ERROR)
 
 

@@ -557,7 +557,56 @@ def matching_forget(data, args):
     return [row for row in rows if needle == row.get("text") or needle in str(row.get("text") or "")]
 
 
+def style_signals(data):
+    return [
+        row
+        for row in data.get("signals", [])
+        if isinstance(row, dict) and row.get("signal") == "style"
+    ]
+
+
+def matching_style_forget(data, args):
+    rows = style_signals(data)
+    if not rows:
+        return []
+    about = plain(getattr(args, "about", None), NOTE_MAX) or plain(args.text, NOTE_MAX)
+    if about:
+        matches = [row for row in rows if about.casefold() in str(row.get("note") or "").casefold()]
+        return matches
+    ordered = sorted(rows, key=lambda row: str(row.get("created_at") or ""))
+    return [ordered[-1]] if ordered else []
+
+
 def cmd_forget(home, args):
+    if getattr(args, "style_note", False):
+        if args.procedure or args.id:
+            blocked("error", WHICH_ONE)
+        try:
+            data = load_store(home)
+        except Exception:
+            blocked("error", COULD_NOT_SAVE)
+        matches = matching_style_forget(data, args)
+        if not matches:
+            blocked("error", NOT_FOUND)
+        if len(matches) != 1:
+            blocked("error", WHICH_ONE)
+        target = matches[0]
+        signal_id = target.get("id")
+
+        def mutate(store):
+            store["signals"] = [
+                row
+                for row in store["signals"]
+                if not (isinstance(row, dict) and row.get("id") == signal_id)
+            ]
+
+        def check(store):
+            ids = [row.get("id") for row in store["signals"] if isinstance(row, dict)]
+            return signal_id not in ids
+
+        if commit_store(home, mutate, check) is None:
+            blocked("error", COULD_NOT_SAVE)
+        emit(base_result(ok=True, saved=True, confirm=CONFIRM_FORGOT, id=signal_id))
     if args.procedure:
         client = plain(args.client, LABEL_MAX)
         procedure = slug(args.procedure)
@@ -834,6 +883,8 @@ def build_parser():
     forget = sub.add_parser("forget")
     forget.add_argument("--id")
     forget.add_argument("--text")
+    forget.add_argument("--about")
+    forget.add_argument("--style-note", action="store_true")
     forget.add_argument("--client")
     forget.add_argument("--procedure")
     forget.set_defaults(func=cmd_forget)

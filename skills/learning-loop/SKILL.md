@@ -57,6 +57,8 @@ Reply with those preferences and client procedures. Do not include the owner and
 
 `forget` removes one preference. Pass `--id` from the list you just showed. `--text` is allowed only when it matches one preference. If `say` is `Which one should I forget? Ask me to list them.`, list them and stop. Do not delete a second item. `confirm` (`Forgot that.`) is sent only when `saved` is true.
 
+To forget one learned draft style note without touching a saved preference, use `forget --style-note` for the most recent style signal, or `forget --style-note --about "<words>"` when the owner names part of that note. Preferences are removed only when the owner names a preference, not when they ask to forget a style note.
+
 ## Do-not-keep
 
 The script calls the box gate at `/opt/box/arin_donotkeep.py` (`on_pre_tool_call` for a memory add) before every save. Health details, Social Security numbers, and financial account numbers are never learned. Do not rephrase a blocked save to get it through. Do not copy the blocked text into a preference, a pending correction, a style note, a client skill, or memory.

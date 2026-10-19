@@ -327,6 +327,29 @@ test("status reports background review and does not change config", () => {
   assert.equal(unset.payload.background_review, "unset");
 });
 
+test("forget style note removes a signal but not a preference with the same wording (AC26)", () => {
+  const dir = home();
+  const text = "shorter, no exclamation";
+  const pref = run(dir, ["save-explicit", "--scope", "owner", "--kind", "follow-up", "--text", text]);
+  assert.equal(pref.payload.saved, true);
+  const note = run(dir, ["record", "--kind", "follow-up", "--action", "edit", "--note", text]);
+  assert.equal(note.store.signals.length, 1);
+  const forgot = run(dir, ["forget", "--style-note"]);
+  assert.equal(forgot.payload.saved, true);
+  assert.equal(forgot.payload.confirm, FORGOT);
+  assert.equal(forgot.store.signals.length, 0);
+  assert.equal(forgot.store.preferences.length, 1);
+  assert.equal(forgot.store.preferences[0].text, text);
+
+  const dir2 = home();
+  run(dir2, ["record", "--kind", "follow-up", "--action", "edit", "--note", "warmer opener"]);
+  run(dir2, ["record", "--kind", "follow-up", "--action", "edit", "--note", "shorter closing"]);
+  const match = run(dir2, ["forget", "--style-note", "--about", "closing"]);
+  assert.equal(match.payload.saved, true);
+  assert.equal(match.store.signals.length, 1);
+  assert.equal(match.store.signals[0].note, "warmer opener");
+});
+
 test("apply does not leak another client's preference into the owner brief", () => {
   const dir = home();
   run(dir, ["save-explicit", "--scope", "client", "--client", "Client A", "--kind", "daily-brief", "--text", "Client A wants five bullets"]);
