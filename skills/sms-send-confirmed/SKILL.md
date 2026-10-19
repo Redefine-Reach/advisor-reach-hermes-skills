@@ -105,7 +105,10 @@ share a group with them. **SEND and re-stage (RED-700):** only on the owner's
 SMS text thread — the box sets `SMS_TURN_OWNER_E164` and the plugin passes that
 identity; do not call `send` or `stage --replaces` from the app, Telegram, or
 `execute_code` with a model-chosen `--actor`. Identity never comes from the
-message body.
+message body. The one exception (AC18) is a mapped owner Telegram SEND on the
+owner's own Telegram turn via `sms_stage`: the box sets `TG_TURN_OWNER_ID` for
+that turn only, and the script refuses a Telegram `--actor` that does not match
+it. Neither variable reaches `execute_code`, so a script run there is refused.
 
 ## Turn 1 — stage, then stop
 

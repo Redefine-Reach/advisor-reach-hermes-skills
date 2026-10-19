@@ -262,7 +262,7 @@ test("item7 AC18 cross-channel actor map and three refusal classes", () => {
   const tgSend = runSms(
     dir,
     ["send", "--draft-id", id, "--confirm", "SEND", "--attest", "yes", "--actor", OWNER_TG],
-    { ...envExtra, SMS_SEND_STUB_PROVIDER: "1" },
+    { ...envExtra, SMS_SEND_STUB_PROVIDER: "1", TG_TURN_OWNER_ID: OWNER_TG },
   );
   assert.equal(tgSend.payload.outcome, "sent");
   const dir2 = home();
@@ -917,4 +917,88 @@ test("item12 expired send keeps cancelled_reason expired with status ignored", (
   const draft = JSON.parse(readFileSync(join(dir, "drafts", `${s.payload.draft_id}.json`), "utf8"));
   assert.equal(draft.status, "ignored");
   assert.equal(draft.cancelled_reason, "expired");
+});
+
+function prodEnv(dir, extra = {}) {
+  // Test mode OFF: SMS_SEND_CONFIRMED_TEST is cleared; stub carrier needs SMS_SEND_STUB_ALLOW.
+  const rt = join(dir, "rt.env");
+  const pe = join(dir, "proc.environ");
+  writeFileSync(rt, "");
+  writeFileSync(pe, "");
+  return {
+    SMS_SEND_CONFIRMED_TEST: "",
+    SMS_SEND_STUB_PROVIDER: "1",
+    SMS_SEND_STUB_ALLOW: "1",
+    SMS_RUNTIME_ENV_FILE: rt,
+    SMS_PROC_ENVIRON: pe,
+    SMS_TURN_OWNER_E164: "",
+    ...extra,
+  };
+}
+
+test("W7 mapped Telegram SEND requires the box-set TG_TURN_OWNER_ID (test mode off)", () => {
+  const base = {
+    TELEGRAM_ALLOWED_USERS: `${OWNER_TG},${UNMAPPED_TG}`,
+    ARIN_OWNER_IDENTITIES: OWNER_IDENTITIES,
+  };
+  const cases = [
+    // [label, TG_TURN_OWNER_ID, actor, expected]
+    ["owner Telegram turn", OWNER_TG, `tg:${OWNER_TG}`, "sent"],
+    ["owner Telegram turn bare id", OWNER_TG, OWNER_TG, "sent"],
+    ["execute_code: no Telegram turn", "", `tg:${OWNER_TG}`, "refused_not_owner"],
+    ["turn from another Telegram id", UNMAPPED_TG, `tg:${OWNER_TG}`, "refused_not_owner"],
+    ["unmapped id on its own turn", UNMAPPED_TG, `tg:${UNMAPPED_TG}`, "refused_not_owner"],
+  ];
+  for (const [label, tgTurn, actor, expected] of cases) {
+    const dir = home();
+    const s = stage(dir, "Hi Dana, Telegram turn binding check.", base);
+    assert.equal(s.payload.outcome, "staged", label);
+    const before = draftSnapshot(dir, s.payload.draft_id);
+    const r = runSms(
+      dir,
+      ["send", "--draft-id", s.payload.draft_id, "--confirm", "SEND", "--attest", "yes", "--actor", actor],
+      prodEnv(dir, { ...base, TG_TURN_OWNER_ID: tgTurn }),
+    );
+    assert.equal(r.payload.outcome, expected, label);
+    if (expected !== "sent") {
+      assert.equal(outcomeLines(dir).length, 0, label);
+      assertDraftUnchanged(dir, s.payload.draft_id, before);
+    }
+  }
+});
+
+test("W7 mapped Telegram SEND without TG_TURN_OWNER_ID is refused even in test mode", () => {
+  const envExtra = {
+    TELEGRAM_ALLOWED_USERS: OWNER_TG,
+    ARIN_OWNER_IDENTITIES: OWNER_IDENTITIES,
+    SMS_SEND_STUB_PROVIDER: "1",
+  };
+  const dir = home();
+  const s = stage(dir, "Hi Dana, model-run Telegram send.", envExtra);
+  const r = runSms(
+    dir,
+    ["send", "--draft-id", s.payload.draft_id, "--confirm", "SEND", "--attest", "yes", "--actor", `tg:${OWNER_TG}`],
+    envExtra,
+  );
+  assert.equal(r.payload.outcome, "refused_not_owner");
+  assert.equal(outcomeLines(dir).length, 0);
+});
+
+test("W7 mapped Telegram re-stage stays refused on a real owner Telegram turn", () => {
+  const envExtra = {
+    TELEGRAM_ALLOWED_USERS: OWNER_TG,
+    ARIN_OWNER_IDENTITIES: OWNER_IDENTITIES,
+  };
+  const dir = home();
+  const s = stage(dir, "Hi Dana, Telegram re-stage stays blocked.", envExtra);
+  const r = runSms(
+    dir,
+    [
+      "stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Dana, Telegram edit.",
+      "--why", "They wanted a shorter note before the call", "--source-kind", "owner_text",
+      "--replaces", s.payload.draft_id, "--actor", `tg:${OWNER_TG}`,
+    ],
+    prodEnv(dir, { ...envExtra, TG_TURN_OWNER_ID: OWNER_TG }),
+  );
+  assert.equal(r.payload.outcome, "refused_not_owner");
 });

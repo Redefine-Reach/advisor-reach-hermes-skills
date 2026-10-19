@@ -1894,6 +1894,19 @@ def resolve_box_sms_turn_owner() -> str | None:
     return normalized or None
 
 
+def resolve_box_telegram_turn_owner() -> str | None:
+    """Box-set Telegram id for this inbound owner Telegram turn (W7).
+
+    Only the arin-sms-stage plugin sets TG_TURN_OWNER_ID, per turn, after the
+    turn source is telegram and the sender is on TELEGRAM_ALLOWED_USERS. It is
+    never on the execute_code passthrough list, so a model-run script has none.
+    """
+    raw = str(os.environ.get("TG_TURN_OWNER_ID", "")).strip()
+    if raw.lower().startswith("tg:"):
+        raw = raw[3:].strip()
+    return raw if TELEGRAM_ID_RE.fullmatch(raw) else None
+
+
 def assert_actor_is_box_sms_turn(
     actor: str,
     ctx: dict,
@@ -1907,7 +1920,16 @@ def assert_actor_is_box_sms_turn(
     if TELEGRAM_ID_RE.fullmatch(normalized):
         approver = str(mapped_telegram_approver or "").strip()
         groups = ctx.get("owner_identity_groups") or owner_identity_groups()
-        if approver and groups and actor_matches_approver(actor, approver, groups):
+        # W7: the Telegram actor must be the box-resolved Telegram turn sender.
+        # No test-mode bypass: fail closed when the box did not set it.
+        tg_turn_owner = resolve_box_telegram_turn_owner()
+        if (
+            approver
+            and groups
+            and tg_turn_owner is not None
+            and normalized == tg_turn_owner
+            and actor_matches_approver(actor, approver, groups)
+        ):
             return
         raise GateFailure(
             "refused_not_owner",
