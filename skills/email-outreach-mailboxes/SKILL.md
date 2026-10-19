@@ -144,7 +144,7 @@ improvise a different shape:
   "user_details": {
     "email": "...", "firstName": "...", "lastName": "...", "company": "...",
     "country": "...", "city": "...", "addressLineOne": "...", "addressLineTwo": "",
-    "postalCode": "...", "state": "...", "phoneCc": "+1", "phone": "...",
+    "postalCode": "...", "state": "...", "phoneCc": "1", "phone": "...",
     "languagePreference": "en"
   },
   "domains": [
@@ -167,8 +167,8 @@ The vendor's own example uses full names, not codes (`"India"`, `"Karnataka"`,
 `"+91"`):
 
 - `country` and `state` are **full names**, not two-letter codes.
-- `phoneCc` carries the leading `+`, and is **separate** from `phone`.
-- `phone` is **digits only**.
+- `phoneCc` is the country code digits only, with NO plus sign (`1`, not `+1`; the order call rejects `+1` with 'Invalid characters in phoneCc', verified live 2026-10-20), and is **separate** from `phone`.
+- `phone` is **digits only**. The `mailbox` field in each `mailbox_details` entry is the FULL address (`ryan@example.com`); the order call rejects a bare local part.
 - `languagePreference` is `en`.
 
 ### Ordering needs details only the customer can give you
@@ -208,6 +208,8 @@ customer for. **Only `addressLineOne` (and
 require asking** — and even those may already be recorded in the workspace
 (see below). Asking for nine fields you could have derived is both slower and
 more error-prone than reading them off the customer's own pages.
+
+If the owner's message gives a phone number, use exactly that number. If it gives none, stop and say the phone is missing; do not take a number from an SMS log, from memory or from any other source.
 
 ### Check the workspace before asking
 
