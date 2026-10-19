@@ -26,6 +26,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
+      - run: pip install pyyaml  # eval HERMES_HOME config allowlist (live_session.py); Hermes ships PyYAML on the box
       - run: |
           chmod 600 evals/milestone-zero/fixtures/fake_sessions/known_names.txt \
             evals/milestone-zero/fixtures/fake_sessions/forgotten.txt \
