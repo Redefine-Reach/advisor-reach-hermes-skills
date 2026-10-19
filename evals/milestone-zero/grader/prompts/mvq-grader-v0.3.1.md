@@ -1,4 +1,4 @@
-# MVQ grader prompt (version: mvq-grader-v0.3.0)
+# MVQ grader prompt (version: mvq-grader-v0.3.1)
 
 Rubric locked by Jerry on Oct 19, 2026 (spec v0.2 section 1a). You grade one ARIN case. Input is JSON with:
 - `case`: id, category, owner_text (last owner message), context_turns (earlier owner/arin turns), style_sample, draft_expected

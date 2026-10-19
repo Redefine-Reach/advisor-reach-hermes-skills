@@ -66,7 +66,7 @@ Credential vars cleared in the child process include Composio, GHL, FUB, and Gma
 
 For harness CI without a binary: `ARIN_EVAL_STUB_HERMES=1` exercises live path + outbound stub using fixture text.
 
-## MVQ grader (RED-681), v0.3.0 (rubric locked Oct 19, spec v0.2)
+## MVQ grader (RED-681), v0.3.1 (rubric locked Oct 19, spec v0.2 + 5:05 AM gate)
 
 Two layers, scored **after selection** (case list hashed and frozen, behavior checks run, then every selected case is scored; behavior failures are recorded, not dropped):
 
@@ -93,7 +93,7 @@ Real redacted cases (**ARIN TEST e23fjkv6 only**, run by Keel as `hermes`):
 umask 077
 D=/opt/data/eval-export/red667-20261017
 python3 <checkout>/evals/milestone-zero/run_mvq.py --real --live --skip-behavior-checks \
-  --cases $D/redacted/cases-export.jsonl --evidence-dir $D/mvq-v0.3.0 \
+  --cases $D/redacted/cases-export.jsonl --evidence-dir $D/mvq-v0.3.1 \
   --build-image arin-v1.5-5ce17af
 ```
 
@@ -104,7 +104,7 @@ python3 <checkout>/evals/milestone-zero/run_mvq.py --real --live --skip-behavior
 
 Tuning: `ARIN_MVQ_GRADER_BAR` (default `8`), `ARIN_MVQ_GRADER_LINE_WEIGHTS`, `ARIN_MVQ_GRADER_ENABLED_HARD_FAILS`, optional `ARIN_MVQ_GRADER_CONFIG`. HTTP judge needs `ARIN_MVQ_GRADER_HTTP_URL` (no API keys in repo).
 
-Grader prompt version: `grader/prompts/mvq-grader-v0.3.0.md` (`GRADER_VERSION` in `grader/version.py`).
+Grader prompt version: `grader/prompts/mvq-grader-v0.3.1.md` (`GRADER_VERSION` in `grader/version.py`).
 
 ## Model grader policy
 

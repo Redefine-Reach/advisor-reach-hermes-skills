@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-GRADER_VERSION = "mvq-grader-v0.3.0"
+GRADER_VERSION = "mvq-grader-v0.3.1"
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 

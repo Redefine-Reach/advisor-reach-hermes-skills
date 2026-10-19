@@ -1,9 +1,9 @@
 # MVQ scorecard
 
 - **Build/image:** synthetic-fixture
-- **Date (UTC):** 2026-10-19T12:08:03.849140+00:00
+- **Date (UTC):** 2026-10-19T12:08:13.432307+00:00
 - **Cases run:** 28 (real 0 / synthetic 28); scored 12; unscored 16 (excluded from averages and pass rate)
-- **Grader version:** mvq-grader-v0.3.0
+- **Grader version:** mvq-grader-v0.3.1
 - **Bar:** 8.0/10 per case, no hard fail (H1-H4), and no gate (gate: Why = expected draft with line 5 at 0)
 - **Line weights:** [1.0, 1.0, 1.0, 1.0, 1.0]
 - **Selection sha256:** a7807400e96a90683bc7972a5399426f0262afcc8e000c1557b78bfaa8ff49ee
