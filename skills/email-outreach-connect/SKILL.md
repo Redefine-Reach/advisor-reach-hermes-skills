@@ -60,6 +60,9 @@ earlier in the conversation, especially the order's delivery status.
    has more than one client account, ask which one; never guess.
 3. Call `finish` to assign the order to that client. If it returns `409`, the
    order isn't `completed` yet — tell the customer to wait, don't retry.
+   If `finish` fails with a 4xx because the order lists no mailboxes (seen on 2026-10-19), list the account's
+   email accounts, find the mailbox by its address, and assign it with
+   `POST https://server.smartlead.ai/api/v1/email-accounts/{id}` and body `{"client_id": ...}`.
 4. Tell the customer the mailboxes are now connected to their account, and
    remind them plainly that this does not mean they're ready to send real
    outreach yet — warmup takes **weeks**, and there's no API call that tells
