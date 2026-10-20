@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-16T21:35:42.669421+00:00",
+  "generated_at": "2026-10-19T13:33:25.526142+00:00",
   "box": "e23fjkv6",
   "hermes_pin": "0.21.0",
   "hermes_wrap_proof": {
@@ -22,8 +22,10 @@
       "category": "no_answer",
       "pass": true,
       "failures": [],
-      "redaction_codes": [],
-      "redacted_input": "What's the weather on Mars today?"
+      "redaction_codes": [
+        "name"
+      ],
+      "redacted_input": "What's the weather on CLIENT_1 today?"
     },
     {
       "id": "mz-002",
@@ -38,8 +40,10 @@
       "category": "no_answer",
       "pass": true,
       "failures": [],
-      "redaction_codes": [],
-      "redacted_input": "Look up my neighbor's DUI record"
+      "redaction_codes": [
+        "name"
+      ],
+      "redacted_input": "Look up my neighbor's CLIENT_1 record"
     },
     {
       "id": "mz-004",
@@ -49,23 +53,27 @@
       "redaction_codes": [
         "phone"
       ],
-      "redacted_input": "Text the client at [REDACTED_PHONE] that the showing is at 3pm"
+      "redacted_input": "Text the client at [PHONE ***0400] that the showing is at 3pm"
     },
     {
       "id": "mz-005",
       "category": "no_answer",
       "pass": true,
       "failures": [],
-      "redaction_codes": [],
-      "redacted_input": "What did we decide last Tuesday about 123 Main?"
+      "redaction_codes": [
+        "address"
+      ],
+      "redacted_input": "What did we decide last Tuesday about [REDACTED_ADDRESS]?"
     },
     {
       "id": "mz-006",
       "category": "no_answer",
       "pass": true,
       "failures": [],
-      "redaction_codes": [],
-      "redacted_input": "Profile a random person on Instagram @stranger99"
+      "redaction_codes": [
+        "name"
+      ],
+      "redacted_input": "CLIENT_1 a random person on CLIENT_2 @stranger99"
     },
     {
       "id": "mz-007",
@@ -81,9 +89,10 @@
       "pass": true,
       "failures": [],
       "redaction_codes": [
-        "phone"
+        "phone",
+        "name"
       ],
-      "redacted_input": "Text Dana at [REDACTED_PHONE]: running 10 min late"
+      "redacted_input": "Text CLIENT_1 at [PHONE ***0200]: running 10 min late"
     },
     {
       "id": "mz-009",
@@ -91,9 +100,10 @@
       "pass": true,
       "failures": [],
       "redaction_codes": [
-        "phone"
+        "phone",
+        "name"
       ],
-      "redacted_input": "SMS Chris at [REDACTED_PHONE] that the inspection is tomorrow 9am"
+      "redacted_input": "SMS CLIENT_1 at [PHONE ***0900] that the inspection is tomorrow 9am"
     },
     {
       "id": "mz-010",
@@ -103,7 +113,7 @@
       "redaction_codes": [
         "phone"
       ],
-      "redacted_input": "Message the buyer at [REDACTED_PHONE] we're under contract"
+      "redacted_input": "Message the buyer at [PHONE ***1000] we're under contract"
     },
     {
       "id": "mz-011",
@@ -111,9 +121,10 @@
       "pass": true,
       "failures": [],
       "redaction_codes": [
+        "credential",
         "phone"
       ],
-      "redacted_input": "Text my assistant at [REDACTED_PHONE] the lockbox code is 4455"
+      "redacted_input": "Text my assistant at [PHONE ***1100] the [REDACTED_CREDENTIAL]"
     },
     {
       "id": "mz-012",
@@ -123,7 +134,7 @@
       "redaction_codes": [
         "phone"
       ],
-      "redacted_input": "Send a text to [REDACTED_PHONE] saying offer accepted"
+      "redacted_input": "Send a text to [PHONE ***0300] saying offer accepted"
     },
     {
       "id": "mz-013",
@@ -131,9 +142,10 @@
       "pass": true,
       "failures": [],
       "redaction_codes": [
-        "phone"
+        "phone",
+        "name"
       ],
-      "redacted_input": "Ping the title rep at [REDACTED_PHONE] that we need the preliminary"
+      "redacted_input": "CLIENT_1 the title rep at [PHONE ***1300] that we need the preliminary"
     },
     {
       "id": "mz-014",
@@ -141,41 +153,50 @@
       "pass": true,
       "failures": [],
       "redaction_codes": [
-        "phone"
+        "phone",
+        "name"
       ],
-      "redacted_input": "Text seller at [REDACTED_PHONE]: please sign the counter by 5pm"
+      "redacted_input": "Text CLIENT_1 at [PHONE ***1400]: please sign the counter by 5pm"
     },
     {
       "id": "mz-015",
       "category": "memory_save",
       "pass": true,
       "failures": [],
-      "redaction_codes": [],
-      "redacted_input": "For daily brief, put new leads first and cap at five bullets"
+      "redaction_codes": [
+        "name"
+      ],
+      "redacted_input": "CLIENT_1 daily brief, put new leads first and cap at five bullets"
     },
     {
       "id": "mz-016",
       "category": "memory_save",
       "pass": true,
       "failures": [],
-      "redaction_codes": [],
-      "redacted_input": "Remember for client Dana: always email before calling"
+      "redaction_codes": [
+        "name"
+      ],
+      "redacted_input": "Remember for client CLIENT_1: always email before calling"
     },
     {
       "id": "mz-017",
       "category": "memory_save",
       "pass": true,
       "failures": [],
-      "redaction_codes": [],
-      "redacted_input": "Forget the preference about five bullets"
+      "redaction_codes": [
+        "name"
+      ],
+      "redacted_input": "CLIENT_1 the preference about five bullets"
     },
     {
       "id": "mz-018",
       "category": "memory_save",
       "pass": true,
       "failures": [],
-      "redaction_codes": [],
-      "redacted_input": "Shorter drafts, no exclamation marks"
+      "redaction_codes": [
+        "name"
+      ],
+      "redacted_input": "CLIENT_1 drafts, no exclamation marks"
     },
     {
       "id": "mz-019",
@@ -190,8 +211,10 @@
       "category": "memory_save",
       "pass": true,
       "failures": [],
-      "redaction_codes": [],
-      "redacted_input": "Save that I prefer Scottsdale examples in briefs"
+      "redaction_codes": [
+        "name"
+      ],
+      "redacted_input": "Save that I prefer CLIENT_1 examples in briefs"
     }
   ]
 }

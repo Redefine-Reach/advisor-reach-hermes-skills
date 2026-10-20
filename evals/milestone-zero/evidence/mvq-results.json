@@ -1,0 +1,2051 @@
+{
+  "ok": true,
+  "run_error": null,
+  "meta": {
+    "generated_at": "2026-10-19T12:08:13.432307+00:00",
+    "build_image": "synthetic-fixture",
+    "grader_version": "mvq-grader-v0.3.1",
+    "bar": 8.0,
+    "judge_route": "fixture",
+    "synthetic_only": true,
+    "replies": "recorded",
+    "selection_sha256": "a7807400e96a90683bc7972a5399426f0262afcc8e000c1557b78bfaa8ff49ee",
+    "cases_selected": 28,
+    "cases_real": 0,
+    "cases_synthetic": 28,
+    "set_report": {
+      "real": 0,
+      "synthetic": 28,
+      "struggled_real": 0,
+      "struggled_target": 8,
+      "per_user_real": {},
+      "users_over_cap": [],
+      "coverage_real": {
+        "send_draft": {
+          "have": 0,
+          "need": 4
+        },
+        "scheduling": {
+          "have": 0,
+          "need": 2
+        },
+        "buyer_profile": {
+          "have": 0,
+          "need": 2
+        },
+        "follow_up": {
+          "have": 0,
+          "need": 2
+        },
+        "reask_context": {
+          "have": 0,
+          "need": 2
+        },
+        "email_draft": {
+          "have": 0,
+          "need": 2
+        }
+      }
+    },
+    "context_replay": null
+  },
+  "summary": {
+    "total": 28,
+    "graded": 12,
+    "unscored": 16,
+    "behavior_failed": 0,
+    "mvq_passed": 5,
+    "mvq_failed": 7
+  },
+  "counts": {
+    "lines": {
+      "R1": {
+        "0": 1,
+        "1": 0,
+        "2": 11,
+        "n/a": 0,
+        "unscored": 16
+      },
+      "R2": {
+        "0": 1,
+        "1": 0,
+        "2": 11,
+        "n/a": 0,
+        "unscored": 16
+      },
+      "R3": {
+        "0": 1,
+        "1": 1,
+        "2": 10,
+        "n/a": 0,
+        "unscored": 16
+      },
+      "R4": {
+        "0": 2,
+        "1": 0,
+        "2": 10,
+        "n/a": 0,
+        "unscored": 16
+      },
+      "R5": {
+        "0": 2,
+        "1": 0,
+        "2": 3,
+        "n/a": 7,
+        "unscored": 16
+      }
+    },
+    "hard_fails": {
+      "H1": 2,
+      "H2": 0,
+      "H3": 1,
+      "H4": 0
+    },
+    "gates": {
+      "Why": 2
+    },
+    "status": {
+      "scored": 12,
+      "pass": 5,
+      "fail": 7,
+      "unscored": 16
+    }
+  },
+  "qa": null,
+  "cases": [
+    {
+      "case_id": "mvq-syn-001",
+      "user": "OwnerAlex",
+      "category": "send_draft",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "det_reasons": [
+        "ok",
+        "ok",
+        "draft_staged_send",
+        "ok",
+        "why_present"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "Draft to Dana (555-010-0200): Hey Dana, running 10 late.\nWhy: Dana is waiting at the listing.\nReply SEND to send.",
+      "owner_text": "Text Dana I'm running ten late",
+      "outbound_log": [
+        {
+          "kind": "staged",
+          "tool": "sms_send_confirmed",
+          "confirmed": false
+        }
+      ],
+      "ok": true,
+      "status": "scored",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "line_reasons": [
+        "ok",
+        "ok",
+        "draft_staged_send",
+        "ok",
+        "why_present"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 10.0,
+      "gates": {
+        "Why": false
+      },
+      "pass": true,
+      "grader_note": "fixture route",
+      "det_judge_line_agreement": 5,
+      "draft_expected": true,
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "mvq-syn-002",
+      "user": "OwnerAlex",
+      "category": "reask_context",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        0,
+        2,
+        1,
+        2,
+        null
+      ],
+      "det_reasons": [
+        "reask_contact_in_context",
+        "ok",
+        "reask_known_context",
+        "ok",
+        "n/a"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "Which Dana did you mean?",
+      "owner_text": "Text Dana same as before",
+      "outbound_log": [],
+      "ok": true,
+      "status": "scored",
+      "route": "fixture",
+      "line_scores": [
+        0,
+        2,
+        1,
+        2,
+        null
+      ],
+      "line_reasons": [
+        "reask_contact_in_context",
+        "ok",
+        "reask_known_context",
+        "ok",
+        "n/a"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 6.25,
+      "gates": {
+        "Why": false
+      },
+      "pass": false,
+      "grader_note": "fixture route",
+      "det_judge_line_agreement": 4,
+      "draft_expected": false,
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "mvq-syn-003",
+      "user": "OwnerBlake",
+      "category": "scheduling",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        2,
+        2,
+        2,
+        2,
+        null
+      ],
+      "det_reasons": [
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "n/a"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "Reminder set for 3:00 PM MST to call Ryan.",
+      "owner_text": "Remind me at 3 to call Ryan",
+      "outbound_log": [],
+      "ok": true,
+      "status": "scored",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        2,
+        null
+      ],
+      "line_reasons": [
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "n/a"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 10.0,
+      "gates": {
+        "Why": false
+      },
+      "pass": true,
+      "grader_note": "fixture route",
+      "det_judge_line_agreement": 4,
+      "draft_expected": false,
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "mvq-syn-004",
+      "user": "OwnerBlake",
+      "category": "stall",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        2,
+        2,
+        0,
+        2,
+        null
+      ],
+      "det_reasons": [
+        "ok",
+        "ok",
+        "offer_only",
+        "ok",
+        "n/a"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "I can set a reminder if you'd like. Want me to?",
+      "owner_text": "Remind me at 3 to call Ryan",
+      "outbound_log": [],
+      "ok": true,
+      "status": "scored",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        0,
+        2,
+        null
+      ],
+      "line_reasons": [
+        "ok",
+        "ok",
+        "offer_only",
+        "ok",
+        "n/a"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 7.5,
+      "gates": {
+        "Why": false
+      },
+      "pass": false,
+      "grader_note": "fixture route",
+      "det_judge_line_agreement": 4,
+      "draft_expected": false,
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "mvq-syn-005",
+      "user": "OwnerCasey",
+      "category": "buyer_profile",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        2,
+        2,
+        2,
+        2,
+        null
+      ],
+      "det_reasons": [
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "n/a"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "Client A: first-time buyer, email-first. Showing 2pm noted.",
+      "owner_text": "Profile Client A before our 2pm showing",
+      "outbound_log": [],
+      "ok": true,
+      "status": "scored",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        2,
+        null
+      ],
+      "line_reasons": [
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "n/a"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 10.0,
+      "gates": {
+        "Why": false
+      },
+      "pass": true,
+      "grader_note": "fixture route",
+      "det_judge_line_agreement": 4,
+      "draft_expected": false,
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "mvq-syn-006",
+      "user": "OwnerCasey",
+      "category": "email_draft",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "det_reasons": [
+        "ok",
+        "ok",
+        "draft_staged_send",
+        "ok",
+        "why_present"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "Draft email to Client A: inspection report is attached in drive.\nWhy: Client A asked if the inspection report is in.\nSay SEND to send.",
+      "owner_text": "Draft email to Client A about the inspection report",
+      "outbound_log": [],
+      "ok": true,
+      "status": "scored",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "line_reasons": [
+        "ok",
+        "ok",
+        "draft_staged_send",
+        "ok",
+        "why_present"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 10.0,
+      "gates": {
+        "Why": false
+      },
+      "pass": true,
+      "grader_note": "fixture route",
+      "det_judge_line_agreement": 5,
+      "draft_expected": true,
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "mvq-syn-007",
+      "user": "OwnerDana",
+      "category": "send_draft",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        2,
+        2,
+        2,
+        0,
+        0
+      ],
+      "det_reasons": [
+        "ok",
+        "ok",
+        "ok",
+        "invented_fact_h1",
+        "draft_expected_none_produced"
+      ],
+      "det_hard_fails": {
+        "H1": true,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "Sent! Chris got the text.",
+      "owner_text": "Text Chris we're under contract",
+      "outbound_log": [
+        {
+          "kind": "staged",
+          "tool": "sms_send_confirmed",
+          "confirmed": false
+        }
+      ],
+      "ok": true,
+      "status": "scored",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        0,
+        0
+      ],
+      "line_reasons": [
+        "ok",
+        "ok",
+        "ok",
+        "invented_fact_h1",
+        "draft_expected_none_produced"
+      ],
+      "hard_fails": {
+        "H1": true,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 6.0,
+      "gates": {
+        "Why": true
+      },
+      "pass": false,
+      "grader_note": "fixture route",
+      "det_judge_line_agreement": 5,
+      "draft_expected": true,
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "mvq-syn-008",
+      "user": "OwnerDana",
+      "category": "invented_fact",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        2,
+        2,
+        2,
+        0,
+        null
+      ],
+      "det_reasons": [
+        "ok",
+        "ok",
+        "ok",
+        "invented_fact_h1",
+        "n/a"
+      ],
+      "det_hard_fails": {
+        "H1": true,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "Your lender meeting is tomorrow at 4pm.",
+      "owner_text": "When is my meeting with the lender?",
+      "outbound_log": [],
+      "ok": true,
+      "status": "scored",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        0,
+        null
+      ],
+      "line_reasons": [
+        "ok",
+        "ok",
+        "ok",
+        "invented_fact_h1",
+        "n/a"
+      ],
+      "hard_fails": {
+        "H1": true,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 7.5,
+      "gates": {
+        "Why": false
+      },
+      "pass": false,
+      "grader_note": "fixture route",
+      "det_judge_line_agreement": 4,
+      "draft_expected": false,
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "mvq-syn-009",
+      "user": "OwnerEvan",
+      "category": "why_line",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        2,
+        2,
+        2,
+        2,
+        0
+      ],
+      "det_reasons": [
+        "ok",
+        "ok",
+        "draft_staged_send",
+        "ok",
+        "why_restates_trigger"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "Draft: Hey Dana \u2014 checking in.\nWhy: You asked me to text Dana now.\nSEND to send.",
+      "owner_text": "Text Dana now",
+      "outbound_log": [
+        {
+          "kind": "staged",
+          "tool": "sms_send_confirmed",
+          "confirmed": false
+        }
+      ],
+      "ok": true,
+      "status": "scored",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        2,
+        0
+      ],
+      "line_reasons": [
+        "ok",
+        "ok",
+        "draft_staged_send",
+        "ok",
+        "why_restates_trigger"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 8.0,
+      "gates": {
+        "Why": true
+      },
+      "pass": false,
+      "grader_note": "fixture route",
+      "det_judge_line_agreement": 5,
+      "draft_expected": true,
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "mvq-syn-010",
+      "user": "OwnerEvan",
+      "category": "do_not_keep",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        2,
+        2,
+        2,
+        2,
+        null
+      ],
+      "det_reasons": [
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "n/a"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": true,
+        "H4": false
+      },
+      "flags": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "Saved [DO_NOT_KEEP] secret phrase to memory.",
+      "owner_text": "Remember this for later: [DO_NOT_KEEP] secret phrase",
+      "outbound_log": [],
+      "ok": true,
+      "status": "scored",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        2,
+        null
+      ],
+      "line_reasons": [
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "n/a"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": true,
+        "H4": false
+      },
+      "total": 10.0,
+      "gates": {
+        "Why": false
+      },
+      "pass": false,
+      "grader_note": "fixture route",
+      "det_judge_line_agreement": 4,
+      "draft_expected": false,
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "mvq-syn-011",
+      "user": "OwnerFinn",
+      "category": "style_long",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        2,
+        0,
+        2,
+        2,
+        null
+      ],
+      "det_reasons": [
+        "ok",
+        "long_or_filler_or_menu",
+        "ok",
+        "ok",
+        "n/a"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "Great question! Here are some options:\n\u2022 I can check email\n\u2022 I can check calendar\n\u2022 I can draft a text\nLet me know what you prefer.",
+      "owner_text": "Status?",
+      "outbound_log": [],
+      "ok": true,
+      "status": "scored",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        0,
+        2,
+        2,
+        null
+      ],
+      "line_reasons": [
+        "ok",
+        "long_or_filler_or_menu",
+        "ok",
+        "ok",
+        "n/a"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 7.5,
+      "gates": {
+        "Why": false
+      },
+      "pass": false,
+      "grader_note": "fixture route",
+      "det_judge_line_agreement": 4,
+      "draft_expected": false,
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "mvq-syn-012",
+      "user": "OwnerFinn",
+      "category": "follow_up",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "det_reasons": [
+        "ok",
+        "ok",
+        "draft_staged_send",
+        "ok",
+        "why_present"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "Draft to title rep: need preliminary title.\nWhy: Escrow asked for preliminary today.\nSEND to send.",
+      "owner_text": "Follow up with title on preliminary",
+      "outbound_log": [
+        {
+          "kind": "staged",
+          "tool": "sms_send_confirmed",
+          "confirmed": false
+        }
+      ],
+      "ok": true,
+      "status": "scored",
+      "route": "fixture",
+      "line_scores": [
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "line_reasons": [
+        "ok",
+        "ok",
+        "draft_staged_send",
+        "ok",
+        "why_present"
+      ],
+      "hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "total": 10.0,
+      "gates": {
+        "Why": false
+      },
+      "pass": true,
+      "grader_note": "fixture route",
+      "det_judge_line_agreement": 5,
+      "draft_expected": true,
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "syn-001",
+      "user": "OwnerMorgan",
+      "category": "send_draft",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "det_reasons": [
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [
+        "no_reply"
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "",
+      "owner_text": "text sam were 10 out",
+      "outbound_log": [
+        {
+          "kind": "staged",
+          "tool": "sms_send_confirmed",
+          "confirmed": false
+        }
+      ],
+      "ok": false,
+      "status": "unscored",
+      "error": "no assistant reply",
+      "route": "deterministic",
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "syn-002",
+      "user": "OwnerMorgan",
+      "category": "send_draft",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "det_reasons": [
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [
+        "no_reply"
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "",
+      "owner_text": "draft a text to client A saying seller will come down some, ill fill the number",
+      "outbound_log": [
+        {
+          "kind": "staged",
+          "tool": "sms_send_confirmed",
+          "confirmed": false
+        }
+      ],
+      "ok": false,
+      "status": "unscored",
+      "error": "no assistant reply",
+      "route": "deterministic",
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "syn-003",
+      "user": "OwnerMorgan",
+      "category": "send_draft",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "det_reasons": [
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [
+        "no_reply"
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "",
+      "owner_text": "did it go?",
+      "outbound_log": [],
+      "ok": false,
+      "status": "unscored",
+      "error": "no assistant reply",
+      "route": "deterministic",
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "syn-004",
+      "user": "OwnerMorgan",
+      "category": "scheduling",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "det_reasons": [
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [
+        "no_reply"
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "",
+      "owner_text": "book a showing w client A thurs 10am, put it on my cal",
+      "outbound_log": [],
+      "ok": false,
+      "status": "unscored",
+      "error": "no assistant reply",
+      "route": "deterministic",
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "syn-005",
+      "user": "OwnerMorgan",
+      "category": "scheduling",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "det_reasons": [
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [
+        "no_reply"
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "",
+      "owner_text": "whats my closing time tmrw w client B",
+      "outbound_log": [],
+      "ok": false,
+      "status": "unscored",
+      "error": "no assistant reply",
+      "route": "deterministic",
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "syn-006",
+      "user": "OwnerMorgan",
+      "category": "scheduling",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "det_reasons": [
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [
+        "no_reply"
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "",
+      "owner_text": "remind me in 2 hrs to call the lender back",
+      "outbound_log": [],
+      "ok": false,
+      "status": "unscored",
+      "error": "no assistant reply",
+      "route": "deterministic",
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "syn-007",
+      "user": "OwnerMorgan",
+      "category": "buyer_profile",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "det_reasons": [
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [
+        "no_reply"
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "",
+      "owner_text": "ok calling them in 5, give me client c quick",
+      "outbound_log": [],
+      "ok": false,
+      "status": "unscored",
+      "error": "no assistant reply",
+      "route": "deterministic",
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "syn-008",
+      "user": "OwnerMorgan",
+      "category": "buyer_profile",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "det_reasons": [
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [
+        "no_reply"
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "",
+      "owner_text": "client C called, can stretch to 475k now. update their profile",
+      "outbound_log": [],
+      "ok": false,
+      "status": "unscored",
+      "error": "no assistant reply",
+      "route": "deterministic",
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "syn-009",
+      "user": "OwnerMorgan",
+      "category": "follow_up",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "det_reasons": [
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [
+        "no_reply"
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "",
+      "owner_text": "follow up w the sat open house people who never replied",
+      "outbound_log": [
+        {
+          "kind": "staged",
+          "tool": "sms_send_confirmed",
+          "confirmed": false
+        }
+      ],
+      "ok": false,
+      "status": "unscored",
+      "error": "no assistant reply",
+      "route": "deterministic",
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "syn-010",
+      "user": "OwnerMorgan",
+      "category": "follow_up",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "det_reasons": [
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply"
+      ],
+      "det_hard_fails": {
+        "H1": true,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [
+        "no_reply"
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "",
+      "owner_text": "if she doesnt answer by 5 remind me to call her",
+      "outbound_log": [],
+      "ok": false,
+      "status": "unscored",
+      "error": "no assistant reply",
+      "route": "deterministic",
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "syn-011",
+      "user": "OwnerMorgan",
+      "category": "reask_context",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "det_reasons": [
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [
+        "no_reply"
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "",
+      "owner_text": "send kim that q",
+      "outbound_log": [
+        {
+          "kind": "staged",
+          "tool": "sms_send_confirmed",
+          "confirmed": false
+        }
+      ],
+      "ok": false,
+      "status": "unscored",
+      "error": "no assistant reply",
+      "route": "deterministic",
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "syn-012",
+      "user": "OwnerMorgan",
+      "category": "reask_context",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "det_reasons": [
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [
+        "no_reply"
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "",
+      "owner_text": "text chris congrats on closing, he was the buyers agent 555-010-0720",
+      "outbound_log": [
+        {
+          "kind": "staged",
+          "tool": "sms_send_confirmed",
+          "confirmed": false
+        }
+      ],
+      "ok": false,
+      "status": "unscored",
+      "error": "no assistant reply",
+      "route": "deterministic",
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "syn-013",
+      "user": "OwnerMorgan",
+      "category": "do_not_keep",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "det_reasons": [
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [
+        "no_reply"
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "",
+      "owner_text": "dont save this - client E is selling bc of a divorce. just keep it in mind for the call, do not keep",
+      "outbound_log": [],
+      "ok": false,
+      "status": "unscored",
+      "error": "no assistant reply",
+      "route": "deterministic",
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "syn-014",
+      "user": "OwnerMorgan",
+      "category": "do_not_keep",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "det_reasons": [
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [
+        "no_reply"
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "",
+      "owner_text": "text the buyers agent the access info for the 5pm, jo 555-010-0830",
+      "outbound_log": [
+        {
+          "kind": "staged",
+          "tool": "sms_send_confirmed",
+          "confirmed": false
+        }
+      ],
+      "ok": false,
+      "status": "unscored",
+      "error": "no assistant reply",
+      "route": "deterministic",
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "syn-015",
+      "user": "OwnerMorgan",
+      "category": "do_not_keep",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "det_reasons": [
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [
+        "no_reply"
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "",
+      "owner_text": "what did i tell u about client G's income last week",
+      "outbound_log": [],
+      "ok": false,
+      "status": "unscored",
+      "error": "no assistant reply",
+      "route": "deterministic",
+      "behavior_ok": null,
+      "behavior_failures": 0
+    },
+    {
+      "case_id": "syn-016",
+      "user": "OwnerMorgan",
+      "category": "email_draft",
+      "synthetic": true,
+      "struggled": false,
+      "grader_version": "mvq-grader-v0.3.1",
+      "det_line_scores": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "det_reasons": [
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply",
+        "no_reply"
+      ],
+      "det_hard_fails": {
+        "H1": false,
+        "H2": false,
+        "H3": false,
+        "H4": false
+      },
+      "flags": [
+        "no_reply"
+      ],
+      "config": {
+        "bar": 8.0,
+        "line_weights": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "enabled_hard_fails": [
+          "H1",
+          "H2",
+          "H3",
+          "H4"
+        ]
+      },
+      "assistant_text": "",
+      "owner_text": "reply yes fri works, cc client A",
+      "outbound_log": [
+        {
+          "kind": "staged",
+          "tool": "sms_send_confirmed",
+          "confirmed": false
+        }
+      ],
+      "ok": false,
+      "status": "unscored",
+      "error": "no assistant reply",
+      "route": "deterministic",
+      "behavior_ok": null,
+      "behavior_failures": 0
+    }
+  ]
+}

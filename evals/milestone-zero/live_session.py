@@ -16,6 +16,9 @@ from typing import Any
 
 from outbound_stub import OutboundRecorder, start_http_stub, stub_env
 
+HERMES_INSTALL_ROOT = Path("/opt/hermes")
+HERMES_VENV_PYTHON = HERMES_INSTALL_ROOT / ".venv" / "bin" / "python3"
+
 CREDENTIAL_ENV_KEYS = [
     "COMPOSIO_API_KEY",
     "COMPOSIO_ENTITY_ID",
@@ -30,17 +33,117 @@ CREDENTIAL_ENV_KEYS = [
     "TELNYX_API_KEY",
 ]
 
-SANDBOX_REMOVE_RELATIVE = [
-    "MEMORY.md",
-    "USER.md",
-    "sessions",
-    "memory",
-    "audit",
-    "learning-loop",
-    "client-profile",
-    "google_token.json",
-    ".env",
-]
+# Throwaway HERMES_HOME is built from an ALLOWLIST (Vault, PR #57 review, Oct 19): only the
+# config.yaml keys Hermes needs to run plus the skills/ code. Nothing else from the real home
+# (state.db*, auth.json, .env, logs, cron, sessions, memory, audit, eval-export, data dirs) is
+# ever copied. The home is 0700 and is shredded after every case.
+CONFIG_KEYS_ALLOWED = (
+    "model",
+    "auxiliary",
+    "agent",
+    "platform_toolsets",
+    "toolsets",
+    "timezone",
+    "display",
+    "terminal",
+    "web",
+    "browser",
+    "hooks",
+    "hooks_auto_accept",
+    "compression",
+)
+HOME_DIRS_ALLOWED = ("skills",)
+# Inside skills/: never copy data, state, logs, credentials or exports (names or suffixes).
+SKILL_SKIP_DIRS = frozenset({
+    ".git", "node_modules", "__pycache__", "data", "logs", "log", "cache", ".cache", "sessions", "memory",
+    "memories", "audit", "export", "exports", "eval-export", "raw-input", "cron", "state", "tmp", "pending",
+    "learning-loop", "client-profile", "mvq", "redacted",
+})
+SKILL_SKIP_SUFFIXES = (".db", ".sqlite", ".sqlite3", ".jsonl", ".log", ".pem", ".key", ".p12")
+SKILL_SKIP_NAME_PARTS = ("state.db", ".env", "auth", "token", "secret", "credential", "names.txt", "replies", "cookie")
+
+
+class EvalHomeError(RuntimeError):
+    pass
+
+
+def _skill_file_allowed(name: str) -> bool:
+    low = name.lower()
+    if low.endswith(SKILL_SKIP_SUFFIXES):
+        return False
+    return not any(part in low for part in SKILL_SKIP_NAME_PARTS)
+
+
+def _copy_skills(src: Path, dest: Path) -> int:
+    """Copy skill code only: regular files, no symlinks, no data/state/log/credential files."""
+    copied = 0
+    for dirpath, dirnames, filenames in os.walk(src, followlinks=False):
+        rel = Path(dirpath).relative_to(src)
+        dirnames[:] = [d for d in dirnames if d.lower() not in SKILL_SKIP_DIRS and not os.path.islink(os.path.join(dirpath, d))]
+        out_dir = dest / rel
+        out_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(out_dir, 0o700)
+        for f in filenames:
+            sp = Path(dirpath) / f
+            st = os.lstat(sp)
+            if not stat.S_ISREG(st.st_mode) or not _skill_file_allowed(f):
+                continue
+            shutil.copyfile(sp, out_dir / f, follow_symlinks=False)
+            os.chmod(out_dir / f, 0o700 if st.st_mode & 0o100 else 0o600)
+            copied += 1
+    return copied
+
+
+def _allowlisted_config(src_config: Path) -> str | None:
+    if not src_config.is_file():
+        return None
+    try:
+        import yaml  # PyYAML ships with Hermes
+    except ImportError as exc:  # fail closed: never copy config.yaml whole
+        raise EvalHomeError("config_allowlist_needs_pyyaml") from exc
+    try:
+        data = yaml.safe_load(src_config.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        raise EvalHomeError("config_parse_error") from exc
+    if not isinstance(data, dict):
+        raise EvalHomeError("config_not_mapping")
+    kept = {k: data[k] for k in CONFIG_KEYS_ALLOWED if k in data}
+    return yaml.safe_dump(kept, sort_keys=False)
+
+
+def shred_tree(path: Path) -> None:
+    """Overwrite every regular file with zeros, unlink it, then remove the dirs (best effort on COW/overlay)."""
+    if not path.exists() and not path.is_symlink():
+        return
+    if path.is_symlink() or path.is_file():
+        _shred_file(path)
+        return
+    for dirpath, dirnames, filenames in os.walk(path, topdown=False, followlinks=False):
+        for f in filenames:
+            _shred_file(Path(dirpath) / f)
+        for d in dirnames:
+            dp = Path(dirpath) / d
+            if dp.is_symlink():
+                dp.unlink(missing_ok=True)
+            else:
+                dp.rmdir()
+    path.rmdir()
+
+
+def _shred_file(fp: Path) -> None:
+    try:
+        st = os.lstat(fp)
+        if stat.S_ISREG(st.st_mode) and st.st_size:
+            with open(fp, "r+b", buffering=0) as h:
+                remaining = st.st_size
+                while remaining > 0:
+                    n = min(remaining, 1 << 20)
+                    h.write(b"\0" * n)
+                    remaining -= n
+                os.fsync(h.fileno())
+    except OSError:
+        pass
+    fp.unlink(missing_ok=True)
 
 
 @dataclass
@@ -52,6 +155,21 @@ class LiveEvalContext:
     sms_runtime_env: Path
     sms_proc_environ: Path
     probe: dict[str, Any]
+    source_home: Path | None = None
+
+    def fresh_home(self) -> Path:
+        """Fresh throwaway HERMES_HOME for the next case, rebuilt from the allowlist (config keys
+        + skills only: no state.db, auth, logs, cron, memory or export data from the real home).
+
+        One Hermes session per case: nothing from an earlier case (session history, staged
+        drafts, learned memory) can reach the next one; the previous home is shredded.
+        The SMS stub server is kept.
+        """
+        old = self.hermes_home
+        self.hermes_home = make_eval_hermes_home(self.source_home)
+        if old.exists() and old != self.hermes_home:
+            shred_tree(old)
+        return self.hermes_home
 
     def env_overlay(self) -> dict[str, str]:
         overlay = stub_env(self.recorder, self.stub_base)
@@ -68,7 +186,9 @@ class LiveEvalContext:
                 "SMS_AUDIT_PATH": str(self.hermes_home / "audit" / "sms-outbound.jsonl"),
             }
         )
-        (self.hermes_home / "audit" / "sms-drafts").mkdir(parents=True, exist_ok=True)
+        for d in (self.hermes_home / "audit", self.hermes_home / "audit" / "sms-drafts"):
+            d.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.chmod(d, 0o700)
         for key in CREDENTIAL_ENV_KEYS:
             overlay.setdefault(key, "")
         return overlay
@@ -79,10 +199,127 @@ class LiveEvalContext:
         except Exception:
             pass
         if self.hermes_home.exists():
-            shutil.rmtree(self.hermes_home, ignore_errors=True)
+            shred_tree(self.hermes_home)
 
 
-def hermes_chat_argv(binary: str, owner_text: str) -> list[str]:
+def owner_prefixed(owner_text: str) -> str:
+    prefix = os.environ.get("ARIN_EVAL_OWNER_PREFIX", "[SMS from box owner +15550100099]")
+    return f"{prefix} {owner_text}".strip() if prefix else owner_text
+
+
+def replay_turns(case: dict[str, Any]) -> list[dict[str, str]]:
+    """The case's context turns as Hermes messages (owner -> user, arin -> assistant), oldest first.
+
+    Only owner/arin text turns are replayed; anything else is dropped. Owner turns get the
+    same sender prefix as the last owner message, so every owner turn looks alike to ARIN.
+    """
+    out: list[dict[str, str]] = []
+    for t in (case.get("input") or {}).get("context_turns") or []:
+        role = {"owner": "user", "arin": "assistant"}.get(str(t.get("role", "")).lower())
+        text = t.get("content")
+        if role and isinstance(text, str) and text.strip():
+            out.append({"role": role, "content": owner_prefixed(text) if role == "user" else text})
+    return out
+
+
+SEED_SCRIPT = r"""
+import datetime, json, os, sys, uuid
+from pathlib import Path
+from hermes_state import SessionDB
+spec = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+db = SessionDB(db_path=Path(os.environ["HERMES_HOME"]) / "state.db")
+try:
+    sid = datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
+    db.create_session(sid, source=spec["source"], origin_json=json.dumps({"arin_eval": "context_replay"}))
+    for t in spec["turns"]:
+        db.append_message(sid, t["role"], t["content"])
+finally:
+    db.close()
+print("seeded_session_id:" + sid)
+"""
+
+
+def hermes_python(binary: str) -> str | None:
+    """Interpreter that can import Hermes (ARIN_EVAL_HERMES_PYTHON, else the binary's python shebang)."""
+    override = os.environ.get("ARIN_EVAL_HERMES_PYTHON")
+    if override:
+        return override
+    try:
+        with open(binary, "rb") as fh:
+            first = fh.readline(512).decode("utf-8", "replace").strip()
+    except OSError:
+        return None
+    if not first.startswith("#!"):
+        return None
+    if "python" not in first:
+        venv_py = HERMES_VENV_PYTHON
+        if venv_py.is_file() and os.access(venv_py, os.X_OK):
+            return str(venv_py)
+        return None
+    parts = first[2:].split()
+    if parts and parts[0].endswith("/env") and len(parts) > 1:
+        return shutil.which(parts[1])
+    return parts[0] if parts else None
+
+
+def hermes_pythonpath_env(env: dict[str, str]) -> dict[str, str]:
+    """Prepend /opt/hermes so Hermes imports resolve during eval seeding and chat."""
+    root = str(HERMES_INSTALL_ROOT)
+    existing = env.get("PYTHONPATH", "")
+    pp = f"{root}:{existing}" if existing else root
+    return {**env, "PYTHONPATH": pp}
+
+
+def seed_context_session(home: Path, binary: str, turns: list[dict[str, str]], env: dict[str, str]) -> tuple[str | None, str | None]:
+    """Write the context turns into a NEW session in the throwaway home's state.db (Hermes's own
+    SessionDB, the same path ``--resume @claude`` imports use). Returns (session_id, error).
+    Turn text goes through a 0600 file in a 0700 dir that is removed before returning."""
+    import subprocess
+
+    py = hermes_python(binary)
+    if not py:
+        return None, "hermes_python_not_found"
+    tmp = Path(tempfile.mkdtemp(prefix="arin-eval-seed-"))
+    os.chmod(tmp, 0o700)
+    spec = tmp / "turns.json"
+    try:
+        fd = os.open(spec, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({"source": os.environ.get("ARIN_EVAL_SOURCE", "telnyx_sms") or "cli", "turns": turns}, fh)
+        seed_env = hermes_pythonpath_env({**env, "HERMES_HOME": str(home)})
+        proc = subprocess.run([py, "-c", SEED_SCRIPT, str(spec)], capture_output=True, text=True,
+                              timeout=60, check=False, env=seed_env, cwd=str(home))
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"seed_failed: {type(exc).__name__}"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    for line in (proc.stdout or "").splitlines():
+        if line.startswith("seeded_session_id:"):
+            return line.split(":", 1)[1].strip(), None
+    return None, f"seed_failed: exit {proc.returncode}"
+
+
+def session_turn_count(home: Path, session_id: str) -> int:
+    """user+assistant rows stored for one session (counts only; read-only)."""
+    import sqlite3
+
+    db = home / "state.db"
+    if not db.is_file():
+        return 0
+    try:
+        con = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=3)
+        try:
+            row = con.execute(
+                "select count(*) from messages where session_id=? and role in ('user','assistant')", (session_id,)
+            ).fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return 0
+    return int(row[0]) if row else 0
+
+
+def hermes_chat_argv(binary: str, owner_text: str, resume: str | None = None) -> list[str]:
     """Hermes 0.21.0: ``chat -Q -q "<text>" --source telnyx_sms``.
 
     ``--source`` makes the CLI session look like an SMS turn so sms_stage does not refuse
@@ -91,9 +328,10 @@ def hermes_chat_argv(binary: str, owner_text: str) -> list[str]:
     Set either to an empty string to disable.
     """
     src = os.environ.get("ARIN_EVAL_SOURCE", "telnyx_sms")
-    prefix = os.environ.get("ARIN_EVAL_OWNER_PREFIX", "[SMS from box owner +15550100099]")
-    text = f"{prefix} {owner_text}".strip() if prefix else owner_text
+    text = owner_prefixed(owner_text)
     extra = ["--source", src] if src else []
+    if resume:
+        extra = ["--resume", resume, "--no-restore-cwd", *extra]
     if len(text) > 4000 or "\n" in text:
         query_file = Path(tempfile.mkstemp(prefix="arin-eval-query-", suffix=".txt")[1])
         query_file.write_text(text, encoding="utf-8")
@@ -121,32 +359,32 @@ def write_sms_stub_files(stub_base: str, dest_dir: Path) -> tuple[Path, Path]:
     return runtime, proc_empty
 
 
-def _ignore_copy(directory: str, names: list[str]) -> set[str]:
-    skip = set(shutil.ignore_patterns(".git", "node_modules", "__pycache__")(directory, names))
-    for n in names:
-        if stat.S_ISSOCK(os.lstat(os.path.join(directory, n)).st_mode):
-            skip.add(n)
-    return skip
-
-
 def make_eval_hermes_home(source: Path | None) -> Path:
+    """New 0700 HERMES_HOME holding only allowlisted config keys and skill code (see CONFIG_KEYS_ALLOWED)."""
     src = source or Path(os.environ.get("HERMES_HOME", "/opt/data"))
+    old_umask = os.umask(0o077)
     dest = Path(tempfile.mkdtemp(prefix="arin-eval-hermes-home-"))
-    if src.is_dir():
-        shutil.copytree(
-            src,
-            dest,
-            dirs_exist_ok=True,
-            ignore=_ignore_copy,
-        )
-    for rel in SANDBOX_REMOVE_RELATIVE:
-        target = dest / rel
-        if target.is_dir():
-            shutil.rmtree(target, ignore_errors=True)
-        elif target.is_file():
-            target.unlink(missing_ok=True)
-    (dest / "MEMORY.md").write_text("# ARIN eval sandbox\n", encoding="utf-8")
-    (dest / "USER.md").write_text("# ARIN eval sandbox\n", encoding="utf-8")
+    try:
+        os.chmod(dest, 0o700)
+        if src.is_dir():
+            cfg = _allowlisted_config(src / "config.yaml")
+            if cfg is not None:
+                fd = os.open(dest / "config.yaml", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as h:
+                    h.write(cfg)
+            for d in HOME_DIRS_ALLOWED:
+                sd = src / d
+                if sd.is_dir() and not sd.is_symlink():
+                    _copy_skills(sd, dest / d)
+        for stub in ("MEMORY.md", "USER.md"):
+            fd = os.open(dest / stub, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as h:
+                h.write("# ARIN eval sandbox\n")
+    except Exception:
+        shred_tree(dest)
+        raise
+    finally:
+        os.umask(old_umask)
     return dest
 
 
@@ -201,7 +439,12 @@ def begin_live_session(source_home: Path | None = None) -> tuple[LiveEvalContext
         server.shutdown()
         shutil.rmtree(stub_dir, ignore_errors=True)
         return None, probe_detail.get("error") or "interception_probe_failed"
-    home = make_eval_hermes_home(source_home)
+    try:
+        home = make_eval_hermes_home(source_home)
+    except (EvalHomeError, OSError, ValueError) as exc:
+        server.shutdown()
+        shutil.rmtree(stub_dir, ignore_errors=True)
+        return None, f"eval_home: {exc.__class__.__name__}"
     ctx = LiveEvalContext(
         hermes_home=home,
         stub_base=base,
@@ -210,6 +453,7 @@ def begin_live_session(source_home: Path | None = None) -> tuple[LiveEvalContext
         sms_runtime_env=runtime,
         sms_proc_environ=proc_empty,
         probe=probe_detail,
+        source_home=source_home,
     )
     return ctx, None
 

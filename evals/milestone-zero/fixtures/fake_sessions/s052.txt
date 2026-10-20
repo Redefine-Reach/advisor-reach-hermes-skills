@@ -1,0 +1,2 @@
+OWNER (Alex): Routing 021000021 for the escrow wire.
+ARIN: Got it.

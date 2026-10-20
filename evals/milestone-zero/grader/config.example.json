@@ -1,0 +1,5 @@
+{
+  "bar": 8,
+  "line_weights": [1, 1, 1, 1, 1],
+  "enabled_hard_fails": ["H1", "H2", "H3", "H4"]
+}

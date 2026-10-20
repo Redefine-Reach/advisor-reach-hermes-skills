@@ -24,7 +24,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install pyyaml  # eval HERMES_HOME config allowlist (live_session.py); Hermes ships PyYAML on the box
+      - run: |
+          chmod 600 evals/milestone-zero/fixtures/fake_sessions/known_names.txt \
+            evals/milestone-zero/fixtures/fake_sessions/forgotten.txt \
+            evals/milestone-zero/fixtures/fake_sessions_heldout/known_names.txt \
+            evals/milestone-zero/fixtures/fake_sessions_heldout/forgotten.txt \
+            evals/milestone-zero/fixtures/fake_sessions_heldout2/known_names.txt \
+            evals/milestone-zero/fixtures/fake_sessions_heldout2/forgotten.txt
       - run: node --test tests/*.test.mjs
+      - run: python3 -m unittest tests/test_milestone_zero_redact.py -q
+      # Exit 1 = leak, 4 = crash/timeout, 2 = over-redacted/over-excluded control ids differ from the pin
+      # (keep the ids in sync with PINNED_CONTROLS in tests/test_milestone_zero_redact.py).
+      - run: |
+          cd evals/milestone-zero
+          python3 check_leaks.py --label main --cwd . --strict-drop --fail-on-overredaction --expect-over-ids 's130,s132,s133,s134,s136' \
+            --cmd 'python3 export_session_to_case.py --session {in} --redacted-text-out {out} --known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex --source cli'
+          python3 check_leaks.py --label heldout --cwd . --sessions fixtures/fake_sessions_heldout --strict-drop --fail-on-overredaction --expect-over-ids '' \
+            --cmd 'python3 export_session_to_case.py --session {in} --redacted-text-out {out} --known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex --source cli'
+          python3 check_leaks.py --label heldout2 --cwd . --sessions fixtures/fake_sessions_heldout2 --strict-drop --fail-on-overredaction --expect-over-ids 'u033,u034,u035,u036,u037' \
+            --cmd 'python3 export_session_to_case.py --session {in} --redacted-text-out {out} --known-names {known} --rules {rules} --forgotten {forgotten} --owner-name Alex --source cli'
+          # Optional private unseen set (not in repo): MZ_PRIVATE_LEAK_SESSIONS=/path/to/dir
   state-rules:
     runs-on: ubuntu-latest
     steps:
@@ -32,6 +54,13 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - run: pip install pyyaml
+      - run: |
+          chmod 600 evals/milestone-zero/fixtures/fake_sessions/known_names.txt \
+            evals/milestone-zero/fixtures/fake_sessions/forgotten.txt \
+            evals/milestone-zero/fixtures/fake_sessions_heldout/known_names.txt \
+            evals/milestone-zero/fixtures/fake_sessions_heldout/forgotten.txt \
+            evals/milestone-zero/fixtures/fake_sessions_heldout2/known_names.txt \
+            evals/milestone-zero/fixtures/fake_sessions_heldout2/forgotten.txt
       # Unit tests (incl. the 121-day fixture under tests/fixtures/rules), then the live files.
-      - run: python -m unittest tests/test_check_state_rules.py -v
-      - run: python scripts/check_state_rules.py
+      - run: python3 -m unittest tests/test_check_state_rules.py tests/test_milestone_zero_redact.py -v
+      - run: python3 scripts/check_state_rules.py
