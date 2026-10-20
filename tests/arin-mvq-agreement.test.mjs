@@ -80,6 +80,15 @@ except PickError:
     pass
 `));
 
+test("pick: relaxed --user-cap allows more than four picks from one user", () => py(`${ROWS}
+p = pick_cases(results, 20261020, user_cap=10)
+by = {r["case_id"]: r for r in rows}
+users = {}
+for i in p["ids"]: users[by[i]["user"]] = users.get(by[i]["user"], 0) + 1
+assert users.get("David", 0) > 4, users
+assert p["checks"]["user_cap"] == 10
+`));
+
 function syntheticRun() {
   const dir = mkdtempSync(join(tmpdir(), "mvq-agree-"));
   const res = run(["run_mvq.py", "--evidence-dir", join(dir, "ev"), "--replies-out", join(dir, "replies.jsonl")],
@@ -91,6 +100,23 @@ function syntheticRun() {
   assert.equal(pick.status, 0, pick.stdout + pick.stderr);
   return { dir, pickOut: pick.stdout };
 }
+
+test("pick_agreement CLI: non-default --user-cap is stored in picks.json", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mvq-user-cap-"));
+  const res = run(["run_mvq.py", "--evidence-dir", join(dir, "ev"), "--replies-out", join(dir, "replies.jsonl")],
+    { ARIN_MVQ_GRADER_MODEL_ROUTE: "fixture" });
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+  const pick = run(["grader/pick_agreement.py", "--results", join(dir, "ev", "mvq-results.json"),
+    "--cases", "cases_mvq_synthetic.jsonl", "--cases", "cases_mvq_jerry",
+    "--replies", join(dir, "replies.jsonl"), "--seed", "20261020", "--user-cap", "10",
+    "--keep-raw-replies", "--out-dir", join(dir, "pick")]);
+  assert.equal(pick.status, 0, pick.stdout + pick.stderr);
+  try {
+    const picks = JSON.parse(readFileSync(join(dir, "pick", "picks.json"), "utf8"));
+    assert.equal(picks.user_cap, 10);
+    assert.equal(picks.checks.user_cap, 10);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
 test("end to end: blind sheet shows input + reply, never grader scores; files 0600, dir 0700", () => {
   const { dir, pickOut } = syntheticRun();

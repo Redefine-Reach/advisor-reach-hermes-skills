@@ -286,6 +286,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--replies", type=Path, default=None,
                     help="replies JSONL from run_mvq.py --replies-out (real runs keep no reply text in results)")
     ap.add_argument("--seed", required=True, type=int)
+    ap.add_argument("--user-cap", type=int, default=USER_CAP,
+                    help=f"max picks per user (default {USER_CAP})")
     ap.add_argument("--out-dir", required=True, type=Path)
     ap.add_argument("--known-names", type=Path, default=None,
                     help="0600 known-names file (the one the export used) for the reply redaction")
@@ -299,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
         raw = args.results.read_bytes()
         results = json.loads(raw)
         try:
-            pick = pick_cases(results, args.seed)
+            pick = pick_cases(results, args.seed, user_cap=args.user_cap)
         except PickError as exc:
             print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
             return 2
@@ -347,6 +349,7 @@ def main(argv: list[str] | None = None) -> int:
         delete_by = deletion_date()
         picks = {
             "seed": args.seed,
+            **({"user_cap": args.user_cap} if args.user_cap != USER_CAP else {}),
             "results_sha256": hashlib.sha256(raw).hexdigest(),
             "grader_version": (results.get("meta") or {}).get("grader_version") if isinstance(results, dict) else None,
             "created_at": datetime.now(timezone.utc).isoformat(),

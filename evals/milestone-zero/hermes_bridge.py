@@ -17,6 +17,7 @@ from live_session import (
     LiveEvalContext,
     begin_live_session,
     hermes_chat_argv,
+    hermes_pythonpath_env,
     is_fixture_only_live,
     replay_turns,
     seed_context_session,
@@ -231,7 +232,7 @@ def run_hermes(
     rec = ctx.recorder
     # Fresh session per case: new throwaway HERMES_HOME (state.db, memory, drafts) every case.
     ctx.fresh_home()
-    env = {**os.environ, **ctx.env_overlay()}
+    env = hermes_pythonpath_env({**os.environ, **ctx.env_overlay()})
     # Replay the case's context turns before the last owner message: seed them into a new
     # Hermes session, then resume it with the last owner message. If there are context turns
     # and seeding fails, the case is not run without them (fail closed -> unscored).

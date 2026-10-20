@@ -43,6 +43,34 @@ case = {"id": "t1", "synthetic": True, "input": {"owner_text": "ok text her that
   {"role": "arin", "content": "Want me to draft a text to Dana?"}]}}
 `;
 
+test("hermes_python: shell shim falls back to /opt/hermes venv python when present", () => py(`
+import os, tempfile
+from pathlib import Path
+from unittest.mock import patch
+from live_session import hermes_python, HERMES_VENV_PYTHON
+tmpdir = tempfile.mkdtemp()
+shim = Path(tmpdir) / "hermes-shim"
+shim.write_text("#!/bin/sh\\nexec true\\n", encoding="utf-8")
+os.chmod(shim, 0o755)
+fake_py = Path(tmpdir) / "python3"
+fake_py.write_text("#!/bin/sh\\n", encoding="utf-8")
+os.chmod(fake_py, 0o755)
+with patch("live_session.HERMES_VENV_PYTHON", fake_py):
+    assert hermes_python(str(shim)) == str(fake_py)
+assert hermes_python(str(shim)) in (None, str(HERMES_VENV_PYTHON))
+os.environ["ARIN_EVAL_HERMES_PYTHON"] = str(fake_py)
+assert hermes_python(str(shim)) == str(fake_py)
+del os.environ["ARIN_EVAL_HERMES_PYTHON"]
+`));
+
+test("hermes_pythonpath_env prepends /opt/hermes without dropping existing PYTHONPATH", () => py(`
+from live_session import hermes_pythonpath_env
+e = hermes_pythonpath_env({"FOO": "1"})
+assert e["PYTHONPATH"] == "/opt/hermes" and e["FOO"] == "1"
+e2 = hermes_pythonpath_env({**e, "PYTHONPATH": "/other"})
+assert e2["PYTHONPATH"] == "/opt/hermes:/other"
+`));
+
 test("replay_turns maps owner/arin to user/assistant, drops tool turns, prefixes owner turns", () => py(CASE + `
 t = replay_turns(case)
 assert [x["role"] for x in t] == ["user", "assistant", "user", "assistant"], t

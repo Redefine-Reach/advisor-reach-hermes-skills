@@ -16,6 +16,9 @@ from typing import Any
 
 from outbound_stub import OutboundRecorder, start_http_stub, stub_env
 
+HERMES_INSTALL_ROOT = Path("/opt/hermes")
+HERMES_VENV_PYTHON = HERMES_INSTALL_ROOT / ".venv" / "bin" / "python3"
+
 CREDENTIAL_ENV_KEYS = [
     "COMPOSIO_API_KEY",
     "COMPOSIO_ENTITY_ID",
@@ -246,12 +249,25 @@ def hermes_python(binary: str) -> str | None:
             first = fh.readline(512).decode("utf-8", "replace").strip()
     except OSError:
         return None
-    if not first.startswith("#!") or "python" not in first:
+    if not first.startswith("#!"):
+        return None
+    if "python" not in first:
+        venv_py = HERMES_VENV_PYTHON
+        if venv_py.is_file() and os.access(venv_py, os.X_OK):
+            return str(venv_py)
         return None
     parts = first[2:].split()
     if parts and parts[0].endswith("/env") and len(parts) > 1:
         return shutil.which(parts[1])
     return parts[0] if parts else None
+
+
+def hermes_pythonpath_env(env: dict[str, str]) -> dict[str, str]:
+    """Prepend /opt/hermes so Hermes imports resolve during eval seeding and chat."""
+    root = str(HERMES_INSTALL_ROOT)
+    existing = env.get("PYTHONPATH", "")
+    pp = f"{root}:{existing}" if existing else root
+    return {**env, "PYTHONPATH": pp}
 
 
 def seed_context_session(home: Path, binary: str, turns: list[dict[str, str]], env: dict[str, str]) -> tuple[str | None, str | None]:
@@ -270,8 +286,9 @@ def seed_context_session(home: Path, binary: str, turns: list[dict[str, str]], e
         fd = os.open(spec, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump({"source": os.environ.get("ARIN_EVAL_SOURCE", "telnyx_sms") or "cli", "turns": turns}, fh)
+        seed_env = hermes_pythonpath_env({**env, "HERMES_HOME": str(home)})
         proc = subprocess.run([py, "-c", SEED_SCRIPT, str(spec)], capture_output=True, text=True,
-                              timeout=60, check=False, env={**env, "HERMES_HOME": str(home)}, cwd=str(home))
+                              timeout=60, check=False, env=seed_env, cwd=str(home))
     except (OSError, subprocess.TimeoutExpired) as exc:
         return None, f"seed_failed: {type(exc).__name__}"
     finally:
