@@ -62,5 +62,5 @@ jobs:
             evals/milestone-zero/fixtures/fake_sessions_heldout2/known_names.txt \
             evals/milestone-zero/fixtures/fake_sessions_heldout2/forgotten.txt
       # Unit tests (incl. the 121-day fixture under tests/fixtures/rules), then the live files.
-      - run: python3 -m unittest tests/test_check_state_rules.py tests/test_milestone_zero_redact.py -v
+      - run: python3 -m unittest tests/test_check_state_rules.py tests/test_milestone_zero_redact.py tests/test_milestone_zero_sms_stage_stub.py -v
       - run: python3 scripts/check_state_rules.py
