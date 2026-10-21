@@ -485,13 +485,15 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
 
     known = {name.lower() for name in ctx.known_names}
 
-    def candidate_allowed(name: str) -> bool:
+    def candidate_allowed(name: str, *, require_capitals: bool = True) -> bool:
+        if _RES_CLIENT_TAG.fullmatch(name.upper()):
+            return False
         if any(part.lower() in IGNORED_KNOWN_NAME_WORDS for part in name.split()):
             return False
-        return name.lower() not in known or known_name_match_allowed(name, name)
+        return not require_capitals or name.lower() not in known or known_name_match_allowed(name, name)
 
-    def mapped_candidate(name: str) -> str:
-        if not candidate_allowed(name):
+    def mapped_candidate(name: str, *, require_capitals: bool = True) -> str:
+        if not candidate_allowed(name, require_capitals=require_capitals):
             return name
         ctx.bump("name")
         return ph(name)
@@ -516,7 +518,10 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
 
     def replace_text_target(m: re.Match[str]) -> str:
         first, last = m.group(1), m.group(2)
-        if not candidate_allowed(first):
+        # An earlier pass may have redacted one target already; still inspect
+        # its lowercase partner without assigning another name to CLIENT_n.
+        first_redacted = bool(_RES_CLIENT_TAG.fullmatch(first.upper()))
+        if not first_redacted and not candidate_allowed(first, require_capitals=False):
             return m.group(0)
         # A weekday/month word after "text" followed by a capitalized surname is a person
         # ("text Sunday Reyes", "text April Moss"), so it is not kept as a date word.
@@ -524,12 +529,16 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
             first.lower() in _DATE_WORDS and first[0].isupper() and bool(last) and last[0].isupper()
             and last.lower() not in allow and last.lower() not in _TEXT_TARGET_SKIP
         )
-        if (first.lower() in allow or first.lower() in _TEXT_TARGET_SKIP) and not date_person:
+        if not first_redacted and (first.lower() in allow or first.lower() in _TEXT_TARGET_SKIP) and not date_person and first.lower() not in known:
             return m.group(0)
-        ctx.bump("name")
-        out_s = m.group(0).replace(first, ph(first), 1)
-        if last and candidate_allowed(last) and last.lower() not in allow and last.lower() not in _TEXT_TARGET_SKIP and (
-            last[0].isupper() or last.lower() not in _NOT_SURNAME
+        out_s = m.group(0)
+        if not first_redacted:
+            ctx.bump("name")
+            out_s = out_s.replace(first, ph(first), 1)
+        if last and candidate_allowed(last, require_capitals=False) and (
+            last.lower() in known or (last.lower() not in allow and last.lower() not in _TEXT_TARGET_SKIP and (
+                last[0].isupper() or last.lower() not in _NOT_SURNAME
+            ))
         ):
             ctx.bump("name")
             out_s = out_s[: out_s.rfind(last)] + ph(last) + out_s[out_s.rfind(last) + len(last):]
@@ -539,13 +548,14 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
     # optional surname (capitalized, or lowercase unless it is an ordinary word). Each token gets its own placeholder, so the cross-turn
     # pass replaces the name alone later ("<Name> confirmed Friday").
     out = re.sub(
-        r"\b(?i:text)\s+([A-Za-z][a-z]+)(?:\s+([A-Za-z][a-z]+)\b(?!'))?",
+        r"\b(?i:text)\s+([A-Za-z][a-z]+|CLIENT_\d+)\b(?:\s+([A-Za-z][a-z]+)\b(?!'))?",
         replace_text_target,
         out,
     )
     out = re.sub(
-        r"\btell\s+([a-z]{2,})\s+and\s+([a-z]{2,})",
-        lambda m: f"tell {mapped_candidate(m.group(1))} and {mapped_candidate(m.group(2))}",
+        r"\btell\s+([a-z]{2,}|CLIENT_\d+)\s+and\s+([a-z]{2,}|CLIENT_\d+)\b",
+        lambda m: (f"tell {mapped_candidate(m.group(1), require_capitals=False)} and "
+                   f"{mapped_candidate(m.group(2), require_capitals=False)}"),
         out,
         flags=re.I,
     )

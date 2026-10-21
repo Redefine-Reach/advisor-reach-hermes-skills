@@ -135,12 +135,67 @@ class KnownNameFiltering(unittest.TestCase):
 
     def test_candidate_shapes_respect_common_casing_and_schema_exclusions(self) -> None:
         known = ["Will", "Price", *IGNORED_KNOWN_NAME_WORDS]
-        for text in ("the text will arrive tomorrow", "tell will and price", "tell user and assistant",
-                     "Mr. User replied", "User A. replied"):
+        for text in ("tell user and assistant", "Mr. User replied", "User A. replied"):
             with self.subTest(text=text):
                 ctx = RedactionContext(known_names=known)
                 self.assertEqual(redact_fail_closed(text, ctx)[0], text)
                 self.assertEqual(ctx.class_counts.get("name", 0), 0)
+
+    def test_lowercase_text_and_tell_targets_match_all_synthetic_shapes(self) -> None:
+        from export_session_to_case import apply_name_map
+        from redact import redact_object
+        fixture = json.loads((ROOT / "tests" / "fixtures" / "milestone-zero" / "known-name-target-shapes.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(fixture["target_shapes"]), 8)
+        for text in fixture["target_shapes"]:
+            with self.subTest(text=text):
+                ctx = RedactionContext(known_names=fixture["known_names"])
+                redacted, _, ok, _ = redact_object({"messages": [_msg("user", text)]}, ctx)
+                self.assertTrue(ok)
+                result = apply_name_map(redacted, ctx._name_map)["messages"][0]["content"]
+                self.assertIn("CLIENT_", result)
+                self.assertNotRegex(result.lower(), r"\b(?:hope|price)\b")
+
+    def test_dictionary_full_name_exact_reply_positions(self) -> None:
+        import redact
+        from export_session_to_case import apply_name_map
+        fixture = json.loads((ROOT / "tests" / "fixtures" / "milestone-zero" / "known-name-target-shapes.json").read_text(encoding="utf-8"))
+        self.assertTrue(all(part.lower() in redact._COMMON_WORDS for part in fixture["full_name"].split()))
+        for reply in fixture["full_name_replies"]:
+            with self.subTest(reply=reply):
+                ctx = RedactionContext(known_names=[fixture["full_name"]])
+                redacted, _, ok, _ = redact.redact_object({"messages": [_msg("assistant", reply)]}, ctx)
+                self.assertTrue(ok)
+                result = apply_name_map(redacted, ctx._name_map)["messages"][0]["content"]
+                self.assertIn("CLIENT_", result)
+                self.assertNotIn(fixture["full_name"].lower(), result.lower())
+
+    def test_documented_known_misses_are_preserved(self) -> None:
+        for text in ("call hope", "with hope", "Mr. Arin"):
+            with self.subTest(text=text):
+                self.assertEqual(redact_fail_closed(text, RedactionContext(known_names=["Hope", "Arin"]))[0], text)
+
+    def test_text_and_tell_skip_complete_schema_and_source_words(self) -> None:
+        for word in sorted(IGNORED_KNOWN_NAME_WORDS):
+            for text in (f"text {word} about the offer", f"tell user and {word}", f"tell {word} and user"):
+                with self.subTest(text=text):
+                    self.assertEqual(redact_fail_closed(text, RedactionContext(known_names=[word]))[0], text)
+
+    def test_text_known_names_override_ordinary_word_stops(self) -> None:
+        for text in ("text may about the offer", "text hope will about the offer"):
+            with self.subTest(text=text):
+                result = redact_fail_closed(text, RedactionContext(known_names=["Hope", "May", "Will"]))[0]
+                self.assertNotRegex(result.lower(), r"\b(?:hope|may|will)\b")
+
+    def test_target_case_combinations_keep_redacting_the_other_recipient(self) -> None:
+        for first in ("hope", "Hope", "HOPE"):
+            for last in ("price", "Price", "PRICE"):
+                for text in (f"text {first} {last} about the offer", f"tell {first} and {last} about the offer"):
+                    with self.subTest(text=text):
+                        ctx = RedactionContext(known_names=["Hope", "Price"])
+                        result = redact_fail_closed(text, ctx)[0]
+                        self.assertNotRegex(result.lower(), r"\b(?:hope|price)\b")
+                        self.assertEqual(set(ctx._name_map), {"hope", "price"})
+                        self.assertEqual(ctx.class_counts.get("name"), 2)
 
 
 class ExportIntegration(unittest.TestCase):
@@ -686,6 +741,20 @@ class ExportStructureNeverRedacted(_ExportHelpers, unittest.TestCase):
                 context = "\n".join(t["content"] for t in case["input"]["context_turns"])
                 self.assertIn("CLIENT_", context)
                 self.assertNotIn(fixture["name_fragment"], context.lower())
+
+    def test_text_tell_and_full_name_positions_through_exporter(self) -> None:
+        fixture = json.loads((ROOT / "tests" / "fixtures" / "milestone-zero" / "known-name-target-shapes.json").read_text(encoding="utf-8"))
+        names = self._names_file(tuple(fixture["known_names"] + [fixture["full_name"]]))
+        for owner in fixture["target_shapes"]:
+            with self.subTest(owner=owner):
+                proc, case = self._export_names({"messages": [_msg("user", owner), _msg("assistant", "the draft is ready")]}, names)
+                self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+                self.assertNotRegex(case["input"]["owner_text"].lower(), r"\b(?:hope|price)\b")
+        for reply in fixture["full_name_replies"]:
+            with self.subTest(reply=reply):
+                proc, case = self._export_names({"messages": [_msg("user", "check the listing"), _msg("assistant", reply)]}, names)
+                self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+                self.assertNotIn(fixture["full_name"].lower(), case["fixture"]["assistant_text"].lower())
 
     def test_schema_common_and_source_tokens_dropped_with_count_only(self) -> None:
         ignored = tuple(word.title() for word in sorted(IGNORED_KNOWN_NAME_WORDS))
