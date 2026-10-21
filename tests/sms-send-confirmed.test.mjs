@@ -167,7 +167,11 @@ test("skill routes third-party SMS through confirm, the pinned adapter, and the 
   assert.match(skill, /refused_multi/);
   assert.match(skill, /\/opt\/data\/audit\/sms-outbound\.jsonl/);
   assert.match(skill, /\/opt\/data\/audit\/sms-opt-out\.txt/);
-  assert.match(skill, /Reply SEND to send, DROP to discard/);
+  assert.match(skill, /Nothing goes out until you reply SEND\./);
+  assert.match(skill, /Reply DROP to discard/);
+  assert.doesNotMatch(skill, /recipient may receive it/);
+  assert.doesNotMatch(skill, /and today's date/);
+  assert.match(skill, /do not pass a date/);
   assert.match(skill, /`DROP`, `NO`/);
   assert.match(skill, /STOP, STOPALL, STOP ALL, UNSUBSCRIBE/);
   assert.match(skill, /CANCEL, END, and QUIT/);
@@ -273,8 +277,10 @@ test("stage shows attestation and does not send", () => {
   assert.equal(payload.from, FROM);
   assert.equal(payload.dest, DEST);
   assert.match(payload.attestation, /from ARIN's number \(\+19283563339\) to \+15555550199/);
-  assert.match(payload.attestation, /Reply SEND to confirm you authorize this one message/);
-  assert.match(payload.attestation, /Reply SEND to send, DROP to discard\./);
+  assert.match(payload.attestation, /^Nothing goes out until you reply SEND\.$/m);
+  assert.match(payload.attestation, /^Reply DROP to discard\.$/m);
+  assert.doesNotMatch(payload.attestation, /recipient may receive it/);
+  assert.doesNotMatch(payload.attestation, /authorize this one message/);
   assert.match(payload.attestation, /The recipient can still opt out with their carrier\./);
   assert.doesNotMatch(payload.attestation, /to cancel/i);
   assert.doesNotMatch(payload.attestation, /\bSTOP\b/);
@@ -936,7 +942,7 @@ test("stage puts the Why line in the attestation and not in the client body", ()
   assert.match(parts[0], /from ARIN's number/);
   assert.equal(parts[1], BODY);
   assert.equal(parts[2], line);
-  assert.match(parts[3], /^Reply SEND to confirm/);
+  assert.equal(parts[3], "Nothing goes out until you reply SEND.");
   const draft = JSON.parse(readFileSync(join(dir, "drafts", `${staged.payload.draft_id}.json`), "utf8"));
   assert.equal(draft.body, BODY);
   assert.equal(draft.body_hash, createHash("sha256").update(BODY).digest("hex"));
@@ -1601,7 +1607,7 @@ test("QA run 7 AC9: owner_text Why says 'from your own text' once, even if the m
   const twice = stageWith("Hi Sam, happy birthday!", "It's Sam's birthday today, from your own text.");
   assert.equal(twice.payload.why_line, "Why: It's Sam's birthday today, from your own text.");
   assert.equal(twice.payload.why_line.split("from your own text").length, 2);
-  assert.match(r.payload.attestation, /Reply SEND to send, DROP to discard\./);
+  assert.match(r.payload.attestation, /^Nothing goes out until you reply SEND\.$/m);
   assert.ok(r.payload.why_line.length <= 120);
   // Non-owner kinds keep their own label and still carry a real date.
   const fub = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Dana, the offer is in.",
@@ -1796,7 +1802,7 @@ test("SKILL.md: any missing detail gets a placeholder, restage after the value, 
   assert.match(skill, /refused_unfilled_placeholder/);
   assert.match(skill, /refused_no_recipient/);
   assert.match(skill, /Who should I text/);
-  assert.match(skill, /Reply SEND to send, DROP to discard/);
+  assert.match(skill, /Nothing goes out until you reply SEND\./);
 });
 
 test("SKILL.md cancel script example runs with --actor", () => {
@@ -1951,8 +1957,8 @@ test("RUN 10 item 4 rule: real named recipient with [PRICE] stages, Missing line
   const lines = r.payload.attestation.split("\n");
   const whyIdx = lines.findIndex((l) => l.startsWith("Why:"));
   const missingIdx = lines.findIndex((l) => l.startsWith("Missing:"));
-  const authIdx = lines.findIndex((l) => l.startsWith("Reply SEND to confirm"));
-  const dropIdx = lines.findIndex((l) => l === "Reply SEND to send, DROP to discard.");
+  const authIdx = lines.findIndex((l) => l === "Nothing goes out until you reply SEND.");
+  const dropIdx = lines.findIndex((l) => l === "Reply DROP to discard.");
   const optIdx = lines.findIndex((l) => l === "The recipient can still opt out with their carrier.");
   assert.ok(whyIdx > 1 && missingIdx > whyIdx && authIdx > missingIdx && dropIdx > authIdx && optIdx === lines.length - 1);
   assert.match(r.payload.attestation, /The recipient can still opt out with their carrier\./);
@@ -2037,6 +2043,6 @@ test("attestation with multiple content placeholders lists Missing once before s
     r.payload.missing_line,
     /^Missing: date and time\. Reply with both to restage, or DROP to discard\.$/,
   );
-  assert.ok(r.payload.attestation.indexOf(r.payload.missing_line) < r.payload.attestation.indexOf("Reply SEND to confirm"));
+  assert.ok(r.payload.attestation.indexOf(r.payload.missing_line) < r.payload.attestation.indexOf("Nothing goes out until you reply SEND."));
   assert.ok(r.payload.attestation.endsWith("The recipient can still opt out with their carrier."));
 });

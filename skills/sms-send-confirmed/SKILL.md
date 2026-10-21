@@ -44,7 +44,7 @@ It runs this skill's script with the same gates.
   body=<text>, why=<one line>, source_kind=<kind>, source_date=<YYYY-MM-DD>,
   source_name=<only if required>, replaces=<draft_id only when re-staging after
   an edit>)`. Follow the Why line rules below. When the owner dictated the text,
-  use `source_kind="owner_text"` and today's date.
+  use `source_kind="owner_text"` and do not pass a date.
 - Show the tool's read-back verbatim and stop. Do not send in this turn.
 - When the owner's next text is exactly `SEND` or `/approve`, call
   `sms_stage(action="send", draft_id=<id>)`. The destination and body come from the
@@ -187,7 +187,8 @@ Every `stage` needs why this text, why now, and where you read that. If
   is NEVER a reason to ask instead of staging: put a bracketed UPPERCASE placeholder in the body
   ("Hi Dana, the new price for 12 Oak St is [PRICE]."; also [DATE], [TIME], [ADDRESS]).
   Never add facts the owner did not give. The read-back order is: body, Why line,
-  `Missing: ...` (when placeholders remain), then the usual authorization lines and
+  `Missing: ...` (when placeholders remain), `Nothing goes out until you reply SEND.`,
+  `Reply DROP to discard.`, and
   `The recipient can still opt out with their carrier.` last. The Missing line says
   `Reply with it to restage, or DROP to discard.` (use `both` / `them` when several
   details are missing). It never invites SEND while placeholders remain. Ask for missing content
@@ -246,7 +247,7 @@ email outreach: the irreversible step needs its own go-ahead.
 ## Turn 2 — SEND, edit, or DROP
 
 Wait for the owner's next message. The attestation already tells them:
-Reply SEND to send, DROP to discard.
+Nothing goes out until you reply SEND.
 
 Before you act, call `learning_loop` op `next` with this draft's `kind` so
 style notes apply. Do not announce that you recorded anything.
@@ -283,8 +284,10 @@ style notes apply. Do not announce that you recorded anything.
 Do not ask the owner to answer with a carrier opt-out keyword. `DROP`, `NO`,
 and `skip` drop a staged draft.
 
-The read-back footer is unchanged: Why line, then SEND/DROP, then the carrier
-opt-out line last. Never remove the SEND demand because of a learned note.
+The read-back footer is the Why line, then `Nothing goes out until you reply SEND.`,
+then `Reply DROP to discard.`, then the carrier opt-out line last. Never remove
+the SEND line because of a learned note. Do not add a consent question, and do
+not ask the owner to text the buyer or lead.
 
 `--attest yes` is allowed only after you displayed the staged attestation.
 If you did not, stop. Do not pass `--attest yes` to get the script to send.
