@@ -491,6 +491,31 @@ def main() -> int:
 
     transcript = blob
 
+    if append_jsonl:
+        session_index = derive_session_index(args.id or "mz", args.session_index)
+        case = build_case(
+            case_id=args.id or "mz",
+            suite=args.suite,
+            category=args.category or "unlabeled",
+            box=args.box,
+            redacted=redacted,
+            session_index=session_index,
+            counts=dict(ctx.class_counts),
+            context_turns=args.context_turns,
+            source=src,
+        )
+        empty = empty_case_parts(case)
+        if empty:
+            # Check before creating any output, including the optional transcript.
+            print(f"export_blocked: empty_case id={case['id']} parts={','.join(empty)}", file=sys.stderr)
+            return EXIT_BLOCKED
+        kept = case_text_blob(case)
+        residue3 = [r for r in dict.fromkeys(scan_residue_secondary(kept)) if r not in ("phone", "name")]
+        if residue3 or post_export_safety_flags(kept):
+            log_counts(ctx.class_counts)
+            print(f"export_blocked: residue={','.join(residue3) or 'safety_flag'}", file=sys.stderr)
+            return EXIT_BLOCKED
+
     scratch_parent = (
         dest.parent
         if append_jsonl
@@ -518,30 +543,6 @@ def main() -> int:
                 print(f"export_blocked: loose_permissions_after_write paths={len(post_t)}", file=sys.stderr)
                 return EXIT_BLOCKED
         if append_jsonl:
-            session_index = derive_session_index(args.id or "mz", args.session_index)
-            case = build_case(
-                case_id=args.id or "mz",
-                suite=args.suite,
-                category=args.category or "unlabeled",
-                box=args.box,
-                redacted=redacted,
-                session_index=session_index,
-                counts=dict(ctx.class_counts),
-                context_turns=args.context_turns,
-                source=src,
-            )
-            empty = empty_case_parts(case)
-            if empty:
-                # A case without the owner message or ARIN's reply is useless and usually means the
-                # redaction ate the structure (Keel void run 1, Oct 19). Fail, never write it.
-                print(f"export_blocked: empty_case id={case['id']} parts={','.join(empty)}", file=sys.stderr)
-                return EXIT_BLOCKED
-            kept = case_text_blob(case)
-            residue3 = [r for r in dict.fromkeys(scan_residue_secondary(kept)) if r not in ("phone", "name")]
-            if residue3 or post_export_safety_flags(kept):
-                log_counts(ctx.class_counts)
-                print(f"export_blocked: residue={','.join(residue3) or 'safety_flag'}", file=sys.stderr)
-                return EXIT_BLOCKED
             line = json.dumps(case, ensure_ascii=False) + "\n"
             secure_mkdir(dest.parent)
             pre = [p for p, want in ((dest.parent, 0o700), (dest, 0o600)) if p.exists() and loose_mode(p, want)]

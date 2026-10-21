@@ -348,7 +348,16 @@ def load_known_names(path: Path | None) -> list[str]:
         raise RedactionError(f"known_names_file_mode:{mode:o}")
     lines = path.read_text(encoding="utf-8").splitlines()
     raw = [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
-    return expand_known_names(raw)
+    candidates = expand_known_names(raw)
+    ignored = _COMMON_WORDS | STRUCTURAL_ROLE_VALUES | {
+        "messages", "message", "role", "content", "source",
+        "telnyx_sms", "cli", "api_server", "cron", "telegram", "webhook",
+    }
+    # Drop a compound candidate too if one of its parts is ordinary/schema text;
+    # expand_known_names still preserves any other, potentially identifying parts.
+    names = [name for name in candidates if not any(part.lower() in ignored for part in name.split())]
+    print(f"known_names_dropped: count={len(candidates) - len(names)}", file=sys.stderr)
+    return names
 
 
 def load_forgotten(path: Path | None) -> list[str]:

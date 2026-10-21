@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -51,6 +52,30 @@ class VaultRegression(unittest.TestCase):
         session = {"owner_text": "she has cancer and needs gentle wording"}
         reason = session_drop_reason(session, ExclusionRules(), [])
         self.assertEqual(reason, "health")
+
+
+class KnownNameFiltering(unittest.TestCase):
+    def test_all_schema_sources_and_common_words_are_ignored(self) -> None:
+        import redact
+        ignored = redact._COMMON_WORDS | redact.STRUCTURAL_ROLE_VALUES | {
+            "messages", "message", "role", "content", "source",
+            "telnyx_sms", "cli", "api_server", "cron", "telegram", "webhook",
+        }
+        path = mock.Mock(spec=Path)
+        path.stat.return_value.st_mode = 0o600
+        path.read_text.return_value = "\n".join(word.upper() for word in sorted(ignored))
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            self.assertEqual(redact.load_known_names(path), [])
+        self.assertEqual(log.getvalue(), f"known_names_dropped: count={len(ignored)}\n")
+
+    def test_compound_candidate_keeps_identifying_parts(self) -> None:
+        from redact import load_known_names
+        path = mock.Mock(spec=Path)
+        path.stat.return_value.st_mode = 0o600
+        path.read_text.return_value = "Content Quillfeather\nZorblax Quillfeather\n"
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            self.assertEqual(load_known_names(path), ["Quillfeather", "Zorblax Quillfeather", "Zorblax"])
+        self.assertEqual(log.getvalue(), "known_names_dropped: count=2\n")
 
 
 class ExportIntegration(unittest.TestCase):
@@ -574,14 +599,66 @@ class ExportStructureNeverRedacted(_ExportHelpers, unittest.TestCase):
         self.assertTrue(case["export_meta"]["recorded_reply_present"])
         self.assertNotIn("Dana", json.dumps(case))
 
-    def test_structural_tokens_redacted_as_words_inside_text(self) -> None:
-        # The same tokens are still names when they appear inside a message (over-redaction is safe).
+    def test_structural_tokens_ignored_as_words_inside_text(self) -> None:
         names = self._names_file(self.STRUCT_TOKENS)
-        sess = {"messages": [_msg("user", "forward the user content to me"), _msg("assistant", "Sent the messages role list.")]}
+        owner = "forward the user content to me"
+        reply = "Sent the messages role list."
+        sess = {"messages": [_msg("user", owner), _msg("assistant", reply)]}
         proc, case = self._export_names(sess, names)
         self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
-        self.assertNotRegex(case["input"]["owner_text"], r"\b(user|content)\b")
-        self.assertNotRegex(case["fixture"]["assistant_text"], r"\b(messages|role)\b")
+        self.assertEqual(case["input"]["owner_text"], owner)
+        self.assertEqual(case["fixture"]["assistant_text"], reply)
+
+    def test_schema_common_and_source_tokens_dropped_with_count_only(self) -> None:
+        ignored = ("Messages", "MESSAGE", "ROLE", "Content", "Source", "USER", "Assistant", "OWNER", "ARIN",
+                   "human", "agent", "tool", "system", "function", "developer",
+                   "telnyx_sms", "CLI", "api_server", "cron", "telegram", "webhook", "listing")
+        names = self._names_file(ignored + ("Zorblax Quillfeather", "Content Quillfeather"))
+        proc, case = self._export_names(
+            {"source": "cli", "messages": [_msg("user", "check the user content for the listing"),
+                                            _msg("assistant", "the messages source is cli; zorblax quillfeather confirmed")]},
+            names,
+        )
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        self.assertEqual(case["input"]["owner_text"], "check the user content for the listing")
+        self.assertIn("the messages source is cli;", case["fixture"]["assistant_text"])
+        self.assertNotRegex(json.dumps(case).lower(), r"zorblax|quillfeather")
+        self.assertIn(f"known_names_dropped: count={len(ignored) + 1}", proc.stderr)
+        for word in (*ignored, "Zorblax", "Quillfeather"):
+            self.assertNotIn(word.lower(), proc.stderr.lower() + proc.stdout.lower())
+
+    def test_empty_case_with_transcript_writes_nothing(self) -> None:
+        for part, messages in (
+            ("owner", [_msg("user", "  "), _msg("assistant", "noted")]),
+            ("reply", [_msg("user", "status?"), _msg("assistant", "  ")]),
+        ):
+            for existing in (False, True):
+                with self.subTest(part=part, existing=existing), tempfile.TemporaryDirectory() as tmp:
+                    base = Path(tmp)
+                    os.chmod(base, 0o700)
+                    sess = base / "session.json"
+                    sess.write_text(json.dumps({"messages": messages}), encoding="utf-8")
+                    out_dir = base / "redacted"
+                    outputs = [out_dir / "cases.jsonl", out_dir / "text.txt", out_dir / "manifest.json"]
+                    if existing:
+                        out_dir.mkdir(mode=0o700)
+                        for path in outputs:
+                            path.write_text("unchanged\n", encoding="utf-8")
+                            os.chmod(path, 0o600)
+                    proc = subprocess.run(
+                        [sys.executable, str(MZ / "export_session_to_case.py"), "--session", str(sess),
+                         "--id", "syn-empty", "--source", "cli", "--known-names", str(FIX_MAIN / "known_names.txt"),
+                         "--out", str(outputs[0]), "--redacted-text-out", str(outputs[1]), "--manifest", str(outputs[2])],
+                        capture_output=True, text=True, cwd=str(MZ),
+                    )
+                    self.assertEqual(proc.returncode, EXIT_BLOCKED, proc.stderr)
+                    self.assertIn(f"empty_case id=syn-empty parts={part}", proc.stderr)
+                    self.assertEqual(proc.stdout, "")
+                    if existing:
+                        self.assertEqual([p.read_text(encoding="utf-8") for p in outputs], ["unchanged\n"] * 3)
+                        self.assertEqual(sorted(p.name for p in out_dir.iterdir()), sorted(p.name for p in outputs))
+                    else:
+                        self.assertFalse(out_dir.exists())
 
     def test_keys_never_renamed_role_values_kept(self) -> None:
         from redact import RedactionContext, redact_object
