@@ -1,0 +1,28 @@
+[
+  {
+    "id": "synthetic-common-single",
+    "known_names": ["Will", "Price"],
+    "messages": [
+      {"role": "user", "content": "check the listing"},
+      {"role": "assistant", "content": "Will's draft is ready."},
+      {"role": "user", "content": "we will review the price tomorrow"},
+      {"role": "assistant", "content": "the draft is ready"}
+    ],
+    "owner_text": "we will review the price tomorrow",
+    "assistant_text": "the draft is ready",
+    "name_fragment": "will"
+  },
+  {
+    "id": "synthetic-common-full",
+    "known_names": ["Will Price", "Will", "Price"],
+    "messages": [
+      {"role": "user", "content": "check the listing"},
+      {"role": "assistant", "content": "will price replied about the draft"},
+      {"role": "user", "content": "we will review the price tomorrow"},
+      {"role": "assistant", "content": "the listing price is ready"}
+    ],
+    "owner_text": "we will review the price tomorrow",
+    "assistant_text": "the listing price is ready",
+    "name_fragment": "will price"
+  }
+]

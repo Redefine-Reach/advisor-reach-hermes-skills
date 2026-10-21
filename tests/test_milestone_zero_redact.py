@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -22,6 +23,7 @@ from redact import (  # noqa: E402
     EXIT_BLOCKED,
     EXIT_EXCLUDED,
     EXIT_OK,
+    IGNORED_KNOWN_NAME_WORDS,
     REDACTION_VERSION,
     RedactionContext,
     redact_fail_closed,
@@ -51,6 +53,149 @@ class VaultRegression(unittest.TestCase):
         session = {"owner_text": "she has cancer and needs gentle wording"}
         reason = session_drop_reason(session, ExclusionRules(), [])
         self.assertEqual(reason, "health")
+
+
+class KnownNameFiltering(unittest.TestCase):
+    def test_all_schema_and_source_words_are_ignored(self) -> None:
+        from redact import load_known_names
+        ignored = IGNORED_KNOWN_NAME_WORDS
+        path = mock.Mock(spec=Path)
+        path.stat.return_value.st_mode = 0o600
+        path.read_text.return_value = "\n".join(word.upper() for word in sorted(ignored))
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            self.assertEqual(load_known_names(path), [])
+        self.assertEqual(log.getvalue(), f"known_names_dropped: count={len(ignored)}\n")
+
+    def test_compound_candidate_keeps_identifying_parts(self) -> None:
+        from redact import load_known_names
+        path = mock.Mock(spec=Path)
+        path.stat.return_value.st_mode = 0o600
+        path.read_text.return_value = "Content Quillfeather\nZorblax Quillfeather\n"
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            self.assertEqual(load_known_names(path), ["Quillfeather", "Zorblax Quillfeather", "Zorblax"])
+        self.assertEqual(log.getvalue(), "known_names_dropped: count=2\n")
+
+    def test_common_word_names_survive_loading_and_require_capitals(self) -> None:
+        from redact import load_known_names
+        path = mock.Mock(spec=Path)
+        path.stat.return_value.st_mode = 0o600
+        path.read_text.return_value = "Will\nPrice\nWill Price\n"
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            known = load_known_names(path)
+        self.assertEqual(known, ["Will", "Price", "Will Price"])
+        self.assertEqual(log.getvalue(), "known_names_dropped: count=0\n")
+        for name in ("Will", "Price"):
+            for text in (f"{name} replied.", f"{name}'s draft is ready.", f"{name}\u2019s draft is ready.",
+                         f"{name.upper()} confirmed.", f"{name.upper()}'s draft is ready."):
+                with self.subTest(name=name, text=text):
+                    cleaned, _, ok, _ = redact_fail_closed(text, RedactionContext(known_names=[name]))
+                    self.assertTrue(ok)
+                    self.assertNotIn(name.lower(), cleaned.lower())
+        for text in ("we will check the price", "we will review the listing"):
+            self.assertEqual(redact_fail_closed(text, RedactionContext(known_names=known))[0], text)
+
+    def test_common_word_full_names_match_in_any_case(self) -> None:
+        known = ["Will", "Price", "Will Price"]
+        for full in ("Will Price", "WILL PRICE", "will price", "wIlL pRiCe"):
+            for text in (f"{full} replied.", f"{full}'s draft is ready."):
+                with self.subTest(text=text):
+                    cleaned, _, ok, _ = redact_fail_closed(text, RedactionContext(known_names=known))
+                    self.assertTrue(ok)
+                    self.assertNotIn("will", cleaned.lower())
+                    self.assertNotIn("price", cleaned.lower())
+
+    def test_name_map_preserves_lowercase_common_context(self) -> None:
+        from export_session_to_case import apply_name_map, build_case, empty_case_parts
+        from redact import redact_object
+        cases = json.loads((ROOT / "tests" / "fixtures" / "milestone-zero" / "known-common-contexts.json").read_text(encoding="utf-8"))
+        for fixture in cases:
+            with self.subTest(case=fixture["id"]):
+                ctx = RedactionContext(known_names=fixture["known_names"])
+                redacted, _, ok, _ = redact_object({"messages": fixture["messages"]}, ctx)
+                self.assertTrue(ok)
+                redacted = apply_name_map(redacted, ctx._name_map)
+                case = build_case(case_id=fixture["id"], suite="regression", category="synthetic",
+                                  box="synthetic", redacted=redacted, session_index="synthetic", counts=ctx.class_counts)
+                self.assertEqual(empty_case_parts(case), [])
+                self.assertEqual(case["input"]["owner_text"], fixture["owner_text"])
+                self.assertEqual(case["fixture"]["assistant_text"], fixture["assistant_text"])
+                context = "\n".join(t["content"] for t in case["input"]["context_turns"])
+                self.assertIn("CLIENT_", context)
+                self.assertNotIn(fixture["name_fragment"], context.lower())
+
+    def test_ignored_words_never_become_names_even_when_capitalized(self) -> None:
+        from export_session_to_case import apply_name_map
+        for word in sorted(IGNORED_KNOWN_NAME_WORDS):
+            for value in (word.title(), word.upper(), word.lower()):
+                with self.subTest(word=word, value=value):
+                    ctx = RedactionContext(known_names=[word])
+                    text = f"the {value} replied"
+                    self.assertEqual(redact_fail_closed(text, ctx)[0], text)
+                    self.assertEqual(apply_name_map(text, {word: "CLIENT_1"}), text)
+
+    def test_candidate_shapes_respect_common_casing_and_schema_exclusions(self) -> None:
+        known = ["Will", "Price", *IGNORED_KNOWN_NAME_WORDS]
+        for text in ("tell user and assistant", "Mr. User replied", "User A. replied"):
+            with self.subTest(text=text):
+                ctx = RedactionContext(known_names=known)
+                self.assertEqual(redact_fail_closed(text, ctx)[0], text)
+                self.assertEqual(ctx.class_counts.get("name", 0), 0)
+
+    def test_lowercase_text_and_tell_targets_match_all_synthetic_shapes(self) -> None:
+        from export_session_to_case import apply_name_map
+        from redact import redact_object
+        fixture = json.loads((ROOT / "tests" / "fixtures" / "milestone-zero" / "known-name-target-shapes.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(fixture["target_shapes"]), 8)
+        for text in fixture["target_shapes"]:
+            with self.subTest(text=text):
+                ctx = RedactionContext(known_names=fixture["known_names"])
+                redacted, _, ok, _ = redact_object({"messages": [_msg("user", text)]}, ctx)
+                self.assertTrue(ok)
+                result = apply_name_map(redacted, ctx._name_map)["messages"][0]["content"]
+                self.assertIn("CLIENT_", result)
+                self.assertNotRegex(result.lower(), r"\b(?:hope|price)\b")
+
+    def test_dictionary_full_name_exact_reply_positions(self) -> None:
+        import redact
+        from export_session_to_case import apply_name_map
+        fixture = json.loads((ROOT / "tests" / "fixtures" / "milestone-zero" / "known-name-target-shapes.json").read_text(encoding="utf-8"))
+        self.assertTrue(all(part.lower() in redact._COMMON_WORDS for part in fixture["full_name"].split()))
+        for reply in fixture["full_name_replies"]:
+            with self.subTest(reply=reply):
+                ctx = RedactionContext(known_names=[fixture["full_name"]])
+                redacted, _, ok, _ = redact.redact_object({"messages": [_msg("assistant", reply)]}, ctx)
+                self.assertTrue(ok)
+                result = apply_name_map(redacted, ctx._name_map)["messages"][0]["content"]
+                self.assertIn("CLIENT_", result)
+                self.assertNotIn(fixture["full_name"].lower(), result.lower())
+
+    def test_documented_known_misses_are_preserved(self) -> None:
+        for text in ("call hope", "with hope", "Mr. Arin"):
+            with self.subTest(text=text):
+                self.assertEqual(redact_fail_closed(text, RedactionContext(known_names=["Hope", "Arin"]))[0], text)
+
+    def test_text_and_tell_skip_complete_schema_and_source_words(self) -> None:
+        for word in sorted(IGNORED_KNOWN_NAME_WORDS):
+            for text in (f"text {word} about the offer", f"tell user and {word}", f"tell {word} and user"):
+                with self.subTest(text=text):
+                    self.assertEqual(redact_fail_closed(text, RedactionContext(known_names=[word]))[0], text)
+
+    def test_text_known_names_override_ordinary_word_stops(self) -> None:
+        for text in ("text may about the offer", "text hope will about the offer"):
+            with self.subTest(text=text):
+                result = redact_fail_closed(text, RedactionContext(known_names=["Hope", "May", "Will"]))[0]
+                self.assertNotRegex(result.lower(), r"\b(?:hope|may|will)\b")
+
+    def test_target_case_combinations_keep_redacting_the_other_recipient(self) -> None:
+        for first in ("hope", "Hope", "HOPE"):
+            for last in ("price", "Price", "PRICE"):
+                for text in (f"text {first} {last} about the offer", f"tell {first} and {last} about the offer"):
+                    with self.subTest(text=text):
+                        ctx = RedactionContext(known_names=["Hope", "Price"])
+                        result = redact_fail_closed(text, ctx)[0]
+                        self.assertNotRegex(result.lower(), r"\b(?:hope|price)\b")
+                        self.assertEqual(set(ctx._name_map), {"hope", "price"})
+                        self.assertEqual(ctx.class_counts.get("name"), 2)
 
 
 class ExportIntegration(unittest.TestCase):
@@ -574,14 +719,91 @@ class ExportStructureNeverRedacted(_ExportHelpers, unittest.TestCase):
         self.assertTrue(case["export_meta"]["recorded_reply_present"])
         self.assertNotIn("Dana", json.dumps(case))
 
-    def test_structural_tokens_redacted_as_words_inside_text(self) -> None:
-        # The same tokens are still names when they appear inside a message (over-redaction is safe).
+    def test_structural_tokens_ignored_as_words_inside_text(self) -> None:
         names = self._names_file(self.STRUCT_TOKENS)
-        sess = {"messages": [_msg("user", "forward the user content to me"), _msg("assistant", "Sent the messages role list.")]}
+        owner = "forward the user content to me"
+        reply = "Sent the messages role list."
+        sess = {"messages": [_msg("user", owner), _msg("assistant", reply)]}
         proc, case = self._export_names(sess, names)
         self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
-        self.assertNotRegex(case["input"]["owner_text"], r"\b(user|content)\b")
-        self.assertNotRegex(case["fixture"]["assistant_text"], r"\b(messages|role)\b")
+        self.assertEqual(case["input"]["owner_text"], owner)
+        self.assertEqual(case["fixture"]["assistant_text"], reply)
+
+    def test_common_names_in_exported_context_preserve_ordinary_lowercase(self) -> None:
+        cases = json.loads((ROOT / "tests" / "fixtures" / "milestone-zero" / "known-common-contexts.json").read_text(encoding="utf-8"))
+        for fixture in cases:
+            with self.subTest(case=fixture["id"]):
+                names = self._names_file(tuple(fixture["known_names"]))
+                proc, case = self._export_names({"messages": fixture["messages"]}, names)
+                self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+                self.assertEqual(case["input"]["owner_text"], fixture["owner_text"])
+                self.assertEqual(case["fixture"]["assistant_text"], fixture["assistant_text"])
+                context = "\n".join(t["content"] for t in case["input"]["context_turns"])
+                self.assertIn("CLIENT_", context)
+                self.assertNotIn(fixture["name_fragment"], context.lower())
+
+    def test_text_tell_and_full_name_positions_through_exporter(self) -> None:
+        fixture = json.loads((ROOT / "tests" / "fixtures" / "milestone-zero" / "known-name-target-shapes.json").read_text(encoding="utf-8"))
+        names = self._names_file(tuple(fixture["known_names"] + [fixture["full_name"]]))
+        for owner in fixture["target_shapes"]:
+            with self.subTest(owner=owner):
+                proc, case = self._export_names({"messages": [_msg("user", owner), _msg("assistant", "the draft is ready")]}, names)
+                self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+                self.assertNotRegex(case["input"]["owner_text"].lower(), r"\b(?:hope|price)\b")
+        for reply in fixture["full_name_replies"]:
+            with self.subTest(reply=reply):
+                proc, case = self._export_names({"messages": [_msg("user", "check the listing"), _msg("assistant", reply)]}, names)
+                self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+                self.assertNotIn(fixture["full_name"].lower(), case["fixture"]["assistant_text"].lower())
+
+    def test_schema_common_and_source_tokens_dropped_with_count_only(self) -> None:
+        ignored = tuple(word.title() for word in sorted(IGNORED_KNOWN_NAME_WORDS))
+        names = self._names_file(ignored + ("listing", "Zorblax Quillfeather", "Content Quillfeather"))
+        proc, case = self._export_names(
+            {"source": "cli", "messages": [_msg("user", "check the user content for the listing"),
+                                            _msg("assistant", "the messages source is cli; zorblax quillfeather confirmed")]},
+            names,
+        )
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        self.assertEqual(case["input"]["owner_text"], "check the user content for the listing")
+        self.assertIn("the messages source is cli;", case["fixture"]["assistant_text"])
+        self.assertNotRegex(json.dumps(case).lower(), r"zorblax|quillfeather")
+        self.assertIn(f"known_names_dropped: count={len(ignored) + 1}", proc.stderr)
+        for word in (*ignored, "Zorblax", "Quillfeather"):
+            self.assertNotIn(word.lower(), proc.stderr.lower() + proc.stdout.lower())
+
+    def test_empty_case_with_transcript_writes_nothing(self) -> None:
+        for part, messages in (
+            ("owner", [_msg("user", "  "), _msg("assistant", "noted")]),
+            ("reply", [_msg("user", "status?"), _msg("assistant", "  ")]),
+        ):
+            for existing in (False, True):
+                with self.subTest(part=part, existing=existing), tempfile.TemporaryDirectory() as tmp:
+                    base = Path(tmp)
+                    os.chmod(base, 0o700)
+                    sess = base / "session.json"
+                    sess.write_text(json.dumps({"messages": messages}), encoding="utf-8")
+                    out_dir = base / "redacted"
+                    outputs = [out_dir / "cases.jsonl", out_dir / "text.txt", out_dir / "manifest.json"]
+                    if existing:
+                        out_dir.mkdir(mode=0o700)
+                        for path in outputs:
+                            path.write_text("unchanged\n", encoding="utf-8")
+                            os.chmod(path, 0o600)
+                    proc = subprocess.run(
+                        [sys.executable, str(MZ / "export_session_to_case.py"), "--session", str(sess),
+                         "--id", "syn-empty", "--source", "cli", "--known-names", str(FIX_MAIN / "known_names.txt"),
+                         "--out", str(outputs[0]), "--redacted-text-out", str(outputs[1]), "--manifest", str(outputs[2])],
+                        capture_output=True, text=True, cwd=str(MZ),
+                    )
+                    self.assertEqual(proc.returncode, EXIT_BLOCKED, proc.stderr)
+                    self.assertIn(f"empty_case id=syn-empty parts={part}", proc.stderr)
+                    self.assertEqual(proc.stdout, "")
+                    if existing:
+                        self.assertEqual([p.read_text(encoding="utf-8") for p in outputs], ["unchanged\n"] * 3)
+                        self.assertEqual(sorted(p.name for p in out_dir.iterdir()), sorted(p.name for p in outputs))
+                    else:
+                        self.assertFalse(out_dir.exists())
 
     def test_keys_never_renamed_role_values_kept(self) -> None:
         from redact import RedactionContext, redact_object

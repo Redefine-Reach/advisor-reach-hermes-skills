@@ -1,0 +1,18 @@
+{
+  "known_names": ["Hope", "Price"],
+  "target_shapes": [
+    "text hope about the offer",
+    "Text hope about the offer",
+    "text Hope price about the offer",
+    "text HOPE price about the offer",
+    "tell hope and price about the offer",
+    "Tell hope and price about the offer",
+    "tell Hope and price about the offer",
+    "tell hope and PRICE about the offer"
+  ],
+  "full_name": "Will Price",
+  "full_name_replies": [
+    "Will Price wants the draft",
+    "the owner and will price want the draft"
+  ]
+}
