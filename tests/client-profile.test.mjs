@@ -29,9 +29,18 @@ const schema = JSON.parse(
   readFileSync(join(root, "skills", "client-profile", "assets", "brief.schema.json"), "utf8"),
 );
 const GUARDRAIL = schema.properties.guardrail_notice.const;
+const NO_PUBLIC_MATCH = "No public match was found. Please send a city, company, or LinkedIn/website link.";
 const skill = readFileSync(skillPath, "utf8");
 const script = readFileSync(scriptPath, "utf8");
 const goodBriefPath = join(fixtures, "good-brief.json");
+
+test("RED-679 synthetic report and no-match regressions", () => {
+  const proc = spawnSync("python3", [
+    "-B", "-m", "unittest", "discover", "-s", "tests",
+    "-p", "test_client_profile_report.py", "-v",
+  ], { cwd: root, encoding: "utf8", env: { PATH: process.env.PATH, HOME: tmpdir() } });
+  assert.equal(proc.status, 0, (proc.stdout || "") + (proc.stderr || ""));
+});
 
 function spec(n) {
   const dir = join(fixtures, `case-${String(n).padStart(2, "0")}`);
@@ -1661,7 +1670,7 @@ test("owner paste after NONE drops web candidates and becomes candidate 1", () =
   assert.equal(manual.candidate, 1);
   const listed = run(["identity", "candidates", id], ctx).payload;
   assert.equal(listed.status, "couldnt_find");
-  assert.equal(listed.message, "couldn't find");
+  assert.equal(listed.message, NO_PUBLIC_MATCH);
   assert.deepEqual(listed.candidates, []);
   assert.notDeepEqual(listed, { ok: true, candidates: [] });
 });
@@ -1714,7 +1723,7 @@ test("NONE then pasted notes stay candidate 1 and do not render a brief", () => 
   assert.equal(manual.candidate, 1);
   const listed = run(["identity", "candidates", id], ctx).payload;
   assert.equal(listed.status, "couldnt_find");
-  assert.equal(listed.message, "couldn't find");
+  assert.equal(listed.message, NO_PUBLIC_MATCH);
   assert.deepEqual(listed.candidates, []);
   const stale = run(["identity", "confirm", id, "--candidate", "2"], ctx);
   assert.equal(stale.payload.ok, false, stale.stdout);
@@ -1768,12 +1777,12 @@ test("a made-up Avery in Flagstaff returns couldn't find", () => {
   const listed = run(["identity", "candidates", id], ctx);
   assert.equal(listed.payload.ok, true, listed.stdout);
   assert.equal(listed.payload.status, "couldnt_find");
-  assert.equal(listed.payload.message, "couldn't find");
+  assert.equal(listed.payload.message, NO_PUBLIC_MATCH);
   assert.deepEqual(listed.payload.candidates, []);
   const picked = run(["identity", "confirm", id, "--candidate", "1", "--actor", "owner"], ctx);
   assert.equal(picked.payload.ok, false);
   assert.equal(picked.payload.error, "couldnt_find");
-  assert.equal(picked.payload.message, "couldn't find");
+  assert.equal(picked.payload.message, NO_PUBLIC_MATCH);
   const brief = loadGood(["ev_00000000"]);
   const checked = validate(ctx, id, brief);
   assert.equal(checked.payload.ok, false);
@@ -1794,7 +1803,7 @@ test("Avery with no last name in Flagstaff returns couldn't find", () => {
   markSearchRan(ctx, id);
   const listed = run(["identity", "candidates", id], ctx);
   assert.equal(listed.payload.status, "couldnt_find");
-  assert.equal(listed.payload.message, "couldn't find");
+  assert.equal(listed.payload.message, NO_PUBLIC_MATCH);
   assert.deepEqual(listed.payload.candidates, []);
 });
 
@@ -2332,7 +2341,7 @@ test("a fictional name with no Exa sources is couldn't find, not an empty brief"
     assert.equal(searched.payload.ok, false, searched.stdout);
     assert.equal(searched.payload.error, "couldnt_find");
     assert.equal(searched.payload.status, "couldnt_find");
-    assert.equal(searched.payload.message, "couldn't find");
+    assert.equal(searched.payload.message, NO_PUBLIC_MATCH);
     assert.equal(searched.payload.source_count, 0);
     assert.equal(Object.hasOwn(searched.payload, "sources"), false);
     const stored = JSON.parse(readFileSync(join(ctx.data, id, "search.json"), "utf8"));
@@ -2341,7 +2350,7 @@ test("a fictional name with no Exa sources is couldn't find, not an empty brief"
     const listed = run(["identity", "candidates", id], ctx);
     assert.equal(listed.payload.ok, true, listed.stdout);
     assert.equal(listed.payload.status, "couldnt_find");
-    assert.equal(listed.payload.message, "couldn't find");
+    assert.equal(listed.payload.message, NO_PUBLIC_MATCH);
     const checked = validate(ctx, id, loadGood(["ev_00000000"]));
     assert.equal(checked.payload.ok, false, JSON.stringify(checked.payload));
     assert.ok(codes(checked.payload).includes("couldnt_find"));
@@ -3094,7 +3103,7 @@ test("a search error or zero results does not render a brief from owner notes", 
     assert.equal(searched.payload.ok, false, searched.stdout + searched.stderr);
     assert.equal(searched.payload.error, "couldnt_find");
     assert.equal(searched.payload.status, "couldnt_find");
-    assert.equal(searched.payload.message, "couldn't find");
+    assert.equal(searched.payload.message, NO_PUBLIC_MATCH);
     assert.equal(searched.payload.source_count, 0);
     const noteId = addEvidence(ctx, id, {
       url: "https://example.com/riley-notes",
@@ -3108,7 +3117,7 @@ test("a search error or zero results does not render a brief from owner notes", 
     const checked = validate(ctx, id, loadGood([noteId]));
     assert.equal(checked.payload.ok, false, JSON.stringify(checked.payload));
     assert.ok(codes(checked.payload).includes("couldnt_find"));
-    assert.match(JSON.stringify(checked.payload), /couldn't find/);
+    assert.match(JSON.stringify(checked.payload), /No public match was found/);
     assert.equal(existsSync(join(ctx.data, id, "brief.json")), false);
   } finally {
     await new Promise((resolve) => refused.close(resolve));
@@ -3747,7 +3756,7 @@ test("an Exa error is search_unavailable, and a skipped search asks to run searc
     ).payload.client_id;
     const mixedSearch = await runAsync(["search", mixedId, "--actor", "owner"], mixedCtx, exaFor(mixedPort));
     assert.equal(mixedSearch.payload.error, "couldnt_find", mixedSearch.stdout + mixedSearch.stderr);
-    assert.equal(mixedSearch.payload.message, "couldn't find");
+    assert.equal(mixedSearch.payload.message, NO_PUBLIC_MATCH);
 
     const partialCtx = world();
     const partialId = run(
