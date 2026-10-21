@@ -36,6 +36,11 @@ from pathlib import Path
 from typing import Mapping, NoReturn
 from urllib.parse import urlparse
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+import draft_outcome_log as _draft_outcomes
+
 # Hermes is on the box interpreter only. A top-level import would make the
 # gate unusable in CI and in any python that is not the gateway venv.
 try:
@@ -57,6 +62,11 @@ ATTESTATION_VERSION = "red-390-v3"
 DEFAULT_MAX_BODY_CHARS = 640
 DEFAULT_DRAFT_TTL_SECONDS = 1800
 DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
+DOUBLE_SEND_GUARD_HOURS = 24
+RECENT_PROVIDER_FAILURE_REASON = (
+    "Your last text to this person may still go through, so I didn't queue a duplicate"
+)
+DOUBLE_SEND_GUARD_EXEMPT_STATUSES = frozenset({"rejected", "not_sent"})
 CONFIRM_TOKENS = frozenset({"send", "/approve"})
 DROP_TOKENS = frozenset({"no", "skip", "drop"})
 ATTEST_YES = frozenset({"yes", "y", "true", "1"})
@@ -195,6 +205,7 @@ AUDIT_KEYS = (
     "draft_id",
     "provider_called",
     "session_ttl_expires_at",
+    "stubbed",
 )
 POD_NAME = re.compile(r"^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)-\d+$")
 E164_RE = re.compile(r"^\+[1-9]\d{1,14}$")
@@ -237,10 +248,16 @@ def utc_now() -> datetime:
     if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
         raw = str(os.environ.get("SMS_NOW", "")).strip()
         if raw:
-            parsed = datetime.fromisoformat(raw)
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=timezone.utc)
             return parsed
+    raw = str(os.environ.get("DRAFT_OUTCOME_NOW", "")).strip()
+    if raw:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
     return datetime.now(timezone.utc)
 
 
@@ -898,12 +915,16 @@ def paths(environ: Mapping[str, str] | None = None) -> dict[str, Path]:
     drafts = Path(env.get("SMS_DRAFT_DIR", "/opt/data/audit/sms-drafts"))
     sessions = Path(env.get("SMS_SESSION_DIR", "/opt/data/sms-sessions"))
     events = Path(env.get("SMS_EVENT_DIR", "/opt/data/sms-events"))
+    draft_outcomes = Path(
+        env.get("DRAFT_OUTCOMES_PATH", "/opt/data/audit/draft-outcomes.jsonl")
+    )
     return {
         "audit": audit,
         "opt_out": opt_out,
         "drafts": drafts,
         "sessions": sessions,
         "events": events,
+        "draft_outcomes": draft_outcomes,
     }
 
 
@@ -1022,6 +1043,53 @@ def phone_allowlist(environ: Mapping[str, str] | None = None, *, enforce_closed:
             continue
         owners.add(require_phone(part, "approver"))
     return owners
+
+
+def normalize_identity_token(raw: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    if lowered.startswith("tg:"):
+        rest = text[3:].strip()
+        if TELEGRAM_ID_RE.fullmatch(rest):
+            return rest
+    if TELEGRAM_ID_RE.fullmatch(text):
+        return text
+    kind, number = classify_phone(text)
+    if kind == "ok" and number:
+        return number
+    return text
+
+
+def owner_identity_groups(environ: Mapping[str, str] | None = None) -> list[frozenset[str]]:
+    env = os.environ if environ is None else environ
+    raw = str(env.get("ARIN_OWNER_IDENTITIES", "")).strip()
+    if not raw:
+        return []
+    groups: list[frozenset[str]] = []
+    for group_part in raw.split(","):
+        members: set[str] = set()
+        for token in group_part.split("|"):
+            normalized = normalize_identity_token(token.strip())
+            if normalized:
+                members.add(normalized)
+        if members:
+            groups.append(frozenset(members))
+    return groups
+
+
+def actor_matches_approver(actor: str, approver: str, groups: list[frozenset[str]]) -> bool:
+    a = normalize_identity_token(actor)
+    ap = normalize_identity_token(approver)
+    if a == ap:
+        return True
+    if not groups:
+        return False
+    for group in groups:
+        if a in group and ap in group:
+            return True
+    return False
 
 
 def telegram_allowlist(environ: Mapping[str, str] | None = None) -> set[str]:
@@ -1191,10 +1259,9 @@ def audit(
     provider_status: str | None = None,
     provider_called: bool = False,
     session_ttl_expires_at: str | None = None,
+    stubbed: bool | None = None,
 ) -> None:
-    append_audit(
-        store["audit"],
-        {
+    row = {
             "ts": iso(utc_now()),
             "box_id": box_id,
             "approver": approver,
@@ -1211,8 +1278,10 @@ def audit(
             "draft_id": draft_id,
             "provider_called": provider_called,
             "session_ttl_expires_at": session_ttl_expires_at,
-        },
-    )
+        }
+    if stubbed is not None:
+        row["stubbed"] = stubbed
+    append_audit(store["audit"], row)
 
 
 class DraftLock:
@@ -1404,10 +1473,15 @@ def parse_provider_stdout(stdout: str, stderr: str, code: int) -> dict:
             "error": "",
         }
     error = payload.get("error") or stderr.strip() or f"send exit {code}"
+    raw_status = str(payload.get("provider_status") or "").strip().lower()
+    if raw_status in DOUBLE_SEND_GUARD_EXEMPT_STATUSES:
+        provider_status = raw_status
+    else:
+        provider_status = raw_status if raw_status else "error"
     return {
         "success": False,
         "message_id": str(payload.get("message_id") or ""),
-        "provider_status": str(payload.get("provider_status") or "error"),
+        "provider_status": provider_status,
         "error": str(error).replace("\n", " ")[:500],
     }
 
@@ -1422,15 +1496,21 @@ def normalize_sender_result(result: object) -> dict:
         }
     error = ""
     message_id = ""
+    provider_status = "error"
     if isinstance(result, dict):
         error = str(result.get("error") or "")
         message_id = str(result.get("message_id") or "")
+        raw_status = str(result.get("provider_status") or "").strip().lower()
+        if raw_status in DOUBLE_SEND_GUARD_EXEMPT_STATUSES:
+            provider_status = raw_status
+        elif raw_status:
+            provider_status = raw_status
     if not error:
         error = "provider rejected the send"
     return {
         "success": False,
         "message_id": message_id,
-        "provider_status": "error",
+        "provider_status": provider_status,
         "error": error.replace("\n", " ")[:500],
     }
 
@@ -1470,15 +1550,33 @@ def resolve_standalone_sender(discover, resolve_all, get_entry, load_config, pla
     return sender, platform_config_for_send(load_config, platform_type, config_type), ""
 
 
+def stub_provider_enabled() -> bool:
+    flag = str(os.environ.get("SMS_SEND_STUB_PROVIDER", "")).strip().lower()
+    if flag not in {"1", "true", "yes", "on"}:
+        return False
+    if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
+        return True
+    return str(os.environ.get("SMS_SEND_STUB_ALLOW", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def deliver(dest: str, body: str) -> dict:
     """One adapter send. Test mode never falls through to the plugin."""
+    if stub_provider_enabled():
+        digest = hashlib.sha256(f"{dest}\0{body}".encode("utf-8")).hexdigest()[:16]
+        return {
+            "success": True,
+            "message_id": f"stub-{digest}",
+            "provider_status": "stubbed",
+            "error": "",
+            "stubbed": True,
+        }
     if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
         transport = os.environ.get("SMS_SEND_TRANSPORT", "").strip()
         if not transport:
             return {
                 "success": False,
                 "message_id": "",
-                "provider_status": "error",
+                "provider_status": "not_sent",
                 "error": "test mode has no transport",
             }
         proc = subprocess.run(
@@ -1495,7 +1593,7 @@ def deliver(dest: str, body: str) -> dict:
         return {
             "success": False,
             "message_id": "",
-            "provider_status": "error",
+            "provider_status": "not_sent",
             "error": "telnyx plugin loader unavailable",
         }
     sender, pconfig, error = resolve_standalone_sender(
@@ -1510,7 +1608,7 @@ def deliver(dest: str, body: str) -> dict:
         return {
             "success": False,
             "message_id": "",
-            "provider_status": "error",
+            "provider_status": "not_sent",
             "error": error or "telnyx_sms standalone_sender_fn is not registered",
         }
     try:
@@ -1550,6 +1648,7 @@ def context() -> dict:
         "phones": phones,
         "telegram": telegram,
         "owners": phones | telegram,
+        "owner_identity_groups": owner_identity_groups(),
         "from": sender,
         "store": store,
     }
@@ -1590,6 +1689,282 @@ def refuse_context(failure: GateFailure, *, approver: str = "", dest: str = "", 
     return emit(payload, failure.status)
 
 
+def audit_outcome_log_failed(
+    store: dict[str, Path],
+    *,
+    box_id: str,
+    draft_id: str | None,
+    reason_class: str,
+) -> None:
+    try:
+        append_audit(
+            store["audit"],
+            {
+                "ts": iso(utc_now()),
+                "box_id": box_id,
+                "approver": "",
+                "approved_at": None,
+                "attestation_version": ATTESTATION_VERSION,
+                "dest": "",
+                "from": "",
+                "body_hash": "",
+                "body_len": 0,
+                "telnyx_message_id": None,
+                "provider_status": None,
+                "outcome": "outcome_log_failed",
+                "reason": reason_class[:120],
+                "draft_id": draft_id,
+                "provider_called": False,
+                "session_ttl_expires_at": None,
+            },
+        )
+    except Exception:
+        return
+
+
+def assert_draft_owner(ctx: dict, draft: dict, *, draft_id: str) -> None:
+    approver = str(draft.get("approver") or "")
+    if approver not in ctx["owners"] or draft.get("from") != ctx["from"]:
+        raise GateFailure(
+            "refused_not_owner",
+            "draft owner or From no longer matches this box",
+            extra={"draft_id": draft_id, "dest": str(draft.get("dest") or "")},
+        )
+
+
+def resolve_turn_actor(raw: str, *, field: str = "actor") -> str:
+    text = str(raw or "").strip()
+    if not text:
+        raise GateFailure(
+            "error",
+            "turn actor is required for send, cancel, and stage --replaces",
+            field=field,
+            status=EXIT_ERROR,
+        )
+    normalized = normalize_identity_token(text)
+    if TELEGRAM_ID_RE.fullmatch(normalized):
+        return normalized
+    kind, number = classify_phone(text)
+    if kind == "ok" and number:
+        return number
+    raise GateFailure("error", "actor is not valid", field=field, status=EXIT_ERROR)
+
+
+def assert_actor_is_draft_approver(
+    draft: dict,
+    actor: str,
+    *,
+    draft_id: str,
+    groups: list[frozenset[str]] | None = None,
+) -> None:
+    approver = str(draft.get("approver") or "")
+    identity_groups = groups if groups is not None else owner_identity_groups()
+    if not actor_matches_approver(actor, approver, identity_groups):
+        raise GateFailure(
+            "refused_not_owner",
+            "only the draft approver may act on this draft",
+            field="actor",
+            extra={"draft_id": draft_id, "dest": str(draft.get("dest") or "")},
+        )
+
+
+def provider_send_is_definitively_failed(result: dict) -> bool:
+    if result.get("success"):
+        return False
+    status = str(result.get("provider_status") or "").strip().lower()
+    return status in DOUBLE_SEND_GUARD_EXEMPT_STATUSES
+
+
+def provider_send_triggers_double_send_guard(result: dict) -> bool:
+    if result.get("success"):
+        return not str(result.get("message_id") or "").strip()
+    return not provider_send_is_definitively_failed(result)
+
+
+def apply_double_send_guard(draft: dict, dest: str, body: str, when: datetime) -> None:
+    draft["double_send_guard_dest"] = dest
+    draft["double_send_guard_body_hash"] = body_hash(body)
+    draft["double_send_guard_at"] = iso(when)
+
+
+def assert_no_recent_double_send_guard(store: dict[str, Path], dest: str, body: str, now: datetime) -> None:
+    digest = body_hash(body)
+    cutoff = now - timedelta(hours=DOUBLE_SEND_GUARD_HOURS)
+    directory = store["drafts"]
+    for path in directory.glob("*.json"):
+        try:
+            data = read_draft(path)
+        except Exception:
+            continue
+        if str(data.get("double_send_guard_dest") or "") != dest:
+            continue
+        if str(data.get("double_send_guard_body_hash") or "") != digest:
+            continue
+        raw = str(data.get("double_send_guard_at") or "")
+        if not raw:
+            continue
+        try:
+            guarded_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if guarded_at.tzinfo is None:
+            guarded_at = guarded_at.replace(tzinfo=timezone.utc)
+        if guarded_at >= cutoff:
+            raise GateFailure(
+                "refused_recent_provider_failure",
+                RECENT_PROVIDER_FAILURE_REASON,
+                field="body",
+            )
+
+
+def new_draft_id() -> str:
+    forced = str(os.environ.get("SMS_DRAFT_ID_NEXT", "")).strip()
+    if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1" and _draft_outcomes.DRAFT_ID_RE.fullmatch(forced):
+        os.environ.pop("SMS_DRAFT_ID_NEXT", None)
+        return forced
+    return os.urandom(8).hex()
+
+
+def snapshot_for_outcome(draft: dict, body: str) -> None:
+    _draft_outcomes.refresh_edit_distance_from_first(draft, body)
+    draft["body_hash_final"] = str(draft.get("body_hash") or "")
+    draft["len_final"] = len(body)
+
+
+def maybe_finalize_draft_outcome(
+    store: dict[str, Path],
+    draft: dict,
+    outcome: str,
+    *,
+    box_id: str,
+    refuse_reason: str | None = None,
+) -> None:
+    try:
+        _draft_outcomes.record_outcome(
+            store,
+            draft,
+            outcome=outcome,
+            box_slug=box_id or None,
+            refuse_reason=refuse_reason,
+        )
+    except Exception as exc:
+        audit_outcome_log_failed(
+            store,
+            box_id=box_id,
+            draft_id=str(draft.get("draft_id") or "") or None,
+            reason_class=exc.__class__.__name__,
+        )
+
+
+def finalize_script_refused_draft(
+    store: dict[str, Path],
+    draft: dict,
+    path: Path,
+    *,
+    box_id: str,
+    refuse_reason: str,
+    body: str,
+    provider_result: dict | None = None,
+) -> None:
+    """Terminal script refusal: one refused outcome line; draft stays re-stageable via replaces."""
+    if provider_result is not None and provider_send_triggers_double_send_guard(provider_result):
+        apply_double_send_guard(draft, str(draft.get("dest") or ""), body, utc_now())
+    snapshot_for_outcome(draft, body)
+    maybe_finalize_draft_outcome(
+        store,
+        draft,
+        "refused",
+        box_id=box_id,
+        refuse_reason=refuse_reason,
+    )
+    draft["status"] = "refused"
+    draft["refuse_reason"] = refuse_reason
+    _draft_outcomes.strip_plaintext_fields(draft, keep_chain_baseline=True)
+    write_draft(path, draft)
+
+
+def resolve_box_sms_turn_owner() -> str | None:
+    raw = str(os.environ.get("SMS_TURN_OWNER_E164", "")).strip()
+    if not raw:
+        return None
+    kind, number = classify_phone(raw)
+    if kind == "ok" and number:
+        return number
+    normalized = normalize_identity_token(raw)
+    return normalized or None
+
+
+def resolve_box_telegram_turn_owner() -> str | None:
+    """Box-set Telegram id for this inbound owner Telegram turn (W7).
+
+    Only the arin-sms-stage plugin sets TG_TURN_OWNER_ID, per turn, after the
+    turn source is telegram and the sender is on TELEGRAM_ALLOWED_USERS. It is
+    never on the execute_code passthrough list, so a model-run script has none.
+    """
+    raw = str(os.environ.get("TG_TURN_OWNER_ID", "")).strip()
+    if raw.lower().startswith("tg:"):
+        raw = raw[3:].strip()
+    return raw if TELEGRAM_ID_RE.fullmatch(raw) else None
+
+
+def assert_actor_is_box_sms_turn(
+    actor: str,
+    ctx: dict,
+    *,
+    draft_id: str = "",
+    dest: str = "",
+    mapped_telegram_approver: str = "",
+) -> None:
+    """RED-700: SEND and re-stage on the box-resolved SMS text-turn owner; mapped owner Telegram may SEND."""
+    normalized = normalize_identity_token(actor)
+    if TELEGRAM_ID_RE.fullmatch(normalized):
+        approver = str(mapped_telegram_approver or "").strip()
+        groups = ctx.get("owner_identity_groups") or owner_identity_groups()
+        # W7: the Telegram actor must be the box-resolved Telegram turn sender.
+        # No test-mode bypass: fail closed when the box did not set it.
+        tg_turn_owner = resolve_box_telegram_turn_owner()
+        if (
+            approver
+            and groups
+            and tg_turn_owner is not None
+            and normalized == tg_turn_owner
+            and actor_matches_approver(actor, approver, groups)
+        ):
+            return
+        raise GateFailure(
+            "refused_not_owner",
+            "SEND and re-stage require the owner's SMS text thread until RED-700",
+            field="actor",
+            extra={"draft_id": draft_id, "dest": dest},
+        )
+    kind, number = classify_phone(actor)
+    if kind != "ok" or not number or number not in ctx["phones"]:
+        raise GateFailure(
+            "refused_not_owner",
+            "SEND and re-stage require the owner's SMS number on this turn",
+            field="actor",
+            extra={"draft_id": draft_id, "dest": dest},
+        )
+    turn_owner = resolve_box_sms_turn_owner()
+    if turn_owner is None:
+        if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
+            return
+        raise GateFailure(
+            "error",
+            "send and re-stage are only available on the owner's SMS text turn",
+            field="actor",
+            status=EXIT_ERROR,
+            extra={"draft_id": draft_id, "dest": dest},
+        )
+    if normalized != turn_owner:
+        raise GateFailure(
+            "refused_not_owner",
+            "SEND and re-stage require the box-resolved SMS owner for this turn",
+            field="actor",
+            extra={"draft_id": draft_id, "dest": dest},
+        )
+
+
 def stage(
     approver_raw: str,
     dest_raw: str,
@@ -1599,6 +1974,8 @@ def stage(
     source_date_raw: str = "",
     source_name_raw: str = "",
     source_ref_raw: str = "",
+    replaces_raw: str = "",
+    actor_raw: str = "",
 ) -> int:
     try:
         ctx = context()
@@ -1638,20 +2015,88 @@ def stage(
             source_ref_raw,
         )
         now = utc_now()
+        replaces_id = str(replaces_raw or "").strip()
         with DraftLock(ctx["store"]["drafts"]):
-            if pending_blocks(ctx["store"]["drafts"], now):
+            previous: dict | None = None
+            if replaces_id:
+                prev_path = draft_path(ctx["store"]["drafts"], replaces_id)
+                if not prev_path.is_file():
+                    raise GateFailure(
+                        "error",
+                        "replaces draft was not found",
+                        field="replaces",
+                        status=EXIT_ERROR,
+                    )
+                previous = read_draft(prev_path)
+                prev_status = str(previous.get("status") or "")
+                if prev_status not in {"pending", "refused"}:
+                    raise GateFailure(
+                        "error",
+                        "replaces draft is not pending or refused",
+                        field="replaces",
+                        status=EXIT_ERROR,
+                    )
+                actor = resolve_turn_actor(actor_raw, field="actor")
+                assert_actor_is_box_sms_turn(
+                    actor,
+                    ctx,
+                    draft_id=replaces_id,
+                    dest=str(previous.get("dest") or ""),
+                )
+                assert_actor_is_draft_approver(
+                    previous,
+                    actor,
+                    draft_id=replaces_id,
+                    groups=ctx["owner_identity_groups"],
+                )
+                prev_refuse = str(previous.get("refuse_reason") or "")
+                if prev_status == "refused" and prev_refuse not in _draft_outcomes.RESTAGEABLE_REFUSE_REASONS:
+                    raise GateFailure(
+                        "error",
+                        "this draft cannot be re-staged after a provider failure",
+                        field="replaces",
+                        status=EXIT_ERROR,
+                    )
+                if prev_status == "refused" and pending_blocks(ctx["store"]["drafts"], now):
+                    raise GateFailure(
+                        "refused_multi",
+                        "a draft is already waiting for SEND; cancel it before staging another",
+                    )
+                if str(previous.get("approver") or "") != approver:
+                    raise GateFailure(
+                        "refused_not_owner",
+                        "replaces draft belongs to another approver",
+                        field="replaces",
+                    )
+                if str(previous.get("dest") or "") != dest:
+                    raise GateFailure(
+                        "refused_why_reused",
+                        "re-stage after an edit must keep the same recipient; stage a new draft for someone else",
+                        field="dest",
+                    )
+                guard_why_not_reused(
+                    previous,
+                    dest=dest,
+                    body=body,
+                    why_line=why_line,
+                )
+            elif pending_blocks(ctx["store"]["drafts"], now):
                 raise GateFailure(
                     "refused_multi",
                     "a draft is already waiting for SEND; cancel it before staging another",
                 )
-            guard_why_not_reused(
-                latest_draft_for_approver(ctx["store"]["drafts"], approver),
-                dest=dest,
-                body=body,
-                why_line=why_line,
-            )
-            draft_id = os.urandom(8).hex()
+            assert_no_recent_double_send_guard(ctx["store"], dest, body, now)
+            if not replaces_id:
+                guard_why_not_reused(
+                    latest_draft_for_approver(ctx["store"]["drafts"], approver),
+                    dest=dest,
+                    body=body,
+                    why_line=why_line,
+                )
+            draft_id = new_draft_id()
             expires = now + draft_ttl()
+            created_at = iso(now)
+            body_digest = body_hash(body)
             record = {
                 "draft_id": draft_id,
                 "status": "pending",
@@ -1660,7 +2105,7 @@ def stage(
                 "dest": dest,
                 "from": ctx["from"],
                 "body": body,
-                "body_hash": body_hash(body),
+                "body_hash": body_digest,
                 "why": why,
                 "source_kind": source_kind,
                 "source_date": source_date,
@@ -1670,9 +2115,18 @@ def stage(
                 "source_kind": source_kind,
                 "source_date": source_date,
                 "source_ref": source_ref,
-                "created_at": iso(now),
+                "created_at": created_at,
                 "expires_at": iso(expires),
             }
+            if previous is not None:
+                _draft_outcomes.inherit_chain_fields(record, previous, body, body_digest)
+                if str(previous.get("status") or "") in {"pending", "refused"}:
+                    _draft_outcomes.mark_superseded(
+                        draft_path(ctx["store"]["drafts"], replaces_id),
+                        previous,
+                    )
+            else:
+                _draft_outcomes.seed_chain_fields(record, body, body_digest, created_at)
             write_draft(draft_path(ctx["store"]["drafts"], draft_id), record)
         missing_line = format_missing_line(content_placeholders(body))
         shown = attestation_text(ctx["from"], dest, body, why_line, missing_line)
@@ -1694,6 +2148,8 @@ def stage(
             "attestation": shown,
             "provider_called": False,
         }
+        if record.get("replaces"):
+            staged_payload["replaces"] = record["replaces"]
         if missing_line:
             staged_payload["missing_line"] = missing_line
             staged_payload["content_placeholders"] = content_placeholders(body)
@@ -1711,22 +2167,24 @@ def stage(
         return refuse_context(failure, approver=approver, dest=dest, body=body)
 
 
-def cancel_draft(directory: Path, draft_id: str, reason: str) -> dict | None:
+def cancel_draft(directory: Path, draft_id: str, reason: str) -> tuple[dict | None, bool]:
     path = draft_path(directory, draft_id)
     if not path.exists():
-        return None
+        return None, False
     data = read_draft(path)
-    original_body = str(data.get("body") or "")
-    if data.get("status") == "pending":
-        data["status"] = "cancelled"
-        data["cancelled_reason"] = reason
-        data["body"] = ""
-        write_draft(path, data)
-    data["body"] = original_body
-    return data
+    if data.get("status") != "pending":
+        return data, False
+    body = str(data.get("body") or "")
+    snapshot_for_outcome(data, body)
+    data["status"] = "cancelled"
+    data["cancelled_reason"] = reason
+    _draft_outcomes.strip_plaintext_fields(data)
+    write_draft(path, data)
+    data["body"] = body
+    return data, True
 
 
-def send(draft_id: str, confirm: str, attest: str) -> int:
+def send(draft_id: str, confirm: str, attest: str, actor_raw: str = "") -> int:
     ctx: dict = {}
     draft: dict = {}
     held_body = ""
@@ -1761,20 +2219,31 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                     "this draft is not waiting for a confirm",
                     extra={"draft_id": draft_id, "dest": dest},
                 )
+            actor = resolve_turn_actor(actor_raw, field="actor")
+            assert_actor_is_box_sms_turn(
+                actor,
+                ctx,
+                draft_id=draft_id,
+                dest=dest,
+                mapped_telegram_approver=approver,
+            )
+            assert_actor_is_draft_approver(
+                draft,
+                actor,
+                draft_id=draft_id,
+                groups=ctx["owner_identity_groups"],
+            )
+            assert_draft_owner(ctx, draft, draft_id=draft_id)
             if utc_now() >= parse_expiry(draft):
-                draft["status"] = "cancelled"
+                snapshot_for_outcome(draft, body)
+                maybe_finalize_draft_outcome(ctx["store"], draft, "ignored", box_id=ctx["box_id"])
+                draft["status"] = "ignored"
                 draft["cancelled_reason"] = "expired"
-                draft["body"] = ""
+                _draft_outcomes.strip_plaintext_fields(draft)
                 write_draft(path, draft)
                 raise GateFailure(
                     "refused_no_confirm",
                     "confirmation window expired; stage the message again",
-                    extra={"draft_id": draft_id, "dest": dest},
-                )
-            if approver not in ctx["owners"] or draft.get("from") != ctx["from"]:
-                raise GateFailure(
-                    "refused_not_owner",
-                    "draft owner or From no longer matches this box",
                     extra={"draft_id": draft_id, "dest": dest},
                 )
             if not is_confirm(confirm):
@@ -1783,7 +2252,9 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                 draft["cancelled_reason"] = (
                     "owner replied NO, DROP, or skip" if dropped else "confirm was not SEND"
                 )
-                draft["body"] = ""
+                snapshot_for_outcome(draft, body)
+                maybe_finalize_draft_outcome(ctx["store"], draft, "cancelled", box_id=ctx["box_id"])
+                _draft_outcomes.strip_plaintext_fields(draft)
                 write_draft(path, draft)
                 raise GateFailure(
                     "refused_no_confirm",
@@ -1794,10 +2265,14 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                 )
             left = unfilled_placeholders(body)
             if left:
-                draft["status"] = "cancelled"
-                draft["cancelled_reason"] = "unfilled placeholder"
-                draft["body"] = ""
-                write_draft(path, draft)
+                finalize_script_refused_draft(
+                    ctx["store"],
+                    draft,
+                    path,
+                    box_id=ctx["box_id"],
+                    refuse_reason="unfilled_placeholder",
+                    body=body,
+                )
                 raise GateFailure(
                     "refused_unfilled_placeholder",
                     "the draft still has a bracketed placeholder ("
@@ -1813,14 +2288,35 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                     field="attest",
                     extra={"draft_id": draft_id, "dest": dest},
                 )
-            assert_not_opted_out(dest, ctx["store"]["opt_out"])
+            try:
+                assert_not_opted_out(dest, ctx["store"]["opt_out"])
+            except GateFailure as opt_out:
+                if opt_out.outcome == "refused_stop":
+                    finalize_script_refused_draft(
+                        ctx["store"],
+                        draft,
+                        path,
+                        box_id=ctx["box_id"],
+                        refuse_reason="opted_out",
+                        body=body,
+                    )
+                raise
             if len(body) > max_body_chars() or not body:
+                finalize_script_refused_draft(
+                    ctx["store"],
+                    draft,
+                    path,
+                    box_id=ctx["box_id"],
+                    refuse_reason="over_length",
+                    body=body,
+                )
                 raise GateFailure(
                     "error",
                     "staged body is no longer sendable as one message",
                     status=EXIT_ERROR,
-                    extra={"draft_id": draft_id, "dest": dest},
+                    extra={"draft_id": draft_id, "dest": dest, "refuse_reason": "over_length"},
                 )
+            assert_no_recent_double_send_guard(ctx["store"], dest, body, utc_now())
             draft["status"] = "sending"
             write_draft(path, draft)
             approved_at = iso(utc_now())
@@ -1833,21 +2329,55 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                     "provider_status": "error",
                     "error": exc.__class__.__name__,
                 }
-            provider_called = True
+            provider_called = not bool(result.get("stubbed"))
             if result.get("success"):
                 message_id = str(result.get("message_id") or "")
                 if not message_id:
-                    result = {
-                        "success": False,
-                        "message_id": "",
-                        "provider_status": result.get("provider_status") or "accepted",
-                        "error": "provider returned no message id; this draft will not be retried",
-                    }
+                    finalize_script_refused_draft(
+                        ctx["store"],
+                        draft,
+                        path,
+                        box_id=ctx["box_id"],
+                        refuse_reason="provider_no_id",
+                        body=body,
+                        provider_result=result,
+                    )
+                    audit(
+                        ctx["store"],
+                        box_id=ctx["box_id"],
+                        approver=approver,
+                        dest=dest,
+                        from_number_value=ctx["from"],
+                        body=body,
+                        outcome="refused",
+                        reason="provider_no_id",
+                        approved_at=approved_at,
+                        draft_id=draft_id,
+                        telnyx_message_id=None,
+                        provider_status=result.get("provider_status") or "accepted",
+                        provider_called=provider_called,
+                    )
+                    return emit(
+                        {
+                            "ok": False,
+                            "outcome": "refused",
+                            "reason": "provider returned no message id; this draft will not be retried",
+                            "draft_id": draft_id,
+                            "dest": dest,
+                            "from": ctx["from"],
+                            "provider_status": result.get("provider_status") or "accepted",
+                            "provider_called": provider_called,
+                            "refuse_reason": "provider_no_id",
+                        },
+                        EXIT_ERROR,
+                    )
                 else:
+                    snapshot_for_outcome(draft, body)
+                    maybe_finalize_draft_outcome(ctx["store"], draft, "sent", box_id=ctx["box_id"])
                     draft["status"] = "sent"
                     draft["telnyx_message_id"] = message_id
                     draft["approved_at"] = approved_at
-                    draft["body"] = ""
+                    _draft_outcomes.strip_plaintext_fields(draft)
                     write_draft(path, draft)
                     sent_dt = utc_now()
                     sent_at = iso(sent_dt)
@@ -1877,7 +2407,8 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                         draft_id=draft_id,
                         telnyx_message_id=message_id,
                         provider_status=result.get("provider_status") or "accepted",
-                        provider_called=True,
+                        provider_called=provider_called,
+                        stubbed=bool(result.get("stubbed")),
                         session_ttl_expires_at=ttl_expires_at if session_recorded else None,
                     )
                     return emit(
@@ -1890,18 +2421,22 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                             "from": ctx["from"],
                             "telnyx_message_id": message_id,
                             "provider_status": result.get("provider_status") or "accepted",
-                            "provider_called": True,
+                            "provider_called": provider_called,
                             "auto_reply": False,
                             "session_recorded": session_recorded,
                             "session_ttl_expires_at": ttl_expires_at if session_recorded else None,
                         },
                         EXIT_OK,
                     )
-            draft["status"] = "error"
-            draft["provider_error"] = result.get("error") or "provider rejected the send"
-            draft["body"] = ""
-            write_draft(path, draft)
-            reason = str(result.get("error") or "provider rejected the send")
+            finalize_script_refused_draft(
+                ctx["store"],
+                draft,
+                path,
+                box_id=ctx["box_id"],
+                refuse_reason="provider_error",
+                body=body,
+                provider_result=result,
+            )
             audit(
                 ctx["store"],
                 box_id=ctx["box_id"],
@@ -1909,8 +2444,8 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                 dest=dest,
                 from_number_value=ctx["from"],
                 body=body,
-                outcome="error",
-                reason=reason,
+                outcome="refused",
+                reason="provider_error",
                 approved_at=approved_at,
                 draft_id=draft_id,
                 telnyx_message_id=result.get("message_id") or None,
@@ -1920,13 +2455,14 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
             return emit(
                 {
                     "ok": False,
-                    "outcome": "error",
-                    "reason": reason,
+                    "outcome": "refused",
+                    "reason": "provider rejected the send; do not retry because a retry can text them twice",
                     "draft_id": draft_id,
                     "dest": dest,
                     "from": ctx["from"],
                     "provider_status": result.get("provider_status") or "error",
-                    "provider_called": True,
+                    "provider_called": provider_called,
+                    "refuse_reason": "provider_error",
                 },
                 EXIT_ERROR,
             )
@@ -1964,13 +2500,29 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
         return emit(payload, failure.status)
 
 
-def cancel(draft_id: str) -> int:
+def cancel(draft_id: str, actor_raw: str = "") -> int:
     try:
         ctx = context()
+        transitioned = False
+        data: dict | None = None
         with DraftLock(ctx["store"]["drafts"]):
-            data = cancel_draft(ctx["store"]["drafts"], draft_id, "owner cancelled")
+            path = draft_path(ctx["store"]["drafts"], draft_id)
+            if not path.exists():
+                raise GateFailure("error", "draft was not found", field="draft_id", status=EXIT_ERROR)
+            draft = read_draft(path)
+            actor = resolve_turn_actor(actor_raw, field="actor")
+            assert_actor_is_draft_approver(
+                draft,
+                actor,
+                draft_id=draft_id,
+                groups=ctx["owner_identity_groups"],
+            )
+            assert_draft_owner(ctx, draft, draft_id=draft_id)
+            data, transitioned = cancel_draft(ctx["store"]["drafts"], draft_id, "owner cancelled")
         if data is None:
             raise GateFailure("error", "draft was not found", field="draft_id", status=EXIT_ERROR)
+        if transitioned:
+            maybe_finalize_draft_outcome(ctx["store"], data, "cancelled", box_id=ctx["box_id"])
         audit(
             ctx["store"],
             box_id=ctx["box_id"],
@@ -2401,14 +2953,22 @@ def build_parser() -> argparse.ArgumentParser:
     stage_cmd.add_argument("--source-date", default="")
     stage_cmd.add_argument("--source-name", default="")
     stage_cmd.add_argument("--source-ref", default="")
+    stage_cmd.add_argument("--replaces", default="", help="Previous draft_id when re-staging after an edit.")
+    stage_cmd.add_argument(
+        "--actor",
+        default="",
+        help="Turn sender E.164; required with --replaces and must match the draft approver.",
+    )
 
     send_cmd = sub.add_parser("send", help="Send one staged draft after SEND and attestation.")
     send_cmd.add_argument("--draft-id", required=True)
     send_cmd.add_argument("--confirm", required=True)
     send_cmd.add_argument("--attest", required=True)
+    send_cmd.add_argument("--actor", required=True, help="Turn sender; must match the draft approver.")
 
     cancel_cmd = sub.add_parser("cancel", help="Cancel one staged draft. Does not send.")
     cancel_cmd.add_argument("--draft-id", required=True)
+    cancel_cmd.add_argument("--actor", required=True, help="Turn sender; must match the draft approver.")
 
     deny_cmd = sub.add_parser("deny", help="Add one number to the local opt-out list. Does not send.")
     deny_cmd.add_argument("--approver", required=True)
@@ -2424,6 +2984,9 @@ def build_parser() -> argparse.ArgumentParser:
     dismiss_cmd = sub.add_parser("dismiss", help="Dismiss one owner event. Does not send.")
     dismiss_cmd.add_argument("--approver", required=True)
     dismiss_cmd.add_argument("--event-id", required=True)
+
+    sub.add_parser("sweep-outcomes", help="Expire silent drafts as ignored. Does not send.")
+    sub.add_parser("export-outcomes", help="Export draft outcome counts. Does not send.")
     return parser
 
 
@@ -2440,11 +3003,13 @@ def main(argv: list[str] | None = None) -> int:
             args.source_date,
             args.source_name,
             args.source_ref,
+            args.replaces,
+            args.actor,
         )
     if args.cmd == "send":
-        return send(args.draft_id, args.confirm, args.attest)
+        return send(args.draft_id, args.confirm, args.attest, args.actor)
     if args.cmd == "cancel":
-        return cancel(args.draft_id)
+        return cancel(args.draft_id, args.actor)
     if args.cmd == "deny":
         return deny(args.approver, args.dest)
     if args.cmd == "inbound":
@@ -2453,6 +3018,26 @@ def main(argv: list[str] | None = None) -> int:
         return list_events()
     if args.cmd == "dismiss":
         return dismiss(args.approver, args.event_id)
+    if args.cmd == "sweep-outcomes":
+        store = paths()
+        with DraftLock(store["drafts"]):
+            lines = _draft_outcomes.sweep_expired(store, box_slug=resolve_box_id())
+        return emit(
+            {
+                "ok": True,
+                "outcome": "swept",
+                "ignored": len(lines),
+                "provider_called": False,
+                "auto_reply": False,
+            },
+            EXIT_OK,
+        )
+    if args.cmd == "export-outcomes":
+        rows = _draft_outcomes.export_counts(paths()["draft_outcomes"])
+        return emit(
+            {"ok": True, "outcome": "exported", "rows": rows, "provider_called": False, "auto_reply": False},
+            EXIT_OK,
+        )
     return emit({"ok": False, "outcome": "error", "reason": "unknown command", "auto_reply": False}, EXIT_ERROR)
 
 

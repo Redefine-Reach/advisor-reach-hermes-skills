@@ -40,7 +40,7 @@ function draftFiles(dir) {
 function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), options = {}) {
   // Existing stage flows stay valid: a Why line is required, so inject one
   // unless the test passed --why itself or opted out.
-  const cmdArgs =
+  let cmdArgs =
     options.why === false || args[0] !== "stage" || args.includes("--why")
       ? args
       : [
@@ -50,6 +50,15 @@ function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), o
           "--source-kind",
           "owner_text",
         ];
+  if (cmdArgs[0] === "send" && !cmdArgs.includes("--actor")) {
+    cmdArgs = [...cmdArgs, "--actor", OWNER];
+  }
+  if (cmdArgs[0] === "cancel" && !cmdArgs.includes("--actor")) {
+    cmdArgs = [...cmdArgs, "--actor", OWNER];
+  }
+  if (cmdArgs[0] === "stage" && cmdArgs.includes("--replaces") && !cmdArgs.includes("--actor")) {
+    cmdArgs = [...cmdArgs, "--actor", OWNER];
+  }
   const calls = join(dir, "calls.jsonl");
   const transport = join(dir, "transport.py");
   writeFileSync(
@@ -79,7 +88,9 @@ function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), o
     SMS_DRAFT_DIR: join(dir, "drafts"),
     SMS_SESSION_DIR: join(dir, "sessions"),
     SMS_EVENT_DIR: join(dir, "events"),
+    DRAFT_OUTCOMES_PATH: join(dir, "draft-outcomes.jsonl"),
     SMS_SEND_TRANSPORT: transport,
+    SMS_TURN_OWNER_E164: OWNER,
     CALLS: calls,
     ...extra,
   };
@@ -791,7 +802,7 @@ test("REVOKE, OPTOUT, and STOP ALL refuse before any provider call", () => {
   }
 });
 
-test("a Telegram approver can confirm and cannot be the destination", () => {
+test("a Telegram approver can stage but cannot SEND until RED-700", () => {
   const dir = mkdtempSync(join(tmpdir(), "sms-tg-"));
   const staged = run(
     ["stage", "--approver", "424242", "--dest", DEST, "--body", BODY],
@@ -800,18 +811,28 @@ test("a Telegram approver can confirm and cannot be the destination", () => {
   );
   assert.equal(staged.payload.outcome, "staged");
   const sent = run(
-    ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
+    [
+      "send",
+      "--draft-id",
+      staged.payload.draft_id,
+      "--confirm",
+      "SEND",
+      "--attest",
+      "yes",
+      "--actor",
+      "424242",
+    ],
     { TELEGRAM_ALLOWED_USERS: "424242" },
     dir,
   );
-  assert.equal(sent.payload.outcome, "sent");
+  assert.equal(sent.payload.outcome, "refused_not_owner");
   const same = run(
     ["stage", "--approver", "15555550199", "--dest", DEST, "--body", BODY],
     { TELEGRAM_ALLOWED_USERS: "15555550199" },
     dir,
   );
   assert.equal(same.payload.outcome, "refused_not_third_party");
-  assert.equal(same.callLines.length, 1);
+  assert.equal(same.callLines.length, 0);
   const stranger = run(
     ["stage", "--approver", "99999", "--dest", "+15555550123", "--body", BODY],
     { TELEGRAM_ALLOWED_USERS: "424242" },
@@ -1743,7 +1764,10 @@ test("send refuses a draft whose body still has a bracketed placeholder, and res
     assert.ok(sent.payload.placeholders.length >= 1);
     const files = draftFiles(dir).map((n) => JSON.parse(readFileSync(join(dir, "drafts", n), "utf8")));
     assert.equal(files.length, 1);
-    assert.ok(files.every((d) => d.status === "cancelled" && d.body === ""), "draft is cancelled and body cleared");
+    assert.ok(
+      files.every((d) => d.status === "refused" && d.refuse_reason === "unfilled_placeholder" && d.body === ""),
+      "draft is refused with reason and body stripped from disk",
+    );
   }
   const spaced = stageThenSend("Hi Dana, the showing is on [ DATE ].", why);
   assert.equal(spaced.sent.payload.outcome, "refused_unfilled_placeholder", spaced.sent.stdout);
@@ -1773,6 +1797,30 @@ test("SKILL.md: any missing detail gets a placeholder, restage after the value, 
   assert.match(skill, /refused_no_recipient/);
   assert.match(skill, /Who should I text/);
   assert.match(skill, /Reply SEND to send, DROP to discard/);
+});
+
+test("SKILL.md cancel script example runs with --actor", () => {
+  const skill = readFileSync(skillPath, "utf8");
+  const blocks = [...skill.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1]);
+  const lines = blocks
+    .flatMap((b) => b.split("\n"))
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith("python3 ") && l.includes("sms_send_confirmed.py"));
+  assert.ok(lines.length >= 1, "expected documented cancel example");
+  assert.ok(!lines.some((l) => l.includes(" send ")), "SKILL must not document direct send");
+  assert.ok(!lines.some((l) => l.includes("--replaces")), "SKILL must not document direct re-stage");
+  const script = join(root, "skills", "sms-send-confirmed", "scripts", "sms_send_confirmed.py");
+  const cancelLine = lines.find((l) => l.includes(" cancel "));
+  assert.ok(cancelLine);
+  const cmd = cancelLine
+    .replace("/opt/data/skills/sms-send-confirmed/scripts/sms_send_confirmed.py", script)
+    .replace("+17145550100", OWNER);
+  const args = cmd.replace(/^python3\s+\S+\s+/, "").split(/\s+/).map((a) => (a === "DRAFT_ID" ? "DRAFT_ID" : a));
+  const cancelDir = mkdtempSync(join(tmpdir(), "sms-skill-cancel-"));
+  const cancelDraft = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {}, cancelDir);
+  const cancelArgs = args.map((a) => (a === "DRAFT_ID" ? cancelDraft.payload.draft_id : a));
+  const cancelled = run(cancelArgs, {}, cancelDir);
+  assert.equal(cancelled.payload.outcome, "cancelled");
 });
 
 // --- RED-585 QA RUN 10 (Oct 19) -----------------------------------------------------------
