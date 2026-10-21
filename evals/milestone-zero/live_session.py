@@ -67,6 +67,52 @@ class EvalHomeError(RuntimeError):
     pass
 
 
+# RED-585 eval stub for the production sms_stage tool (opt-in: ARIN_EVAL_SMS_STAGE_STUB=1).
+# Without it, a `hermes chat` eval turn has no sms_stage tool, so the model never reaches the
+# staged read-back (Why line + SEND footer) that production texts show. The stub keeps the
+# production tool name, toolset and schema; stage runs the installed skill script's own gates
+# in-process; send is always refused; no network or process calls. Only the stub is enabled:
+# the real arin-sms-stage plugin is never copied or enabled (plugins/ and the `plugins` config
+# key are outside the allowlist above).
+SMS_STAGE_STUB_ENV = "ARIN_EVAL_SMS_STAGE_STUB"
+SMS_STAGE_STUB_NAME = "arin-sms-stage-evalstub"
+SMS_STAGE_STUB_SRC = Path(__file__).resolve().parent / "sms_stage_stub"
+SMS_STAGE_STUB_FILES = ("plugin.yaml", "__init__.py")
+# Production telnyx_sms toolsets minus plugins the eval does not load (donotkeep, renderfile,
+# learningloop, circle). No terminal or code execution, so the real script's send path is
+# unreachable from the model.
+SMS_STAGE_STUB_TOOLSETS = ("skills", "file", "web", "cronjob", "vision", "smsstage")
+
+
+def sms_stage_stub_enabled() -> bool:
+    return os.environ.get(SMS_STAGE_STUB_ENV, "").strip() == "1"
+
+
+def install_sms_stage_stub(home: Path) -> None:
+    """Add the sms_stage eval stub to a throwaway eval home and enable only it."""
+    try:
+        import yaml  # PyYAML ships with Hermes
+    except ImportError as exc:
+        raise EvalHomeError("sms_stage_stub_needs_pyyaml") from exc
+    plugins = home / "plugins"
+    pd = plugins / SMS_STAGE_STUB_NAME
+    pd.mkdir(mode=0o700, parents=True, exist_ok=False)
+    os.chmod(plugins, 0o700)
+    for name in SMS_STAGE_STUB_FILES:
+        shutil.copyfile(SMS_STAGE_STUB_SRC / name, pd / name, follow_symlinks=False)
+        os.chmod(pd / name, 0o600)
+    cfg_path = home / "config.yaml"
+    cfg = (yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}) if cfg_path.is_file() else {}
+    cfg["plugins"] = {"enabled": [SMS_STAGE_STUB_NAME], "disabled": []}
+    toolsets = cfg.get("platform_toolsets") if isinstance(cfg.get("platform_toolsets"), dict) else {}
+    toolsets["cli"] = list(SMS_STAGE_STUB_TOOLSETS)
+    cfg["platform_toolsets"] = toolsets
+    fd = os.open(cfg_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as h:
+        h.write(yaml.safe_dump(cfg, sort_keys=False))
+    os.chmod(cfg_path, 0o600)
+
+
 def _skill_file_allowed(name: str) -> bool:
     low = name.lower()
     if low.endswith(SKILL_SKIP_SUFFIXES):
@@ -376,6 +422,8 @@ def make_eval_hermes_home(source: Path | None) -> Path:
                 sd = src / d
                 if sd.is_dir() and not sd.is_symlink():
                     _copy_skills(sd, dest / d)
+        if sms_stage_stub_enabled():
+            install_sms_stage_stub(dest)
         for stub in ("MEMORY.md", "USER.md"):
             fd = os.open(dest / stub, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as h:

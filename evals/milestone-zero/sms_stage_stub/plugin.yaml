@@ -1,0 +1,7 @@
+name: arin-sms-stage-evalstub
+version: "0.1.0"
+description: "EVAL STUB of arin-sms-stage for ARIN TEST evals only. Same tool name (sms_stage), toolset (smsstage) and schema as production. stage runs the skill script's own Why/body gates in-process and returns the production read-back; send never sends."
+author: AdvisorReach (eval)
+kind: standalone
+provides_tools:
+  - sms_stage

@@ -162,3 +162,16 @@ See **`BOX-EXPORT.md`**. Summary:
 ## Hermes 0.21.0
 
 `HERMES_PIN = "0.21.0"`. `prove_wrap()` must pass on TEST before you treat live Hermes results as valid.
+
+## sms_stage eval stub (RED-585), opt-in: `ARIN_EVAL_SMS_STAGE_STUB=1`
+
+A `hermes chat` eval turn has no `sms_stage` tool (the real `arin-sms-stage` plugin and the `plugins` config key are outside the eval-home allowlist), so the model never reaches the staged read-back that production texts show (Why line + SEND footer). On Oct 20 that alone produced all 7 `gate: Why` flags on ARIN TEST. With the stub, the same 6 synthetic pain-pulse cases went to 0/4 Why flags on the unchanged 6014efa skill.
+
+With `ARIN_EVAL_SMS_STAGE_STUB=1`, `live_session.make_eval_hermes_home` adds `sms_stage_stub/` to each throwaway home as plugin `arin-sms-stage-evalstub` and:
+
+- enables **only** that plugin (`plugins.enabled = [arin-sms-stage-evalstub]`); the real `arin-sms-stage` is never copied or enabled;
+- sets `platform_toolsets.cli` to production's `telnyx_sms` list minus plugins the eval does not load: `skills, file, web, cronjob, vision, smsstage` (no terminal, no code execution, so the model cannot run the real script).
+
+The stub keeps the production tool name (`sms_stage`), toolset (`smsstage`) and schema. `stage` runs the installed skill script's own gates and read-back functions in-process (no draft file, no process); `send` is **always refused** (`eval_stub_no_send`); `cancel` is a no-op. While it runs, socket connects and `subprocess.Popen` raise. A script without the 6014efa-era API (`build_why_line`, `attestation_text` with the Why line) makes it fail closed. Optional call log (counts/flags only): `ARIN_EVAL_SMS_STAGE_STUB_LOG=<path>`. Tests: `tests/test_milestone_zero_sms_stage_stub.py`.
+
+Never install the stub on a real box. Results with the stub on are not comparable to earlier runs without it; record the flag with the run.
