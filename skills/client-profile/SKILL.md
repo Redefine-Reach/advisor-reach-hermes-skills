@@ -58,10 +58,9 @@ from intake (use `new` for intake). Each call returns the same JSON the cp.py co
 | Render + deliver | `op: render` returns `link`, `pages`, `expires_at` and `sms_text` |
 | Forget | `op: forget` |
 
-When the owner pastes a bio or notes, add them with `origin: manual`, the URL they gave, and a NEW `candidate` number that no web result uses (one higher than the highest so far). Never put owner-pasted text under a web result's candidate. Owner notes may only add to a brief that already has public sources. They never replace a search. If the owner already replied NONE, the script drops those public matches. Do not render a brief from the notes that remain. After
-`op: render`, reply to the owner with exactly `sms_text` (it already contains the link). Do not run
-present-file. If render_file is refused or fails, tell the owner exactly "I can't make that file over
-text right now." and never guess a cause. When the owner says to forget or delete a client's profile, run only `op: forget` (do not use donotkeep for this; it is a deletion, not a do-not-keep rule) and reply "Deleted <name>'s profile and link."
+When the owner pastes a bio or notes, add them with `origin: manual`, the URL they gave, and a NEW `candidate` number that no web result uses (one higher than the highest so far). Never put owner-pasted text under a web result's candidate. Owner notes may only add to a brief that already has public sources. They never replace a search. If the owner already replied NONE, the script drops those public matches. Do not render a brief from the notes that remain. After a successful `op: render`, send **one** SMS to the owner: when the tool returns both `say` and `sms_text`, put `say`, a blank line, then `sms_text` in that single message. When only `sms_text` is returned, send that alone. The link appears once. Do not send a second message with the same link, do not call `op: render` again for the same `client_id` in the same turn, and do not run present-file. If `delivery.json` already exists for this client unless the owner asked to regenerate, do not deliver or text another copy. If render_file is refused or fails, tell the owner exactly "I can't make that file over text right now." and never guess a cause. When the owner says to forget or delete a client's profile, run only `op: forget` (do not use donotkeep for this; it is a deletion, not a do-not-keep rule) and reply "Deleted <name>'s profile and link."
+
+Never leak internal status to the owner: do not say "Queued for the next turn", "I'll do that next turn", or any ARIN queue or turn jargon. When `next` is `write` or the owner picked a candidate, finish evidence, brief, validate, and render in **this** turn. Never say "Checking your calendar." or open Google Calendar, `day-open-rollcall`, or `daily-brief` during a buyer profile turn.
 
 ## Tool sequence (cp.py reference)
 
@@ -140,6 +139,7 @@ The brief is one page. Keep each section to one or two sentences.
 Use DISC as a loose communication lens — working hypotheses only, never a diagnosis.
 If the evidence is thin, set disc_hypothesis to "insufficient evidence" and confidence to "low". Do not force a style.
 Every claim cites evidence IDs that cp.py has marked selected. Omit unsupported claims.
+When selected evidence includes one or more `linkedin.com/posts/` URLs, cite at least one of those post evidence IDs in the main brief (for example `verified_facts`, `observations`, or `client_stated`). Posts only show in the PDF Sources list when cited. Profile-only citations are not enough when kept posts exist.
 Confidence: high = two or more distinct selected items; medium = one solid item; low = weak signal.
 Identity on the brief reads Owner-picked, then High, Medium, or Low, from the evidence rules. Do not use a stronger label than High, Medium, or Low in the brief, the SMS, or any sentence the owner reads.
 High is allowed only when two or more distinct sources contain the full first and last name and fewer than three candidates match. One source is medium at most. Three or more candidate matches are medium at most, and low when the picked person has only one source.
