@@ -57,7 +57,7 @@ except ImportError:
     _discover_plugins = None
 
 # red-390-v2 adds the owner Why line. red-390-v3 updates attestation footer wording
-# (DROP discard, Missing line). The client body and body_hash stay the same.
+# (approval line, DROP discard, Missing line). The client body and body_hash stay the same.
 ATTESTATION_VERSION = "red-390-v3"
 DEFAULT_MAX_BODY_CHARS = 640
 DEFAULT_DRAFT_TTL_SECONDS = 1800
@@ -289,8 +289,8 @@ def attestation_text(
         lines.append(missing_line)
     lines.extend(
         [
-            "Reply SEND to confirm you authorize this one message and that the recipient may receive it.",
-            "Reply SEND to send, DROP to discard.",
+            "Nothing goes out until you reply SEND.",
+            "Reply DROP to discard.",
             "The recipient can still opt out with their carrier.",
         ]
     )
