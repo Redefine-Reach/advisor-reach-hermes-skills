@@ -1,7 +1,11 @@
 #!/opt/hermes/.venv/bin/python
 """Render a gbp-scorecard report directory to PDF.
 
-Usage: render.py <report-dir> <out.pdf>
+Usage: render.py <report-dir> <out.pdf> [--publish]
+
+With --publish, copy the PDF to $ARTIFACT_DIR/<24 hex chars>.pdf and print
+`render.py: link $ARTIFACT_BASE_URL/<name>`. If either env var is unset, print
+`render.py: publish skipped (no ARTIFACT_DIR)` and exit 0. Always prints `pages=<n>`.
 
 <report-dir> holds ONE JSON FILE PER SECTION (small files, so a text-only model never
 has to emit one giant JSON blob in a single tool call):
@@ -17,9 +21,13 @@ Exit 2 on validation error, printing the JSON pointer so the agent fixes the JSO
 never the template.
 """
 import json
+import os
+import re
+import secrets
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 import jinja2
 import jsonschema
@@ -29,6 +37,8 @@ SECTIONS = [
     "channels", "channels_note", "gbp", "plan", "targets", "donts", "sources", "research_log",
 ]
 HERE = Path(__file__).resolve().parent
+_PAGE_OBJS = re.compile(rb"/Type\s*/Page\b")
+_PUBLISH_ATTEMPTS = 5
 
 
 def load_report(report_dir: Path) -> dict:
@@ -46,11 +56,57 @@ def load_report(report_dir: Path) -> dict:
     return report
 
 
-def main() -> None:
-    if len(sys.argv) != 3:
+def parse_args(argv: list[str]) -> tuple[Path, Path, bool]:
+    args = list(argv)
+    publish = False
+    if args and args[-1] == "--publish":
+        publish = True
+        args = args[:-1]
+    if len(args) != 2:
         print(__doc__, file=sys.stderr)
         sys.exit(1)
-    report_dir, out_pdf = Path(sys.argv[1]), Path(sys.argv[2])
+    return Path(args[0]), Path(args[1]), publish
+
+
+def page_count(pdf: Path) -> int:
+    # `/Type /Page` is a leaf; `/Type /Pages` does not match the trailing word boundary.
+    n = len(_PAGE_OBJS.findall(pdf.read_bytes()))
+    if n < 1:
+        print("render.py: could not count pages", file=sys.stderr)
+        sys.exit(2)
+    return n
+
+
+def publish_pdf(src: Path) -> None:
+    artifact_dir = os.environ.get("ARTIFACT_DIR", "").strip()
+    base_url = os.environ.get("ARTIFACT_BASE_URL", "").strip().rstrip("/")
+    if not artifact_dir or not base_url:
+        print("render.py: publish skipped (no ARTIFACT_DIR)")
+        return
+    data = src.read_bytes()
+    root = Path(artifact_dir)
+    for _ in range(_PUBLISH_ATTEMPTS):
+        name = f"{secrets.token_hex(12)}.pdf"
+        try:
+            with open(root / name, "xb") as fh:
+                fh.write(data)
+        except FileExistsError:
+            continue
+        print(f"render.py: link {base_url}/{name}")
+        return
+    print("render.py: publish failed (artifact name already exists)", file=sys.stderr)
+    sys.exit(1)
+
+
+def emit_result(out_pdf: Path, publish: bool) -> None:
+    print(f"render.py: wrote {out_pdf}")
+    print(f"pages={page_count(out_pdf)}")
+    if publish:
+        publish_pdf(out_pdf)
+
+
+def main() -> None:
+    report_dir, out_pdf, publish = parse_args(sys.argv[1:])
     report = load_report(report_dir)
 
     schema = json.loads((HERE / "schema.json").read_text(encoding="utf-8"))
@@ -61,7 +117,6 @@ def main() -> None:
         print(f"render.py: report invalid at {path}: {e.message}", file=sys.stderr)
         sys.exit(2)
 
-    import re
     joined = json.dumps(report, ensure_ascii=False)
     for m in re.finditer(r"[≈~]\s*\$\s?[\d.,]+\s*[MK]?", joined):
         window = joined[max(0, m.start() - 120): m.end() + 120]
@@ -72,7 +127,6 @@ def main() -> None:
     # Found-but-dropped guard: every research_log entry the agent marked found:true must be
     # cited somewhere in the report body (its domain must appear in some cell, the bio, or
     # sources). Measured 2026-09-12: runs found the trade-press finalist page and then omitted it.
-    from urllib.parse import urlparse
     body = json.dumps({k: v for k, v in report.items() if k != "research_log"}, ensure_ascii=False).lower()
     uncited = []
     for entry in report["research_log"]:
@@ -95,7 +149,7 @@ def main() -> None:
     html_path.write_text(html, encoding="utf-8")
 
     subprocess.run(["/usr/bin/weasyprint", str(html_path), str(out_pdf)], check=True)
-    print(f"render.py: wrote {out_pdf}")
+    emit_result(out_pdf, publish)
 
 
 if __name__ == "__main__":
