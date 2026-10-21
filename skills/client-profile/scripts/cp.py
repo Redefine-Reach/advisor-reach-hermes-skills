@@ -216,6 +216,9 @@ REUSE_NAME = (
     "A later intake is a different person. Name this client to reuse that record."
 )
 SEARCH_REQUIRED = "Run search first."
+COULDNT_FIND = (
+    "No public match was found. Please send a city, company, or LinkedIn/website link."
+)
 NEED_ANCHOR = (
     "Identity confidence is Low. No source matches this company, name handle, or email domain. "
     "Send a profile link or company."
@@ -828,7 +831,7 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
     if search_missed(path):
         return {
             "ok": False,
-            "errors": [{"code": "couldnt_find", "message": "couldn't find"}],
+            "errors": [{"code": "couldnt_find", "message": COULDNT_FIND}],
             "warnings": warnings,
             "brief": None,
         }
@@ -850,7 +853,7 @@ def evaluate_brief(path: Path, brief: dict) -> dict:
     intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
     parts = split_name(intake.get("name") or "")
     if not parts:
-        errors.append({"code": "couldnt_find", "message": "couldn't find"})
+        errors.append({"code": "couldnt_find", "message": COULDNT_FIND})
     else:
         first, last = parts
         candidate = int(identity.get("candidate") or 0)
@@ -988,6 +991,7 @@ def fill_template(template: str, mapping: dict[str, str]) -> str:
 
 def build_html(path: Path, brief: dict) -> str:
     intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
+    sources = cited_sources(brief)
     play = brief["appointment_playbook"]
     style = brief["communication_style"]
     appt = intake.get("appt_at") or ""
@@ -1003,9 +1007,10 @@ def build_html(path: Path, brief: dict) -> str:
     if search_doc and search_doc.get("status") == "unavailable":
         search_notice = f"<p class=\"banner\">{html_escape(SEARCH_UNAVAILABLE)}</p>"
     elif search_doc and search_doc.get("status") == "done":
+        source_word = "source" if len(sources) == 1 else "sources"
         notice = (
             f"Searched {search_doc.get('query_count')} public queries and kept "
-            f"{search_doc.get('source_count')} sources."
+            f"{len(sources)} {source_word}."
         )
         note = search_doc.get("excluded_note") or ""
         if isinstance(note, str) and note.strip():
@@ -1044,7 +1049,7 @@ def build_html(path: Path, brief: dict) -> str:
         "{{RECOMMENDATIONS}}": render_items(brief.get("recommendations") or []),
         "{{UNKNOWNS}}": render_items(brief.get("what_we_dont_know") or []),
         "{{APPENDIX}}": render_items((brief.get("appendix") or {}).get("low_confidence") or []),
-        "{{SOURCES}}": render_sources(cited_sources(brief)),
+        "{{SOURCES}}": render_sources(sources),
     }
     return fill_template(TEMPLATE_PATH.read_text(encoding="utf-8"), mapping)
 
@@ -2603,7 +2608,7 @@ def write_couldnt_find(
 ) -> None:
     stamp_search(path, {
         "status": "couldnt_find",
-        "message": "couldn't find",
+        "message": COULDNT_FIND,
         "query_count": len(queries),
         "queries": [query["q"] for query in queries],
         "targets": [query.get("target") for query in queries],
@@ -2619,7 +2624,7 @@ def write_couldnt_find(
         "ok": False,
         "error": "couldnt_find",
         "status": "couldnt_find",
-        "message": "couldn't find",
+        "message": COULDNT_FIND,
         "query_count": len(queries),
         "source_count": 0,
     }
@@ -2663,14 +2668,14 @@ def cmd_search(client_id: str, opts: dict[str, list[str]]) -> None:
     if not parts:
         stamp_search(path, {
             "status": "unavailable",
-            "message": "couldn't find",
+            "message": COULDNT_FIND,
             "query_count": 0,
             "source_count": 0,
             "sources": [],
             "conflict": False,
             "counts": search_count(0, 0, 0, 0),
         })
-        fail("couldnt_find", "couldn't find")
+        fail("couldnt_find", COULDNT_FIND)
     first, last = parts
     rows = [row for row in load_evidence(path) if row.get("via") != "exa"]
     found: list[dict] = []
@@ -3363,9 +3368,9 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
         doc = load_search(path) or {}
         if doc.get("status") == "unavailable":
             fail("search_unavailable", doc.get("message") or SEARCH_UNAVAILABLE)
-        stop_identity(path, "couldnt_find", "couldn't find")
+        stop_identity(path, "couldnt_find", COULDNT_FIND)
     if not parts:
-        stop_identity(path, "couldnt_find", "couldn't find")
+        stop_identity(path, "couldnt_find", COULDNT_FIND)
     first, last = parts
     manual = [row for row in usable if row.get("origin") == "manual"]
     if is_common_name(first, last) and not has_profile_url(intake, usable) and not manual:
@@ -3378,7 +3383,7 @@ def cmd_candidates(client_id: str, opts: dict[str, list[str]]) -> None:
             continue
         grouped.setdefault(int(row["candidate"]), []).append(row)
     if not grouped:
-        stop_identity(path, "couldnt_find", "couldn't find")
+        stop_identity(path, "couldnt_find", COULDNT_FIND)
     candidates = []
     for number in sorted(grouped):
         group = grouped[number]
@@ -3478,14 +3483,14 @@ def cmd_confirm(client_id: str, opts: dict[str, list[str]]) -> None:
     intake = json.loads((path / "intake.json").read_text(encoding="utf-8"))
     parts = split_name(intake.get("name") or "")
     if not parts:
-        fail("couldnt_find", "couldn't find")
+        fail("couldnt_find", COULDNT_FIND)
     first, last = parts
     if is_common_name(first, last) and not has_profile_url(intake, rows):
         if any(row.get("origin") != "manual" for row in matched):
             fail("need_profile_link", "This name is common. Send a profile link instead of a guess.")
     named = [row for row in matched if row_name_match(row, first, last)]
     if not named:
-        fail("couldnt_find", "couldn't find")
+        fail("couldnt_find", COULDNT_FIND)
     named_ids = {row["evidence_id"] for row in named}
     confirmed: list[str] = []
     for row in rows:
