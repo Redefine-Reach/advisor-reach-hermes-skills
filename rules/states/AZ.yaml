@@ -6,9 +6,8 @@ last_checked: '2026-10-12'
 disclaimer: Reminders of published text only, not legal advice. Contract-term reminders reflect the standard
   Arizona REALTORS purchase contract (Feb 2026); a signed contract or counteroffer can change the days.
 source_policy:
-  statute_and_adre_rules: at least 2 sources, at least 1 official (A.R.S., A.A.C., ADRE, or CFR)
-  contract_terms: 'source_type standard_contract_form (CI: exactly 1 source allowed, caveat field required); single source allowed: current Arizona REALTORS form edition, labeled "standard contract
-    form, Feb 2026" (Jerry, 2026-10-12)'
+  statute_and_adre_rules: 'at least 2 independent sources (different URLs or publishers), at least 1 official (A.R.S., A.A.C., ADRE, or CFR)'
+  contract_terms: 'category "contract terms" may cite one source only when that source is the Arizona REALTORS form labeled "standard contract form, Feb 2026" and reminder_text includes "check your signed contract" (Jerry, 2026-10-12). The previous reminder kind is kept on reminder_category.'
 provenance:
   dataset: https://github.com/Redefine-Reach/research-director/pull/9
   audit: research-director workspace audit az-rules-audit-2026-10-12.md
@@ -45,14 +44,15 @@ rules:
       brokers employed by a designated broker pursuant to section 32-2151.01, subsection G during each
       twenty-four-month period of licensure.
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '2010-07-29'
   last_verified: '2026-10-12'
   last_checked: '2026-10-12'
-  verification_note: "Fact-check 2026-10-12: effective date left null. Laws 2010 ch. 166 (SB 1219) only changed the renewal term in 32-2129(C) and the original enactment wasn't found."
-  confidence: high
+  verification_note: 'Effective date: Laws 2010, ch. 166 (SB 1219) §5 amends A.R.S. § 32-2129(C) (https://www.azleg.gov/legtext/49leg/2r/laws/0166.htm). Section 5 prints no calendar date and the chapter has no emergency clause (approved April 26, 2010). 2010-07-29 is the Forty-ninth Legislature, Second Regular Session general effective date (sine die April 29, 2010; https://www.azleg.gov/alispdfs/49leg/2R/House/BillStats.pdf). Medium-evidence caveat: the date relies on the general 90-day effective-date rule, the ninety-first day after sine die, not a date written in §5. Section 5 changes the renewal term from four years to two; the original-license two-year sentence in the same subsection is not shown as new text.'
+  confidence: medium
   notes: The two-year length is stated in A.R.S. § 32-2129(C). Section 32-2130(A) independently describes
     licensure in twenty-four-month periods. The expiration date printed on the license is the date the
-    two-year period ends. Original licenses end on the last day of the issuance month.
+    two-year period ends. Original licenses end on the last day of the issuance month. The 2010-07-29
+    date is medium evidence because it is the session general effective date under the 90-day rule.
 - id: az-license-timely-renewal-on-expiration-date
   category: license_renewal
   title: Timely renewal is due by the expiration date
@@ -369,7 +369,8 @@ rules:
     of the required renewal hours. It does not say they raise the 24-hour or 30-hour total. No effective-date
     exception for licenses that expired before January 1, 2025 was found on the ADRE page itself.
 - id: az-rpc-day-count
-  category: other
+  category: "contract terms"
+  reminder_category: other
   title: Contract days are calendar days, and the start day is excluded
   plain_rule: The February 2026 Residential Resale Real Estate Purchase Contract says every reference
     to days is a calendar day, the day of the triggering act is not counted, and the last day is counted.
@@ -411,7 +412,8 @@ rules:
     the current Arizona REALTORS form edition (Feb 2026) is the single source. The Aug 2024 edition was
     removed as a non-independent second source.'
 - id: az-rpc-earnest-money-deposit
-  category: contract_deadline
+  category: "contract terms"
+  reminder_category: contract_deadline
   title: Earnest money is deposited upon acceptance
   plain_rule: On the February 2026 and August 2024 purchase contracts, earnest money, if any, is deposited
     upon acceptance with the escrow company or the broker's trust account, as checked on the form.
@@ -447,7 +449,8 @@ rules:
     Arizona REALTORS form edition (Feb 2026) is the single source. The Aug 2024 edition was removed as
     a non-independent second source.'
 - id: az-rpc-inspection-period
-  category: contract_deadline
+  category: "contract terms"
+  reminder_category: contract_deadline
   title: Inspection period prints as ten days, with a blank
   plain_rule: The February 2026 and August 2024 purchase contracts print the buyer's inspection period
     as ten days or a filled-in number of days after contract acceptance.
@@ -482,7 +485,8 @@ rules:
     edition (Feb 2026) is the single source. The Aug 2024 edition was removed as a non-independent second
     source.'
 - id: az-rpc-binsr-before-inspection-period-ends
-  category: contract_deadline
+  category: "contract terms"
+  reminder_category: contract_deadline
   title: Buyer's inspection notice is due before the inspection period ends
   plain_rule: Before the inspection period expires, the buyer delivers one signed notice of any items
     disapproved, and the Buyer's Inspection Notice and Seller's Response form is the form named for that
@@ -522,7 +526,8 @@ rules:
     edition (Feb 2026) is the single source. The Aug 2024 edition was removed as a non-independent second
     source.'
 - id: az-rpc-seller-response-to-binsr
-  category: contract_deadline
+  category: "contract terms"
+  reminder_category: contract_deadline
   title: Seller's inspection response prints as five days, with a blank
   plain_rule: If the buyer asks the seller to correct or address disapproved items, the seller's written
     response period prints as five days or a filled-in number of days after delivery of the buyer's notice.
@@ -562,7 +567,8 @@ rules:
     Arizona REALTORS form edition (Feb 2026) is the single source. The Aug 2024 edition was removed as
     a non-independent second source.'
 - id: az-rpc-buyer-election-after-seller-response
-  category: contract_deadline
+  category: "contract terms"
+  reminder_category: contract_deadline
   title: Buyer has five days after the seller's inspection response
   plain_rule: If the seller does not agree to correct or address every disapproved item, the buyer may
     cancel within five days after delivery of the seller's response or after the seller's response time
@@ -601,7 +607,8 @@ rules:
     Arizona REALTORS form edition (Feb 2026) is the single source. The Aug 2024 edition was removed as
     a non-independent second source.'
 - id: az-rpc-spds-disapproval-window
-  category: contract_deadline
+  category: "contract terms"
+  reminder_category: contract_deadline
   title: SPDS disapproval runs to the later of the inspection period or five days after receipt
   plain_rule: The buyer gives notice of any disapproved SPDS items within the inspection period or five
     days after receipt of the SPDS, whichever is later.
@@ -636,7 +643,8 @@ rules:
     Source policy (Jerry, 2026-10-12): contract-term rule; the current Arizona REALTORS form edition (Feb
     2026) is the single source. The Aug 2024 edition was removed as a non-independent second source.'
 - id: az-rpc-spds-delivery
-  category: disclosure
+  category: "contract terms"
+  reminder_category: disclosure
   title: SPDS delivery prints as three days after acceptance
   plain_rule: The February 2026 and August 2024 purchase contracts say the seller delivers a completed
     AAR Residential SPDS to the buyer within three days after contract acceptance.
@@ -673,7 +681,8 @@ rules:
     here. Source policy (Jerry, 2026-10-12): contract-term rule; the current Arizona REALTORS form edition
     (Feb 2026) is the single source. The Aug 2024 edition was removed as a non-independent second source.'
 - id: az-rpc-lsu-ten-days
-  category: contract_deadline
+  category: "contract terms"
+  reminder_category: contract_deadline
   title: Loan Status Update is due ten days after acceptance
   plain_rule: The buyer delivers the Loan Status Update, with at least lines 1 through 40 completed, within
     ten days after contract acceptance.
@@ -712,7 +721,8 @@ rules:
     Arizona REALTORS form edition (Feb 2026) is the single source. The Aug 2024 edition was removed as
     a non-independent second source.'
 - id: az-rpc-appraisal-contingency
-  category: contingency
+  category: "contract terms"
+  reminder_category: contingency
   title: Appraisal cancellation period is five days after notice of value
   plain_rule: If a lender appraisal comes in below the purchase price, the buyer has five days after notice
     of the appraised value to cancel and have the earnest money returned, or the appraisal contingency
@@ -751,7 +761,8 @@ rules:
     REALTORS form edition (Feb 2026) is the single source. The Aug 2024 edition was removed as a non-independent
     second source.'
 - id: az-rpc-title-commitment-review
-  category: contract_deadline
+  category: "contract terms"
+  reminder_category: contract_deadline
   title: 'Title commitment and included CC&Rs: five days after receipt'
   plain_rule: The buyer has five days after receipt of the title commitment, and five days after notice
     of any later exceptions, to give notice of disapproved items, and the commitment includes the CC&Rs
@@ -879,7 +890,8 @@ rules:
     seller provides the disclosure if there are fewer than 50 units and the HOA provides it if there are
     50 or more, and it does not restate the ten days.'
 - id: az-rpc-cure-period
-  category: contract_deadline
+  category: "contract terms"
+  reminder_category: contract_deadline
   title: Cure period is three days after the cure notice
   plain_rule: After a party delivers a notice specifying non-compliance, the other party has three days
     to cure, and if the non-compliance is not cured in those three days it becomes a breach.
@@ -918,7 +930,8 @@ rules:
     2026-10-12): contract-term rule; the current Arizona REALTORS form edition (Feb 2026) is the single
     source. The Aug 2024 edition was removed as a non-independent second source.'
 - id: az-rpc-preclosing-walkthrough
-  category: checklist
+  category: "contract terms"
+  reminder_category: checklist
   title: Pre-closing walkthrough has no printed day count
   plain_rule: The seller gives the buyer and the buyer's inspectors reasonable access for walkthroughs
     before close of escrow, on reasonable notice, and the contract does not print a number of days before
@@ -1238,12 +1251,11 @@ rules:
       or who causes land to be divided into a subdivision) are required to give buyers a Public Report.
       Read the Public Report before signing any contract to purchase a property in a subdivision.
     retrieved_date: '2026-10-12'
-  effective_date: null
+  effective_date: '2024-09-14'
   last_verified: '2026-10-12'
-  status: drop
   last_checked: '2026-10-12'
-  verification_note: "DROP: no session-law effective date found for the furnish-before-signing duty in § 32-2183(A); azleg.gov page has no history line and Laws 2024 ch. 52 does not amend it (fact-check 2026-10-12 plus retry)."
-  confidence: high
+  verification_note: 'Effective date: Laws 2024, ch. 41 (HB 2548) §11 amends A.R.S. § 32-2183 (https://www.azleg.gov/legtext/56leg/2R/laws/0041.pdf), approved March 29, 2024. The prior note cited Laws 2024, ch. 52, which does not amend § 32-2183. Section 11 prints no calendar date and the chapter has no effective-date section. 2024-09-14 is the Fifty-sixth Legislature, Second Regular Session general effective date (sine die June 15, 2024; https://www.azleg.gov/general-effective-dates/). Medium-evidence caveat: the date relies on the general 90-day effective-date rule, the ninety-first day after sine die, not a date written in §11. The furnish-before-signing sentence is retained text in that amendment; the new language in §11 is the military-installation map requirement.'
+  confidence: medium
   notes: Exemptions are in A.R.S. §§ 32-2181.01 and 32-2181.02 and were not restated as deadlines. The
     three-year rescission action is a limitations period in § 32-2183(I), not a contract contingency,
     and it is included in the quote so the rescission consequence is not dropped. The advisory's 'before
@@ -1339,7 +1351,8 @@ rules:
     check the current statute text for the full list. The Arizona REALTORS forms index lists an Affidavit
     of Disclosure form dated August 2026, which was not fetched for this file.'
 - id: az-rpc-affidavit-delivery-five-days
-  category: contract_deadline
+  category: "contract terms"
+  reminder_category: contract_deadline
   title: Purchase contract prints affidavit delivery five days after acceptance
   plain_rule: If the premises are in an unincorporated area and five or fewer parcels other than subdivided
     property are being transferred, the February 2026 and August 2024 contracts say the seller delivers
