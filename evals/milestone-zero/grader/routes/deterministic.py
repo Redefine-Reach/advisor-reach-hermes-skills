@@ -37,6 +37,9 @@ _HEDGE = re.compile(r"\b(i think|probably|should be|i believe|might be|looks lik
 _SEND_FOOTER = re.compile(r"\b(?:say|reply|text|send)\s+SEND\b|\bSEND to send\b", re.I)
 _EMOJI = re.compile("[\U0001F300-\U0001FAFF\u2600-\u27BF]")
 _DRAFT_HEAD = re.compile(r"^\s*(?:drafted|draft(?: email| text)?)(?:\s+(?:to|for)\b[^:\n]*)?:\s*", re.I)
+# Production sms_stage read-back (attestation_text in sms_send_confirmed.py).
+_READBACK_HEAD = re.compile(r"^\s*You[\u2019']re about to send this text from\b.*\bto\b.*$", re.I)
+_READBACK_END = re.compile(r"^\s*The recipient can still opt out with their carrier\.?\s*$", re.I)
 _QUOTED = re.compile(r"[\"\u201c][^\"\u201d\n]{3,}[\"\u201d]")
 
 
@@ -60,11 +63,28 @@ def produced_draft(assistant: str) -> bool:
 
 def split_draft(assistant: str) -> tuple[str, str]:
     """(ARIN's own words, drafted text). Drafted text = quoted text, or what follows
-    'Draft to X:' up to the Why / SEND footer lines."""
+    'Draft to X:' up to the Why / SEND footer lines.
+
+    A production sms_stage read-back ("You're about to send this text from ... to ...", then the
+    body, the Why line, an optional Missing line and the fixed SEND / opt-out footer) is tool
+    output, not ARIN's own words: its body counts as drafted text and its header, Why, Missing
+    and footer lines count as neither, so they don't feed the length or hedge checks."""
     drafted: list[str] = []
     own: list[str] = []
     in_draft = False
+    in_readback = readback_footer = False
     for line in assistant.splitlines():
+        if _READBACK_HEAD.match(line):
+            in_readback, readback_footer, in_draft = True, False, False
+            continue
+        if in_readback:
+            if _READBACK_END.match(line) or (readback_footer and not line.strip()):
+                in_readback = False
+            elif _SEND_FOOTER.search(line):
+                readback_footer = True
+            elif not re.match(r"^\s*(?:why|missing):", line, re.I):
+                drafted.append(line)
+            continue
         m = _DRAFT_HEAD.match(line)
         if m:
             own.append(line[: m.end()])
