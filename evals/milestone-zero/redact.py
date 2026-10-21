@@ -349,15 +349,20 @@ def load_known_names(path: Path | None) -> list[str]:
     lines = path.read_text(encoding="utf-8").splitlines()
     raw = [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
     candidates = expand_known_names(raw)
-    ignored = _COMMON_WORDS | STRUCTURAL_ROLE_VALUES | {
-        "messages", "message", "role", "content", "source",
-        "telnyx_sms", "cli", "api_server", "cron", "telegram", "webhook",
-    }
-    # Drop a compound candidate too if one of its parts is ordinary/schema text;
-    # expand_known_names still preserves any other, potentially identifying parts.
-    names = [name for name in candidates if not any(part.lower() in ignored for part in name.split())]
+    # Common-word names remain candidates; matching them requires capitals when
+    # used alone. Schema/role/source words never become name candidates.
+    names = [name for name in candidates
+             if not any(part.lower() in IGNORED_KNOWN_NAME_WORDS for part in name.split())]
     print(f"known_names_dropped: count={len(candidates) - len(names)}", file=sys.stderr)
     return names
+
+
+def known_name_match_allowed(name: str, matched: str) -> bool:
+    """Full names match in any case; common single words require Title case or ALL CAPS."""
+    parts = name.split()
+    if any(part.lower() in IGNORED_KNOWN_NAME_WORDS for part in parts):
+        return False
+    return len(parts) > 1 or name.lower() not in _COMMON_WORDS or matched.istitle() or matched.isupper()
 
 
 def load_forgotten(path: Path | None) -> list[str]:
@@ -472,18 +477,32 @@ def _sub(pattern: re.Pattern[str], repl: str, code: str, text: str, ctx: Redacti
 
 def redact_names(text: str, ctx: RedactionContext) -> str:
     owner = ctx.owner_name.lower()
-    allow = _NAME_ALLOW | {owner}
+    allow = _NAME_ALLOW | IGNORED_KNOWN_NAME_WORDS | {owner}
     name_map = ctx._name_map
 
     def ph(name: str) -> str:
         return ctx.placeholder_name(name)
 
+    known = {name.lower() for name in ctx.known_names}
+
+    def candidate_allowed(name: str) -> bool:
+        if any(part.lower() in IGNORED_KNOWN_NAME_WORDS for part in name.split()):
+            return False
+        return name.lower() not in known or known_name_match_allowed(name, name)
+
+    def mapped_candidate(name: str) -> str:
+        if not candidate_allowed(name):
+            return name
+        ctx.bump("name")
+        return ph(name)
+
     out = text
-    for nm in ctx.known_names:
+    for nm in sorted(ctx.known_names, key=len, reverse=True):
         if nm:
             out = re.sub(
                 rf"\b{re.escape(nm)}\b",
-                lambda m, n=nm: (ctx.bump("name"), ph(n))[1],
+                lambda m, n=nm: (ctx.bump("name"), ph(n))[1]
+                if known_name_match_allowed(n, m.group(0)) else m.group(0),
                 out,
                 flags=re.I,
             )
@@ -497,6 +516,8 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
 
     def replace_text_target(m: re.Match[str]) -> str:
         first, last = m.group(1), m.group(2)
+        if not candidate_allowed(first):
+            return m.group(0)
         # A weekday/month word after "text" followed by a capitalized surname is a person
         # ("text Sunday Reyes", "text April Moss"), so it is not kept as a date word.
         date_person = (
@@ -507,7 +528,7 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
             return m.group(0)
         ctx.bump("name")
         out_s = m.group(0).replace(first, ph(first), 1)
-        if last and last.lower() not in allow and last.lower() not in _TEXT_TARGET_SKIP and (
+        if last and candidate_allowed(last) and last.lower() not in allow and last.lower() not in _TEXT_TARGET_SKIP and (
             last[0].isupper() or last.lower() not in _NOT_SURNAME
         ):
             ctx.bump("name")
@@ -524,10 +545,7 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
     )
     out = re.sub(
         r"\btell\s+([a-z]{2,})\s+and\s+([a-z]{2,})",
-        lambda m: (
-            ctx.bump("name"),
-            f"tell {ph(m.group(1))} and {ph(m.group(2))}",
-        )[1],
+        lambda m: f"tell {mapped_candidate(m.group(1))} and {mapped_candidate(m.group(2))}",
         out,
         flags=re.I,
     )
@@ -537,12 +555,13 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
         head, body = (m.group(1), m.group(2)) if m else ("", line)
         body = re.sub(
             r"\b(?:Mr|Mrs|Ms|Miss|Dr)\.\s+([A-Z][a-z]+)",
-            lambda g: (ctx.bump("name"), ph(g.group(1)))[1],
+            lambda g: mapped_candidate(g.group(1)) if candidate_allowed(g.group(1)) else g.group(0),
             body,
         )
         body = re.sub(
             r"\b([A-Z][a-z]+)\s+[A-Z]\.(?=\s|$|[,;:])",
-            lambda g: (ctx.bump("name"), ph(f"{g.group(1)} {g.group(0).split()[-1]}"))[1],
+            lambda g: mapped_candidate(f"{g.group(1)} {g.group(0).split()[-1]}")
+            if candidate_allowed(g.group(0)) else g.group(0),
             body,
         )
 
@@ -613,6 +632,7 @@ def redact_names(text: str, ctx: RedactionContext) -> str:
             if g.group(1).lower() in allow or g.group(1).startswith("client_")
             else (ctx.bump("name"), ph(g.group(1)))[1]
             if g.group(1).lower() in {p.lower() for p in ctx.known_names}
+            and known_name_match_allowed(g.group(1), g.group(0))
             else g.group(0),
             body,
         )
@@ -746,6 +766,10 @@ STRUCTURAL_ROLE_KEYS = frozenset({"role"})
 STRUCTURAL_ROLE_VALUES = frozenset(
     {"user", "owner", "human", "assistant", "arin", "agent", "tool", "system", "function", "developer"}
 )
+IGNORED_KNOWN_NAME_WORDS = STRUCTURAL_ROLE_VALUES | frozenset({
+    "messages", "message", "role", "content", "source",
+    "telnyx_sms", "cli", "api_server", "cron", "telegram", "webhook",
+})
 
 
 def is_structural_value(key: object, value: object) -> bool:

@@ -40,6 +40,7 @@ from redact import (
     secure_write_text,
     session_drop_reason,
     is_structural_value,
+    known_name_match_allowed,
     write_manifest,
 )
 
@@ -270,7 +271,8 @@ def apply_name_map(obj: object, name_map: dict[str, str]) -> object:
     pat = re.compile(r"\b(" + "|".join(re.escape(n) for n in names) + r")\b", re.IGNORECASE)
 
     def sub(text: str) -> str:
-        return pat.sub(lambda m: name_map[m.group(1).lower()], text)
+        return pat.sub(lambda m: name_map[m.group(1).lower()]
+                       if known_name_match_allowed(m.group(1), m.group(1)) else m.group(0), text)
 
     if isinstance(obj, str):
         return sub(obj)

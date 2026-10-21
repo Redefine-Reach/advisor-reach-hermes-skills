@@ -23,6 +23,7 @@ from redact import (  # noqa: E402
     EXIT_BLOCKED,
     EXIT_EXCLUDED,
     EXIT_OK,
+    IGNORED_KNOWN_NAME_WORDS,
     REDACTION_VERSION,
     RedactionContext,
     redact_fail_closed,
@@ -55,17 +56,14 @@ class VaultRegression(unittest.TestCase):
 
 
 class KnownNameFiltering(unittest.TestCase):
-    def test_all_schema_sources_and_common_words_are_ignored(self) -> None:
-        import redact
-        ignored = redact._COMMON_WORDS | redact.STRUCTURAL_ROLE_VALUES | {
-            "messages", "message", "role", "content", "source",
-            "telnyx_sms", "cli", "api_server", "cron", "telegram", "webhook",
-        }
+    def test_all_schema_and_source_words_are_ignored(self) -> None:
+        from redact import load_known_names
+        ignored = IGNORED_KNOWN_NAME_WORDS
         path = mock.Mock(spec=Path)
         path.stat.return_value.st_mode = 0o600
         path.read_text.return_value = "\n".join(word.upper() for word in sorted(ignored))
         with mock.patch("sys.stderr", new_callable=io.StringIO) as log:
-            self.assertEqual(redact.load_known_names(path), [])
+            self.assertEqual(load_known_names(path), [])
         self.assertEqual(log.getvalue(), f"known_names_dropped: count={len(ignored)}\n")
 
     def test_compound_candidate_keeps_identifying_parts(self) -> None:
@@ -76,6 +74,73 @@ class KnownNameFiltering(unittest.TestCase):
         with mock.patch("sys.stderr", new_callable=io.StringIO) as log:
             self.assertEqual(load_known_names(path), ["Quillfeather", "Zorblax Quillfeather", "Zorblax"])
         self.assertEqual(log.getvalue(), "known_names_dropped: count=2\n")
+
+    def test_common_word_names_survive_loading_and_require_capitals(self) -> None:
+        from redact import load_known_names
+        path = mock.Mock(spec=Path)
+        path.stat.return_value.st_mode = 0o600
+        path.read_text.return_value = "Will\nPrice\nWill Price\n"
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            known = load_known_names(path)
+        self.assertEqual(known, ["Will", "Price", "Will Price"])
+        self.assertEqual(log.getvalue(), "known_names_dropped: count=0\n")
+        for name in ("Will", "Price"):
+            for text in (f"{name} replied.", f"{name}'s draft is ready.", f"{name}\u2019s draft is ready.",
+                         f"{name.upper()} confirmed.", f"{name.upper()}'s draft is ready."):
+                with self.subTest(name=name, text=text):
+                    cleaned, _, ok, _ = redact_fail_closed(text, RedactionContext(known_names=[name]))
+                    self.assertTrue(ok)
+                    self.assertNotIn(name.lower(), cleaned.lower())
+        for text in ("we will check the price", "we will review the listing"):
+            self.assertEqual(redact_fail_closed(text, RedactionContext(known_names=known))[0], text)
+
+    def test_common_word_full_names_match_in_any_case(self) -> None:
+        known = ["Will", "Price", "Will Price"]
+        for full in ("Will Price", "WILL PRICE", "will price", "wIlL pRiCe"):
+            for text in (f"{full} replied.", f"{full}'s draft is ready."):
+                with self.subTest(text=text):
+                    cleaned, _, ok, _ = redact_fail_closed(text, RedactionContext(known_names=known))
+                    self.assertTrue(ok)
+                    self.assertNotIn("will", cleaned.lower())
+                    self.assertNotIn("price", cleaned.lower())
+
+    def test_name_map_preserves_lowercase_common_context(self) -> None:
+        from export_session_to_case import apply_name_map, build_case, empty_case_parts
+        from redact import redact_object
+        cases = json.loads((ROOT / "tests" / "fixtures" / "milestone-zero" / "known-common-contexts.json").read_text(encoding="utf-8"))
+        for fixture in cases:
+            with self.subTest(case=fixture["id"]):
+                ctx = RedactionContext(known_names=fixture["known_names"])
+                redacted, _, ok, _ = redact_object({"messages": fixture["messages"]}, ctx)
+                self.assertTrue(ok)
+                redacted = apply_name_map(redacted, ctx._name_map)
+                case = build_case(case_id=fixture["id"], suite="regression", category="synthetic",
+                                  box="synthetic", redacted=redacted, session_index="synthetic", counts=ctx.class_counts)
+                self.assertEqual(empty_case_parts(case), [])
+                self.assertEqual(case["input"]["owner_text"], fixture["owner_text"])
+                self.assertEqual(case["fixture"]["assistant_text"], fixture["assistant_text"])
+                context = "\n".join(t["content"] for t in case["input"]["context_turns"])
+                self.assertIn("CLIENT_", context)
+                self.assertNotIn(fixture["name_fragment"], context.lower())
+
+    def test_ignored_words_never_become_names_even_when_capitalized(self) -> None:
+        from export_session_to_case import apply_name_map
+        for word in sorted(IGNORED_KNOWN_NAME_WORDS):
+            for value in (word.title(), word.upper(), word.lower()):
+                with self.subTest(word=word, value=value):
+                    ctx = RedactionContext(known_names=[word])
+                    text = f"the {value} replied"
+                    self.assertEqual(redact_fail_closed(text, ctx)[0], text)
+                    self.assertEqual(apply_name_map(text, {word: "CLIENT_1"}), text)
+
+    def test_candidate_shapes_respect_common_casing_and_schema_exclusions(self) -> None:
+        known = ["Will", "Price", *IGNORED_KNOWN_NAME_WORDS]
+        for text in ("the text will arrive tomorrow", "tell will and price", "tell user and assistant",
+                     "Mr. User replied", "User A. replied"):
+            with self.subTest(text=text):
+                ctx = RedactionContext(known_names=known)
+                self.assertEqual(redact_fail_closed(text, ctx)[0], text)
+                self.assertEqual(ctx.class_counts.get("name", 0), 0)
 
 
 class ExportIntegration(unittest.TestCase):
@@ -609,11 +674,22 @@ class ExportStructureNeverRedacted(_ExportHelpers, unittest.TestCase):
         self.assertEqual(case["input"]["owner_text"], owner)
         self.assertEqual(case["fixture"]["assistant_text"], reply)
 
+    def test_common_names_in_exported_context_preserve_ordinary_lowercase(self) -> None:
+        cases = json.loads((ROOT / "tests" / "fixtures" / "milestone-zero" / "known-common-contexts.json").read_text(encoding="utf-8"))
+        for fixture in cases:
+            with self.subTest(case=fixture["id"]):
+                names = self._names_file(tuple(fixture["known_names"]))
+                proc, case = self._export_names({"messages": fixture["messages"]}, names)
+                self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+                self.assertEqual(case["input"]["owner_text"], fixture["owner_text"])
+                self.assertEqual(case["fixture"]["assistant_text"], fixture["assistant_text"])
+                context = "\n".join(t["content"] for t in case["input"]["context_turns"])
+                self.assertIn("CLIENT_", context)
+                self.assertNotIn(fixture["name_fragment"], context.lower())
+
     def test_schema_common_and_source_tokens_dropped_with_count_only(self) -> None:
-        ignored = ("Messages", "MESSAGE", "ROLE", "Content", "Source", "USER", "Assistant", "OWNER", "ARIN",
-                   "human", "agent", "tool", "system", "function", "developer",
-                   "telnyx_sms", "CLI", "api_server", "cron", "telegram", "webhook", "listing")
-        names = self._names_file(ignored + ("Zorblax Quillfeather", "Content Quillfeather"))
+        ignored = tuple(word.title() for word in sorted(IGNORED_KNOWN_NAME_WORDS))
+        names = self._names_file(ignored + ("listing", "Zorblax Quillfeather", "Content Quillfeather"))
         proc, case = self._export_names(
             {"source": "cli", "messages": [_msg("user", "check the user content for the listing"),
                                             _msg("assistant", "the messages source is cli; zorblax quillfeather confirmed")]},
