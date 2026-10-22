@@ -1,4 +1,4 @@
-"""Test-only socket guard (PYTHONSTARTUP). Blocks non-local and Telnyx hosts."""
+"""Test-only socket guard (loaded via site-packages .pth in CI venv). Blocks non-local and Telnyx hosts."""
 from __future__ import annotations
 
 import socket

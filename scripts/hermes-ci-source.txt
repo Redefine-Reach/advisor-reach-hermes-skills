@@ -1,0 +1,11 @@
+# Hermes CI pin for sms-send-confirmed production-path tests.
+# Must match ARIN sms-box image (google-cloud-gke-customer-boxes docker/sms-box/Dockerfile FROM).
+#
+# OCI image: nousresearch/hermes-agent@sha256:5001c9c337865e3364eefc9795b971032090b372590f25c82fb62e40a6163fee
+# Git commit: a89f6aba44c6642822fdeb476b919fdc49e85088 (org.opencontainers.image.revision on that digest)
+#
+# Telnyx plugin (user install, not in base image): team-telnyx/telnyx-hermes-sms @ a7d209fbaedbbfa960d5bf3dda76b4e6477ce3d9
+
+HERMES_IMAGE_DIGEST=sha256:5001c9c337865e3364eefc9795b971032090b372590f25c82fb62e40a6163fee
+HERMES_AGENT_REF=a89f6aba44c6642822fdeb476b919fdc49e85088
+TELNYX_HERMES_SMS_REF=a7d209fbaedbbfa960d5bf3dda76b4e6477ce3d9

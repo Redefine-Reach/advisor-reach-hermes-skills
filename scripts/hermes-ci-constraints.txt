@@ -1,0 +1,3 @@
+# Extra pins for telnyx-hermes-sms @ a7d209f (see plugin uv.lock).
+# Hermes core deps come from hermes-agent/uv.lock via `uv sync --frozen`.
+aiohttp==3.13.5

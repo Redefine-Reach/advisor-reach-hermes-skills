@@ -26,7 +26,6 @@ const DEST = "+15555550199";
 const FROM = "+19283563339";
 const BODY = "The listing packet is ready.";
 const DUMMY_TELNYX_KEY = "KEY_LOCAL_TEST_DUMMY_NOT_REAL";
-const socketGuardPath = join(here, "sms_send_socket_guard.py");
 
 function hermesCiRoot() {
   return process.env.HERMES_CI_ROOT || join(tmpdir(), "hermes-sms-ci");
@@ -34,6 +33,14 @@ function hermesCiRoot() {
 
 function hermesCiReady() {
   return existsSync(join(hermesCiRoot(), ".ready"));
+}
+
+function productionPython() {
+  const marker = join(hermesCiRoot(), ".python");
+  if (existsSync(marker)) {
+    return readFileSync(marker, "utf8").trim();
+  }
+  return process.env.SMS_SEND_PYTHON || "python3";
 }
 
 function hermesChildEnv() {
@@ -120,7 +127,6 @@ function buildRunEnv(_args, extra, dir, { productionSendPath = false } = {}) {
       delete env[key];
     }
     env.NO_PROXY = "*";
-    env.PYTHONSTARTUP = socketGuardPath;
     writeFileSync(join(dir, "empty-runtime.env"), "");
     writeFileSync(join(dir, "empty-proc"), "");
     env.SMS_RUNTIME_ENV_FILE = join(dir, "empty-runtime.env");
@@ -150,9 +156,9 @@ function buildRunEnv(_args, extra, dir, { productionSendPath = false } = {}) {
   return { env, calls };
 }
 
-function runChildAsync(args, env) {
+function runChildAsync(args, env, pythonBin = "python3") {
   return new Promise((resolve, reject) => {
-    const child = spawn("python3", [scriptPath, ...args], { env });
+    const child = spawn(pythonBin, [scriptPath, ...args], { env });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => {
@@ -168,7 +174,8 @@ function runChildAsync(args, env) {
 
 async function runAsync(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), opts = {}) {
   const { env, calls } = buildRunEnv(args, extra, dir, opts);
-  const { stdout } = await runChildAsync(args, env);
+  const pythonBin = opts.productionSendPath ? productionPython() : "python3";
+  const { stdout } = await runChildAsync(args, env, pythonBin);
   let payload = null;
   try {
     payload = JSON.parse(stdout || "null");
