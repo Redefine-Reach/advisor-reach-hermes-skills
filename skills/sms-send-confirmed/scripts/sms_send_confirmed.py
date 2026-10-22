@@ -744,32 +744,26 @@ def resolve_standalone_sender(discover, resolve_all, get_entry, load_config, pla
     return sender, platform_config_for_send(load_config, platform_type, config_type), ""
 
 
-def deliver_via_transport(transport: str, dest: str, body: str) -> dict:
-    """Run one injected transport executable (hermetic CI only; not used on boxes)."""
-    proc = subprocess.run(
-        [transport],
-        input=json.dumps({"to": dest, "text": body}),
-        text=True,
-        capture_output=True,
-        timeout=30,
-        check=False,
-    )
-    return parse_provider_stdout(proc.stdout, proc.stderr, proc.returncode)
-
-
 def deliver(dest: str, body: str) -> dict:
-    """One adapter send. Injected transport wins; test mode never falls through to the plugin."""
-    transport = os.environ.get("SMS_SEND_TRANSPORT", "").strip()
-    if transport:
-        return deliver_via_transport(transport, dest, body)
-
+    """One adapter send. Test mode never falls through to the plugin."""
     if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
-        return {
-            "success": False,
-            "message_id": "",
-            "provider_status": "error",
-            "error": "test mode has no transport",
-        }
+        transport = os.environ.get("SMS_SEND_TRANSPORT", "").strip()
+        if not transport:
+            return {
+                "success": False,
+                "message_id": "",
+                "provider_status": "error",
+                "error": "test mode has no transport",
+            }
+        proc = subprocess.run(
+            [transport],
+            input=json.dumps({"to": dest, "text": body}),
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        return parse_provider_stdout(proc.stdout, proc.stderr, proc.returncode)
 
     if _discover_plugins is None or _platform_registry is None:
         return {

@@ -1,12 +1,13 @@
 // Hermetic contract for sms-send-confirmed (RED-390). No network, no Hermes.
-// One case runs the production send path (SMS_SEND_CONFIRMED_TEST unset) with an
-// injected local transport and a 127.0.0.1 Telnyx trap. The rest use test mode.
+// One case runs deliver() with SMS_SEND_CONFIRMED_TEST unset: a PYTHONPATH-local
+// stub registers telnyx_sms standalone_sender_fn that POSTs to TELNYX_SMS_API_BASE
+// (same contract as team-telnyx/telnyx-hermes-sms). The rest use test mode.
 // The script is the gate: stage never sends; send requires SEND plus attestation;
 // opt-out, cron, multi-dest, and an unresolved box never call the transport.
 // Path A allows any resolved non-empty box id when TELNYX_SMS_FROM_NUMBER is set.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { mkdtempSync, readFileSync, writeFileSync, chmodSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir, hostname } from "node:os";
@@ -31,48 +32,159 @@ function podLabel() {
   return match ? match[1] : null;
 }
 
-function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), { productionSendPath = false } = {}) {
-  const calls = join(dir, "calls.jsonl");
-  const transport = join(dir, "transport.py");
+function installProductionHermesFixture(fixtureRoot) {
+  const gatewayDir = join(fixtureRoot, "gateway");
+  const hermesDir = join(fixtureRoot, "hermes_cli");
+  mkdirSync(gatewayDir, { recursive: true });
+  mkdirSync(hermesDir, { recursive: true });
+  writeFileSync(join(gatewayDir, "__init__.py"), "");
+  writeFileSync(join(hermesDir, "__init__.py"), "");
   writeFileSync(
-    transport,
+    join(gatewayDir, "config.py"),
     [
-      "#!/usr/bin/env python3",
-      "import json, os, sys",
-      "req = json.load(sys.stdin)",
-      "with open(os.environ['CALLS'], 'a', encoding='utf-8') as fh:",
-      "    fh.write(json.dumps(req) + '\\n')",
-      "json.dump({'success': True, 'message_id': 'msg_test_1', 'provider_status': 'queued'}, sys.stdout)",
+      "class Platform:",
+      "    def __init__(self, name):",
+      "        self.name = name",
+      "    def __hash__(self):",
+      "        return hash(self.name)",
+      "    def __eq__(self, other):",
+      "        return isinstance(other, Platform) and other.name == self.name",
+      "",
+      "class PlatformConfig:",
+      "    def __init__(self, enabled=True):",
+      "        self.enabled = enabled",
+      "        self.extra = {}",
+      "",
+      "def load_gateway_config():",
+      "    class _Config:",
+      "        platforms = {Platform('telnyx_sms'): PlatformConfig(enabled=True)}",
+      "    return _Config()",
       "",
     ].join("\n"),
   );
-  chmodSync(transport, 0o755);
-  mkdirSync(join(dir, "drafts"), { recursive: true });
-  const env = {
-    PATH: process.env.PATH,
-    HOME: process.env.HOME || dir,
-    LANG: "C.UTF-8",
-    SMS_BOX_ID: "advisor-reach-internal",
-    TELNYX_SMS_FROM_NUMBER: FROM,
-    TELNYX_SMS_ALLOWED_USERS: OWNER,
-    SMS_AUDIT_PATH: join(dir, "sms-outbound.jsonl"),
-    SMS_OPT_OUT_FILE: join(dir, "sms-opt-out.txt"),
-    SMS_DRAFT_DIR: join(dir, "drafts"),
-    SMS_SESSION_DIR: join(dir, "sessions"),
-    SMS_EVENT_DIR: join(dir, "events"),
-    SMS_SEND_TRANSPORT: transport,
-    CALLS: calls,
-    ...extra,
-  };
-  if (productionSendPath) {
-    delete env.SMS_SEND_CONFIRMED_TEST;
-    writeFileSync(join(dir, "empty-runtime.env"), "");
-    writeFileSync(join(dir, "empty-proc"), "");
-    env.SMS_RUNTIME_ENV_FILE = join(dir, "empty-runtime.env");
-    env.SMS_PROC_ENVIRON = join(dir, "empty-proc");
-  } else {
-    env.SMS_SEND_CONFIRMED_TEST = "1";
-  }
+  writeFileSync(
+    join(gatewayDir, "platform_registry.py"),
+    [
+      "from gateway.telnyx_standalone import standalone_sender",
+      "",
+      "class _TelnyxEntry:",
+      "    standalone_sender_fn = staticmethod(standalone_sender)",
+      "",
+      "class _Registry:",
+      "    @staticmethod",
+      "    def _resolve_all():",
+      "        return None",
+      "",
+      "    @staticmethod",
+      "    def get(name):",
+      "        return _TelnyxEntry if name == 'telnyx_sms' else None",
+      "",
+      "platform_registry = _Registry()",
+      "",
+    ].join("\n"),
+  );
+  writeFileSync(join(hermesDir, "plugins.py"), "def discover_plugins():\n    return None\n");
+  writeFileSync(
+    join(gatewayDir, "telnyx_standalone.py"),
+    [
+      "from __future__ import annotations",
+      "",
+      "import asyncio",
+      "import json",
+      "import os",
+      "import socket",
+      "import urllib.error",
+      "import urllib.request",
+      "",
+      "_ALLOWED_HOSTS = frozenset({'127.0.0.1', '::1', 'localhost'})",
+      "_ORIG_CONNECT = socket.create_connection",
+      "",
+      "def _guard_socket() -> None:",
+      "    def guarded(address, *args, **kwargs):",
+      "        host = str(address[0]).lower()",
+      "        if host == 'api.telnyx.com' or host.endswith('.telnyx.com'):",
+      "            raise OSError(f'blocked Telnyx host {host!r}')",
+      "        if host not in _ALLOWED_HOSTS:",
+      "            raise OSError(f'blocked non-local network connect to {host!r}')",
+      "        return _ORIG_CONNECT(address, *args, **kwargs)",
+      "",
+      "    socket.create_connection = guarded",
+      "",
+      "_guard_socket()",
+      "",
+      "def _api_base() -> str:",
+      "    base = os.environ.get('TELNYX_SMS_API_BASE', '').strip().rstrip('/')",
+      "    if not base:",
+      "        raise RuntimeError('TELNYX_SMS_API_BASE is not set')",
+      "    return base",
+      "",
+      "def _post_message(chat_id: str, message: str) -> dict:",
+      "    url = f'{_api_base()}/messages'",
+      "    payload = {",
+      "        'from': os.environ['TELNYX_SMS_FROM_NUMBER'],",
+      "        'to': chat_id,",
+      "        'text': message,",
+      "    }",
+      "    req = urllib.request.Request(",
+      "        url,",
+      "        data=json.dumps(payload).encode('utf-8'),",
+      "        headers={",
+      "            'Authorization': f'Bearer {os.environ.get(\"TELNYX_API_KEY\", \"\")}',",
+      "            'Content-Type': 'application/json',",
+      "            'Accept': 'application/json',",
+      "        },",
+      "        method='POST',",
+      "    )",
+      "    with urllib.request.urlopen(req, timeout=15) as resp:",
+      "        return json.loads(resp.read().decode('utf-8'))",
+      "",
+      "async def standalone_sender(pconfig, chat_id, message, **kwargs):",
+      "    body = await asyncio.to_thread(_post_message, chat_id, message)",
+      "    data = body.get('data') if isinstance(body, dict) else None",
+      "    message_id = ''",
+      "    if isinstance(data, dict):",
+      "        message_id = str(data.get('id') or data.get('record_id') or '')",
+      "    if not message_id:",
+      "        return {'success': False, 'error': 'stub response missing message id'}",
+      "    return {'success': True, 'message_id': message_id}",
+      "",
+    ].join("\n"),
+  );
+}
+
+function startLocalTelnyxStub() {
+  const requests = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      requests.push({ method: req.method, url: req.url, headers: req.headers, body });
+      if (req.method === "POST" && req.url === "/v2/messages") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ data: { id: "msg_stub_real_1" } }));
+        return;
+      }
+      res.writeHead(599);
+      res.end("unexpected request");
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const port = server.address().port;
+      resolve({
+        server,
+        requests,
+        apiBase: `http://127.0.0.1:${port}/v2`,
+        close: () => server.close(),
+      });
+    });
+  });
+}
+
+function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), { productionSendPath = false } = {}) {
+  const { env, calls } = buildRunEnv(args, extra, dir, { productionSendPath });
   const proc = spawnSync("python3", [scriptPath, ...args], { env, encoding: "utf8" });
   let payload = null;
   try {
@@ -86,6 +198,92 @@ function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), {
     ? readFileSync(auditPath, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
     : [];
   return { proc, payload, callLines, auditLines, dir, env };
+}
+
+function buildRunEnv(args, extra, dir, { productionSendPath = false } = {}) {
+  const calls = join(dir, "calls.jsonl");
+  mkdirSync(join(dir, "drafts"), { recursive: true });
+  const env = {
+    PATH: process.env.PATH,
+    HOME: process.env.HOME || dir,
+    LANG: "C.UTF-8",
+    SMS_BOX_ID: "advisor-reach-internal",
+    TELNYX_SMS_FROM_NUMBER: FROM,
+    TELNYX_SMS_ALLOWED_USERS: OWNER,
+    SMS_AUDIT_PATH: join(dir, "sms-outbound.jsonl"),
+    SMS_OPT_OUT_FILE: join(dir, "sms-opt-out.txt"),
+    SMS_DRAFT_DIR: join(dir, "drafts"),
+    SMS_SESSION_DIR: join(dir, "sessions"),
+    SMS_EVENT_DIR: join(dir, "events"),
+    ...extra,
+  };
+  if (productionSendPath) {
+    const fixtureRoot = join(dir, "hermes-fixture");
+    installProductionHermesFixture(fixtureRoot);
+    env.PYTHONPATH = fixtureRoot;
+    for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]) {
+      delete env[key];
+    }
+    env.NO_PROXY = "*";
+    writeFileSync(join(dir, "empty-runtime.env"), "");
+    writeFileSync(join(dir, "empty-proc"), "");
+    env.SMS_RUNTIME_ENV_FILE = join(dir, "empty-runtime.env");
+    env.SMS_PROC_ENVIRON = join(dir, "empty-proc");
+    delete env.SMS_SEND_CONFIRMED_TEST;
+    delete env.SMS_SEND_TRANSPORT;
+  } else {
+    const transport = join(dir, "transport.py");
+    writeFileSync(
+      transport,
+      [
+        "#!/usr/bin/env python3",
+        "import json, os, sys",
+        "req = json.load(sys.stdin)",
+        "with open(os.environ['CALLS'], 'a', encoding='utf-8') as fh:",
+        "    fh.write(json.dumps(req) + '\\n')",
+        "json.dump({'success': True, 'message_id': 'msg_test_1', 'provider_status': 'queued'}, sys.stdout)",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(transport, 0o755);
+    env.SMS_SEND_CONFIRMED_TEST = "1";
+    env.SMS_SEND_TRANSPORT = transport;
+    env.CALLS = calls;
+  }
+  return { env, calls };
+}
+
+function runChildAsync(args, env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("python3", [scriptPath, ...args], { env });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+async function runAsync(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), opts = {}) {
+  const { env, calls } = buildRunEnv(args, extra, dir, opts);
+  const { stdout } = await runChildAsync(args, env);
+  let payload = null;
+  try {
+    payload = JSON.parse(stdout || "null");
+  } catch {
+    payload = null;
+  }
+  const callLines = existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n").filter(Boolean) : [];
+  const auditPath = env.SMS_AUDIT_PATH;
+  const auditLines = existsSync(auditPath)
+    ? readFileSync(auditPath, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
+    : [];
+  return { payload, callLines, auditLines, dir, env };
 }
 
 function py(code) {
@@ -214,24 +412,15 @@ print("ok")
   assert.equal(out, "ok");
 });
 
-test("production send path delivers only after SEND through injected transport", async () => {
-  const trap = await new Promise((resolve) => {
-    const offNetwork = [];
-    const server = createServer((req, res) => {
-      offNetwork.push({ method: req.method, url: req.url, host: req.headers.host });
-      res.writeHead(599);
-      res.end("unexpected non-transport HTTP");
-    });
-    server.listen(0, "127.0.0.1", () => resolve({ server, port: server.address().port, offNetwork }));
-  });
+test("production send path POSTs to TELNYX_SMS_API_BASE only after SEND", async () => {
+  const stub = await startLocalTelnyxStub();
   try {
     const dir = mkdtempSync(join(tmpdir(), "sms-real-path-"));
-    const trapBase = `http://127.0.0.1:${trap.port}/v2`;
     const baseExtra = {
-      TELNYX_SMS_API_BASE: trapBase,
-      TELNYX_API_KEY: "trap-key-not-real",
+      TELNYX_SMS_API_BASE: stub.apiBase,
+      TELNYX_API_KEY: "KEY_LOCAL_TEST_DUMMY_NOT_REAL",
     };
-    const staged = run(
+    const staged = await runAsync(
       ["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY],
       baseExtra,
       dir,
@@ -239,33 +428,36 @@ test("production send path delivers only after SEND through injected transport",
     );
     assert.equal(staged.payload.outcome, "staged");
     assert.equal(staged.payload.provider_called, false);
-    assert.equal(staged.callLines.length, 0);
-    assert.equal(trap.offNetwork.length, 0);
+    assert.equal(stub.requests.length, 0);
 
-    const sent = run(
+    const sent = await runAsync(
       ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
       baseExtra,
       dir,
       { productionSendPath: true },
     );
-    assert.equal(sent.payload.outcome, "sent");
+    assert.equal(sent.payload.outcome, "sent", JSON.stringify(sent.payload));
     assert.equal(sent.payload.provider_called, true);
-    assert.equal(sent.payload.telnyx_message_id, "msg_test_1");
-    assert.equal(sent.callLines.length, 1);
-    assert.deepEqual(JSON.parse(sent.callLines[0]), { to: DEST, text: BODY });
-    assert.equal(trap.offNetwork.length, 0);
+    assert.equal(sent.payload.telnyx_message_id, "msg_stub_real_1");
+    assert.equal(stub.requests.length, 1);
+    assert.equal(stub.requests[0].method, "POST");
+    assert.equal(stub.requests[0].url, "/v2/messages");
+    assert.deepEqual(JSON.parse(stub.requests[0].body), {
+      from: FROM,
+      to: DEST,
+      text: BODY,
+    });
 
-    const again = run(
+    const again = await runAsync(
       ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
       baseExtra,
       dir,
       { productionSendPath: true },
     );
     assert.equal(again.payload.outcome, "refused_duplicate");
-    assert.equal(again.callLines.length, 1);
-    assert.equal(trap.offNetwork.length, 0);
+    assert.equal(stub.requests.length, 1);
   } finally {
-    trap.server.close();
+    stub.close();
   }
 });
 
