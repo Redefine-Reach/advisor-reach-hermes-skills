@@ -1,4 +1,6 @@
 // Hermetic contract for sms-send-confirmed (RED-390). No network, no Hermes.
+// One case runs the production send path (SMS_SEND_CONFIRMED_TEST unset) with an
+// injected local transport and a 127.0.0.1 Telnyx trap. The rest use test mode.
 // The script is the gate: stage never sends; send requires SEND plus attestation;
 // opt-out, cron, multi-dest, and an unresolved box never call the transport.
 // Path A allows any resolved non-empty box id when TELNYX_SMS_FROM_NUMBER is set.
