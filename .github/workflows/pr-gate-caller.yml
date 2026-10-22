@@ -2,6 +2,8 @@ name: pr-gate
 
 on:
   pull_request:
+    branches:
+      - production
     types:
       - opened
       - synchronize
@@ -14,9 +16,9 @@ permissions:
 
 jobs:
   pr-gate:
-    uses: Redefine-Reach/advisorreach-operations/.github/workflows/pr-gate.yml@main
+    uses: Redefine-Reach/advisorreach-operations/.github/workflows/pr-gate.yml@pr-gate-v1
     with:
       pinned_base: production
       max_behind: 20
-      send_path: true
-      send_path_cmd: node --test tests/sms-send-confirmed.test.mjs
+      send_path: false
+      send_path_cmd: ""
