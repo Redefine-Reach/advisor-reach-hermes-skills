@@ -1,10 +1,14 @@
-// Hermetic contract for sms-send-confirmed (RED-390). No network, no Hermes.
+// Hermetic contract for sms-send-confirmed (RED-390). No network, no Hermes (except one case).
+// One case runs deliver() with SMS_SEND_CONFIRMED_TEST unset against the real Hermes
+// telnyx_sms plugin (team-telnyx/telnyx-hermes-sms @ a7d209f) after
+// scripts/setup-hermes-sms-ci.sh. The rest use test mode (SMS_SEND_CONFIRMED_TEST=1).
 // The script is the gate: stage never sends; send requires SEND plus attestation;
 // opt-out, cron, multi-dest, and an unresolved box never call the transport.
 // Path A allows any resolved non-empty box id when TELNYX_SMS_FROM_NUMBER is set.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { mkdtempSync, readFileSync, writeFileSync, chmodSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir, hostname } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -21,6 +25,35 @@ const OWNER = "+17145550100";
 const DEST = "+15555550199";
 const FROM = "+19283563339";
 const BODY = "The listing packet is ready.";
+const DUMMY_TELNYX_KEY = "KEY_LOCAL_TEST_DUMMY_NOT_REAL";
+
+function hermesCiRoot() {
+  return process.env.HERMES_CI_ROOT || join(tmpdir(), "hermes-sms-ci");
+}
+
+function hermesCiReady() {
+  return existsSync(join(hermesCiRoot(), ".ready"));
+}
+
+function ciRequiresHermesInstall() {
+  return process.env.CI === "true";
+}
+
+function productionPython() {
+  const marker = join(hermesCiRoot(), ".python");
+  if (existsSync(marker)) {
+    return readFileSync(marker, "utf8").trim();
+  }
+  return process.env.SMS_SEND_PYTHON || "python3";
+}
+
+function hermesChildEnv() {
+  const root = hermesCiRoot();
+  return {
+    HERMES_HOME: process.env.HERMES_HOME || join(root, "hermes-home"),
+    HERMES_CI_ROOT: root,
+  };
+}
 
 function podLabel() {
   const short = hostname().split(".")[0].toLowerCase();
@@ -28,40 +61,39 @@ function podLabel() {
   return match ? match[1] : null;
 }
 
-function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-"))) {
-  const calls = join(dir, "calls.jsonl");
-  const transport = join(dir, "transport.py");
-  writeFileSync(
-    transport,
-    [
-      "#!/usr/bin/env python3",
-      "import json, os, sys",
-      "req = json.load(sys.stdin)",
-      "with open(os.environ['CALLS'], 'a', encoding='utf-8') as fh:",
-      "    fh.write(json.dumps(req) + '\\n')",
-      "json.dump({'success': True, 'message_id': 'msg_test_1', 'provider_status': 'queued'}, sys.stdout)",
-      "",
-    ].join("\n"),
-  );
-  chmodSync(transport, 0o755);
-  mkdirSync(join(dir, "drafts"), { recursive: true });
-  const env = {
-    PATH: process.env.PATH,
-    HOME: process.env.HOME || dir,
-    LANG: "C.UTF-8",
-    SMS_SEND_CONFIRMED_TEST: "1",
-    SMS_BOX_ID: "advisor-reach-internal",
-    TELNYX_SMS_FROM_NUMBER: FROM,
-    TELNYX_SMS_ALLOWED_USERS: OWNER,
-    SMS_AUDIT_PATH: join(dir, "sms-outbound.jsonl"),
-    SMS_OPT_OUT_FILE: join(dir, "sms-opt-out.txt"),
-    SMS_DRAFT_DIR: join(dir, "drafts"),
-    SMS_SESSION_DIR: join(dir, "sessions"),
-    SMS_EVENT_DIR: join(dir, "events"),
-    SMS_SEND_TRANSPORT: transport,
-    CALLS: calls,
-    ...extra,
-  };
+function startLocalTelnyxStub() {
+  const requests = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      requests.push({ method: req.method, url: req.url, headers: req.headers, body });
+      if (req.method === "POST" && req.url === "/v2/messages") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ data: { id: "msg_stub_real_1" } }));
+        return;
+      }
+      res.writeHead(599);
+      res.end("unexpected request");
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const port = server.address().port;
+      resolve({
+        server,
+        requests,
+        apiBase: `http://127.0.0.1:${port}/v2`,
+        close: () => server.close(),
+      });
+    });
+  });
+}
+
+function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), { productionSendPath = false } = {}) {
+  const { env, calls } = buildRunEnv(args, extra, dir, { productionSendPath });
   const proc = spawnSync("python3", [scriptPath, ...args], { env, encoding: "utf8" });
   let payload = null;
   try {
@@ -75,6 +107,91 @@ function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-"))) {
     ? readFileSync(auditPath, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
     : [];
   return { proc, payload, callLines, auditLines, dir, env };
+}
+
+function buildRunEnv(_args, extra, dir, { productionSendPath = false } = {}) {
+  const calls = join(dir, "calls.jsonl");
+  mkdirSync(join(dir, "drafts"), { recursive: true });
+  const env = {
+    PATH: process.env.PATH,
+    HOME: process.env.HOME || dir,
+    LANG: "C.UTF-8",
+    SMS_BOX_ID: "advisor-reach-internal",
+    TELNYX_SMS_FROM_NUMBER: FROM,
+    TELNYX_SMS_ALLOWED_USERS: OWNER,
+    SMS_AUDIT_PATH: join(dir, "sms-outbound.jsonl"),
+    SMS_OPT_OUT_FILE: join(dir, "sms-opt-out.txt"),
+    SMS_DRAFT_DIR: join(dir, "drafts"),
+    SMS_SESSION_DIR: join(dir, "sessions"),
+    SMS_EVENT_DIR: join(dir, "events"),
+  };
+  if (productionSendPath) {
+    Object.assign(env, hermesChildEnv(), extra);
+    for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]) {
+      delete env[key];
+    }
+    env.NO_PROXY = "*";
+    writeFileSync(join(dir, "empty-runtime.env"), "");
+    writeFileSync(join(dir, "empty-proc"), "");
+    env.SMS_RUNTIME_ENV_FILE = join(dir, "empty-runtime.env");
+    env.SMS_PROC_ENVIRON = join(dir, "empty-proc");
+    delete env.SMS_SEND_CONFIRMED_TEST;
+    delete env.SMS_SEND_TRANSPORT;
+  } else {
+    Object.assign(env, extra);
+    const transport = join(dir, "transport.py");
+    writeFileSync(
+      transport,
+      [
+        "#!/usr/bin/env python3",
+        "import json, os, sys",
+        "req = json.load(sys.stdin)",
+        "with open(os.environ['CALLS'], 'a', encoding='utf-8') as fh:",
+        "    fh.write(json.dumps(req) + '\\n')",
+        "json.dump({'success': True, 'message_id': 'msg_test_1', 'provider_status': 'queued'}, sys.stdout)",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(transport, 0o755);
+    env.SMS_SEND_CONFIRMED_TEST = "1";
+    env.SMS_SEND_TRANSPORT = transport;
+    env.CALLS = calls;
+  }
+  return { env, calls };
+}
+
+function runChildAsync(args, env, pythonBin = "python3") {
+  return new Promise((resolve, reject) => {
+    const child = spawn(pythonBin, [scriptPath, ...args], { env });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+async function runAsync(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), opts = {}) {
+  const { env, calls } = buildRunEnv(args, extra, dir, opts);
+  const pythonBin = opts.productionSendPath ? productionPython() : "python3";
+  const { stdout } = await runChildAsync(args, env, pythonBin);
+  let payload = null;
+  try {
+    payload = JSON.parse(stdout || "null");
+  } catch {
+    payload = null;
+  }
+  const callLines = existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n").filter(Boolean) : [];
+  const auditPath = env.SMS_AUDIT_PATH;
+  const auditLines = existsSync(auditPath)
+    ? readFileSync(auditPath, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
+    : [];
+  return { payload, callLines, auditLines, dir, env };
 }
 
 function py(code) {
@@ -201,6 +318,63 @@ assert mod.resolve_box_id("cursor", {
 print("ok")
 `);
   assert.equal(out, "ok");
+});
+
+test("production send path POSTs to TELNYX_SMS_API_BASE only after SEND", async (t) => {
+  if (!hermesCiReady()) {
+    if (ciRequiresHermesInstall()) {
+      assert.fail(
+        "Hermes CI install missing in CI (expected scripts/setup-hermes-sms-ci.sh and .ready marker)",
+      );
+    }
+    return t.skip("run scripts/setup-hermes-sms-ci.sh to install Hermes + telnyx_sms @ a7d209f");
+  }
+  const stub = await startLocalTelnyxStub();
+  try {
+    const dir = mkdtempSync(join(tmpdir(), "sms-real-path-"));
+    const baseExtra = {
+      TELNYX_SMS_API_BASE: stub.apiBase,
+      TELNYX_API_KEY: DUMMY_TELNYX_KEY,
+    };
+    const staged = await runAsync(
+      ["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY],
+      baseExtra,
+      dir,
+      { productionSendPath: true },
+    );
+    assert.equal(staged.payload.outcome, "staged");
+    assert.equal(staged.payload.provider_called, false);
+    assert.equal(stub.requests.length, 0);
+
+    const sent = await runAsync(
+      ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
+      baseExtra,
+      dir,
+      { productionSendPath: true },
+    );
+    assert.equal(sent.payload.outcome, "sent", JSON.stringify(sent.payload));
+    assert.equal(sent.payload.provider_called, true);
+    assert.equal(sent.payload.telnyx_message_id, "msg_stub_real_1");
+    assert.equal(stub.requests.length, 1);
+    assert.equal(stub.requests[0].method, "POST");
+    assert.equal(stub.requests[0].url, "/v2/messages");
+    assert.deepEqual(JSON.parse(stub.requests[0].body), {
+      from: FROM,
+      to: DEST,
+      text: BODY,
+    });
+
+    const again = await runAsync(
+      ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
+      baseExtra,
+      dir,
+      { productionSendPath: true },
+    );
+    assert.equal(again.payload.outcome, "refused_duplicate");
+    assert.equal(stub.requests.length, 1);
+  } finally {
+    stub.close();
+  }
 });
 
 test("stage shows attestation and does not send", () => {
