@@ -3,6 +3,8 @@
 Flag as blocking:
 
 - Removal or bypass of the `sms-send-confirmed` SEND gate. That includes treating a vague "yes", "go ahead", or "send it" as `SEND` or `/approve`, sending without the staged authorization line, sending more than one message per confirm, or any path that auto-sends.
+- Adding calendar attendees or sending Google Calendar invites without an explicit invite request and without the same `SEND` / `/approve` read-back as third-party SMS.
+- Asking the owner for a client's phone or email before a CRM (and contacts, when connected) lookup, except when lookup returns no match or ambiguous matches.
 - Real phone numbers, email addresses, or customer names in code or fixtures. Contacts in tests and examples must be synthetic.
 - Secrets in code, including API keys, tokens, and runtime env files.
 - New outbound network calls to services this repository does not already use.

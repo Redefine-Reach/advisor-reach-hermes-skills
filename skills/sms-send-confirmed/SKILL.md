@@ -46,6 +46,14 @@ explicit owner-gated exception, and only for one named recipient at a time.
 No SOUL change is required: if this script is not the thing that sends,
 the message has not been confirmed.
 
+## Calendar invites (not SMS)
+
+Google Calendar invites are not sent through this script. When `connect-app`
+would add attendees or email a calendar invite to anyone, use the same confirm
+rule as here: show each invitee, the event, and the authorization line, and
+send the invite only after the owner replies exactly `SEND` or `/approve`.
+A vague yes does not invite. One confirm, one invite action for that read-back.
+
 ## Path A
 
 Third-party send is Path A on every box whose id resolves and whose native

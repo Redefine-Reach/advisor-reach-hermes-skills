@@ -43,6 +43,13 @@ test("routes GHL away from Composio and declares the sandbox env vars", () => {
   assert.match(skill, /python3 \/opt\/data\/skills\/ghl\/scripts\/ghl\.py status/);
 });
 
+test("looks up contact details in CRM before asking the owner", () => {
+  assert.match(skill, /## Resolving contact details/);
+  assert.match(skill, /look them up here first/);
+  assert.match(skill, /Do not ask the owner for that number or address until the lookup/);
+  assert.match(skill, /name the candidates you found/);
+});
+
 // ---- behaviour against a local fake ------------------------------------------------------
 
 function fakeServer() {

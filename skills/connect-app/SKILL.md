@@ -75,14 +75,30 @@ see their password, a code, or a token, and neither does this box.
 4. Reply to the user in plain text -- they are reading a text message. Summarize; do not
    paste raw JSON.
 
+## Google Calendar events
+
+When the owner asks for something on **their** calendar (a block, reminder, or hold), create
+the event on that calendar with **no attendees and no guest list**. Do not add clients,
+leads, or anyone else as an attendee, and do not send a calendar invite or notification
+to a third party unless they explicitly asked you to invite that person.
+
+Inviting someone is a **send**, like SMS or email. Before any tool call that adds
+attendees, sets guests, or sends invite/update emails (`sendUpdates`, notifications, and
+the like), show the owner the calendar account, the event time and title, and **each
+person who will receive an invite**. Then wait for them to reply exactly `SEND` or
+`/approve` in this conversation. Silence, an earlier yes, or a vague "go ahead" does not
+send an invite. One `SEND` or `/approve` sends one invite action for that read-back.
+
 ## Rules
 
 - Never ask the user for a password, a code, or anything from the address bar.
 - One link per app per attempt, and never repeat an old link -- each works once.
 - Never reveal the link to anyone but the user who asked.
 - Anything that sends, posts, deletes, or changes data in the user's account
-  (send an email, post to Slack, create a calendar event, update a HubSpot record)
-  requires explicit authorization for that exact action and scope. Reuse valid,
+  (send an email, post to Slack, create or change a calendar event, update a HubSpot record)
+  requires explicit authorization for that exact action and scope. Calendar **invites to
+  other people** use the `SEND` / `/approve` gate in [Google Calendar events](#google-calendar-events)
+  above; an owner-only block they asked for is authorized by that request. Reuse valid,
   current authorization for the named action and account. Confirm only when
   authorization is missing or the scope has materially changed, summarizing exactly
   what will be sent or changed **and which account it goes from** when there are
