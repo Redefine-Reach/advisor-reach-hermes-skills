@@ -48,6 +48,14 @@ test("removing an account needs an explicit yes; writes name the source account"
   assert.match(skill, /and which account it goes from/);
 });
 
+test("google calendar owner blocks have no attendees; invites need SEND", () => {
+  assert.match(skill, /## Google Calendar events/);
+  assert.match(skill, /no attendees and no guest list/);
+  assert.match(skill, /unless they explicitly asked you to invite that person/);
+  assert.match(skill, /exactly `SEND` or\n`\/approve`/);
+  assert.match(skill, /Calendar \*\*invites to\n  other people\*\* use the `SEND` \/ `\/approve` gate/);
+});
+
 test("an un-restarted box falls back to string toolkits for the session and says when a second account becomes possible", () => {
   const rule = skill.split("\n").filter((l) => l.includes("must be a list of strings")).length;
   assert.equal(rule, 1, "exactly one fallback rule for the pre-restart tool shape");

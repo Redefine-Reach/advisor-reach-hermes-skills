@@ -136,6 +136,8 @@ test("skill routes third-party SMS through confirm, the pinned adapter, and the 
   assert.match(skill, /MoO list/);
   assert.match(skill, /Silence, an earlier yes/);
   assert.match(skill, /640 characters/);
+  assert.match(skill, /## Calendar invites \(not SMS\)/);
+  assert.match(skill, /send the invite only after the owner replies exactly `SEND` or `\/approve`/);
 });
 
 test("script sends through standalone_sender_fn after plugin resolve, not hermes send", () => {

@@ -65,6 +65,10 @@ test("routes FUB away from Composio and declares only the AdvisorReach env vars"
   assert.match(skill, /python3 \/opt\/data\/skills\/fub\/scripts\/fub\.py status/);
   assert.match(skill, /POST '\/people'/);
   assert.match(skill, /least one of a name/);
+  assert.match(skill, /## Resolving contact details/);
+  assert.match(skill, /look them up here first/);
+  assert.match(skill, /Do not ask the owner for that number or address until the lookup/);
+  assert.match(skill, /name the candidates you found/);
   assert.doesNotMatch(skill, /`POST \/people`, action plans/);
 });
 
