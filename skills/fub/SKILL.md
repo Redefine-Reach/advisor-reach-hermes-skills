@@ -45,8 +45,8 @@ look them up here first (`status`, then narrow `api GET` on `/people`). If GoHig
 is connected instead of Follow Up Boss, use the `ghl` skill the same way. If both
 CRMs are connected, check the one the owner treats as primary, or both when unclear.
 
-Do not ask the owner for that number or address until the lookup finds no match or
-ambiguous matches. If several people match, name the candidates you found and ask which
+Do not ask the owner for that phone number or email until the lookup returns no match
+or more than one match. If several people match, name the candidates you found and ask which
 one. If nothing matches, try a connected Composio contacts app when one exists, then say what
 you checked and ask for the detail or a better spelling.
 

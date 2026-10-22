@@ -80,7 +80,7 @@ see their password, a code, or a token, and neither does this box.
 When the owner asks for something on **their** calendar (a block, reminder, or hold), create
 the event on that calendar with **no attendees and no guest list**. Do not add clients,
 leads, or anyone else as an attendee, and do not send a calendar invite or notification
-to a third party unless they explicitly asked you to invite that person.
+to a third party unless the owner explicitly asked you to invite that person.
 
 Inviting someone is a **send**, like SMS or email. Before any tool call that adds
 attendees, sets guests, or sends invite/update emails (`sendUpdates`, notifications, and

@@ -41,8 +41,8 @@ look them up here first (`status`, then narrow `api GET` contact search). If Fol
 Boss is connected instead of GoHighLevel, use the `fub` skill the same way. If both
 CRMs are connected, check the one the owner treats as primary, or both when unclear.
 
-Do not ask the owner for that number or address until the lookup finds no match or
-ambiguous matches. If several contacts match, name the candidates you found and ask
+Do not ask the owner for that phone number or email until the lookup returns no match
+or more than one match. If several contacts match, name the candidates you found and ask
 which one. If nothing matches, try a connected Composio contacts app when one exists, then say what
 you checked and ask for the detail or a better spelling.
 
