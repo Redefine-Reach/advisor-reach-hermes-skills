@@ -24,16 +24,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Match sms-box Hermes image (see scripts/hermes-ci-source.txt); not main-tip Hermes on 3.14.
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
       - name: Install Hermes + telnyx_sms for production send-path test
         run: bash scripts/setup-hermes-sms-ci.sh
         env:
           HERMES_CI_ROOT: ${{ runner.temp }}/hermes-sms-ci
           HERMES_HOME: ${{ runner.temp }}/hermes-sms-ci/hermes-home
+          HERMES_CI_PYTHON: "3.13"
       - run: node --test tests/*.test.mjs
         env:
+          CI: "true"
           HERMES_CI_ROOT: ${{ runner.temp }}/hermes-sms-ci
           HERMES_HOME: ${{ runner.temp }}/hermes-sms-ci/hermes-home
   state-rules:

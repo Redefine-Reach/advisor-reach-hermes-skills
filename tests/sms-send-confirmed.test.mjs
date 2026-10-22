@@ -35,6 +35,10 @@ function hermesCiReady() {
   return existsSync(join(hermesCiRoot(), ".ready"));
 }
 
+function ciRequiresHermesInstall() {
+  return process.env.CI === "true";
+}
+
 function productionPython() {
   const marker = join(hermesCiRoot(), ".python");
   if (existsSync(marker)) {
@@ -318,7 +322,12 @@ print("ok")
 
 test("production send path POSTs to TELNYX_SMS_API_BASE only after SEND", async (t) => {
   if (!hermesCiReady()) {
-    t.skip("run scripts/setup-hermes-sms-ci.sh to install Hermes + telnyx_sms @ a7d209f");
+    if (ciRequiresHermesInstall()) {
+      assert.fail(
+        "Hermes CI install missing in CI (expected scripts/setup-hermes-sms-ci.sh and .ready marker)",
+      );
+    }
+    return t.skip("run scripts/setup-hermes-sms-ci.sh to install Hermes + telnyx_sms @ a7d209f");
   }
   const stub = await startLocalTelnyxStub();
   try {

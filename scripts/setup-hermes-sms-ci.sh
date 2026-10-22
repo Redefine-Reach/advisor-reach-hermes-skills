@@ -4,9 +4,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SOURCE_FILE="$SCRIPT_DIR/hermes-ci-source.txt"
 # Pin recorded in scripts/hermes-ci-source.txt (sms-box image digest + git commit).
-HERMES_AGENT_REF="${HERMES_AGENT_REF:-a89f6aba44c6642822fdeb476b919fdc49e85088}"
-TELNYX_REF="${TELNYX_REF:-a7d209fbaedbbfa960d5bf3dda76b4e6477ce3d9}"
+HERMES_AGENT_REF="${HERMES_AGENT_REF:-$(grep '^HERMES_AGENT_REF=' "$SOURCE_FILE" | cut -d= -f2-)}"
+TELNYX_REF="${TELNYX_REF:-$(grep '^TELNYX_HERMES_SMS_REF=' "$SOURCE_FILE" | cut -d= -f2-)}"
+HERMES_CI_PYTHON="${HERMES_CI_PYTHON:-$(grep '^HERMES_CI_PYTHON=' "$SOURCE_FILE" | cut -d= -f2-)}"
 
 HERMES_CI_ROOT="${HERMES_CI_ROOT:-${TMPDIR:-/tmp}/hermes-sms-ci}"
 export HERMES_HOME="${HERMES_HOME:-$HERMES_CI_ROOT/hermes-home}"
@@ -38,7 +40,7 @@ plugins:
     - telnyx-sms-platform
 EOF
 
-export UV_PYTHON="${UV_PYTHON:-3.12}"
+export UV_PYTHON="${UV_PYTHON:-$HERMES_CI_PYTHON}"
 uv sync --frozen --project "$HERMES_CI_ROOT/hermes-agent"
 
 VENV_PYTHON="$HERMES_CI_ROOT/hermes-agent/.venv/bin/python"
