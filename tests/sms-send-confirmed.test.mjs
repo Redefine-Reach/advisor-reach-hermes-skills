@@ -1,7 +1,7 @@
-// Hermetic contract for sms-send-confirmed (RED-390). No network, no Hermes.
-// One case runs deliver() with SMS_SEND_CONFIRMED_TEST unset: a PYTHONPATH-local
-// stub registers telnyx_sms standalone_sender_fn that POSTs to TELNYX_SMS_API_BASE
-// (same contract as team-telnyx/telnyx-hermes-sms). The rest use test mode.
+// Hermetic contract for sms-send-confirmed (RED-390). No network, no Hermes (except one case).
+// One case runs deliver() with SMS_SEND_CONFIRMED_TEST unset against the real Hermes
+// telnyx_sms plugin (team-telnyx/telnyx-hermes-sms @ a7d209f) after
+// scripts/setup-hermes-sms-ci.sh. The rest use test mode (SMS_SEND_CONFIRMED_TEST=1).
 // The script is the gate: stage never sends; send requires SEND plus attestation;
 // opt-out, cron, multi-dest, and an unresolved box never call the transport.
 // Path A allows any resolved non-empty box id when TELNYX_SMS_FROM_NUMBER is set.
@@ -25,131 +25,29 @@ const OWNER = "+17145550100";
 const DEST = "+15555550199";
 const FROM = "+19283563339";
 const BODY = "The listing packet is ready.";
+const DUMMY_TELNYX_KEY = "KEY_LOCAL_TEST_DUMMY_NOT_REAL";
+const socketGuardPath = join(here, "sms_send_socket_guard.py");
+
+function hermesCiRoot() {
+  return process.env.HERMES_CI_ROOT || join(tmpdir(), "hermes-sms-ci");
+}
+
+function hermesCiReady() {
+  return existsSync(join(hermesCiRoot(), ".ready"));
+}
+
+function hermesChildEnv() {
+  const root = hermesCiRoot();
+  return {
+    HERMES_HOME: process.env.HERMES_HOME || join(root, "hermes-home"),
+    HERMES_CI_ROOT: root,
+  };
+}
 
 function podLabel() {
   const short = hostname().split(".")[0].toLowerCase();
   const match = short.match(/^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)-\d+$/);
   return match ? match[1] : null;
-}
-
-function installProductionHermesFixture(fixtureRoot) {
-  const gatewayDir = join(fixtureRoot, "gateway");
-  const hermesDir = join(fixtureRoot, "hermes_cli");
-  mkdirSync(gatewayDir, { recursive: true });
-  mkdirSync(hermesDir, { recursive: true });
-  writeFileSync(join(gatewayDir, "__init__.py"), "");
-  writeFileSync(join(hermesDir, "__init__.py"), "");
-  writeFileSync(
-    join(gatewayDir, "config.py"),
-    [
-      "class Platform:",
-      "    def __init__(self, name):",
-      "        self.name = name",
-      "    def __hash__(self):",
-      "        return hash(self.name)",
-      "    def __eq__(self, other):",
-      "        return isinstance(other, Platform) and other.name == self.name",
-      "",
-      "class PlatformConfig:",
-      "    def __init__(self, enabled=True):",
-      "        self.enabled = enabled",
-      "        self.extra = {}",
-      "",
-      "def load_gateway_config():",
-      "    class _Config:",
-      "        platforms = {Platform('telnyx_sms'): PlatformConfig(enabled=True)}",
-      "    return _Config()",
-      "",
-    ].join("\n"),
-  );
-  writeFileSync(
-    join(gatewayDir, "platform_registry.py"),
-    [
-      "from gateway.telnyx_standalone import standalone_sender",
-      "",
-      "class _TelnyxEntry:",
-      "    standalone_sender_fn = staticmethod(standalone_sender)",
-      "",
-      "class _Registry:",
-      "    @staticmethod",
-      "    def _resolve_all():",
-      "        return None",
-      "",
-      "    @staticmethod",
-      "    def get(name):",
-      "        return _TelnyxEntry if name == 'telnyx_sms' else None",
-      "",
-      "platform_registry = _Registry()",
-      "",
-    ].join("\n"),
-  );
-  writeFileSync(join(hermesDir, "plugins.py"), "def discover_plugins():\n    return None\n");
-  writeFileSync(
-    join(gatewayDir, "telnyx_standalone.py"),
-    [
-      "from __future__ import annotations",
-      "",
-      "import asyncio",
-      "import json",
-      "import os",
-      "import socket",
-      "import urllib.error",
-      "import urllib.request",
-      "",
-      "_ALLOWED_HOSTS = frozenset({'127.0.0.1', '::1', 'localhost'})",
-      "_ORIG_CONNECT = socket.create_connection",
-      "",
-      "def _guard_socket() -> None:",
-      "    def guarded(address, *args, **kwargs):",
-      "        host = str(address[0]).lower()",
-      "        if host == 'api.telnyx.com' or host.endswith('.telnyx.com'):",
-      "            raise OSError(f'blocked Telnyx host {host!r}')",
-      "        if host not in _ALLOWED_HOSTS:",
-      "            raise OSError(f'blocked non-local network connect to {host!r}')",
-      "        return _ORIG_CONNECT(address, *args, **kwargs)",
-      "",
-      "    socket.create_connection = guarded",
-      "",
-      "_guard_socket()",
-      "",
-      "def _api_base() -> str:",
-      "    base = os.environ.get('TELNYX_SMS_API_BASE', '').strip().rstrip('/')",
-      "    if not base:",
-      "        raise RuntimeError('TELNYX_SMS_API_BASE is not set')",
-      "    return base",
-      "",
-      "def _post_message(chat_id: str, message: str) -> dict:",
-      "    url = f'{_api_base()}/messages'",
-      "    payload = {",
-      "        'from': os.environ['TELNYX_SMS_FROM_NUMBER'],",
-      "        'to': chat_id,",
-      "        'text': message,",
-      "    }",
-      "    req = urllib.request.Request(",
-      "        url,",
-      "        data=json.dumps(payload).encode('utf-8'),",
-      "        headers={",
-      "            'Authorization': f'Bearer {os.environ.get(\"TELNYX_API_KEY\", \"\")}',",
-      "            'Content-Type': 'application/json',",
-      "            'Accept': 'application/json',",
-      "        },",
-      "        method='POST',",
-      "    )",
-      "    with urllib.request.urlopen(req, timeout=15) as resp:",
-      "        return json.loads(resp.read().decode('utf-8'))",
-      "",
-      "async def standalone_sender(pconfig, chat_id, message, **kwargs):",
-      "    body = await asyncio.to_thread(_post_message, chat_id, message)",
-      "    data = body.get('data') if isinstance(body, dict) else None",
-      "    message_id = ''",
-      "    if isinstance(data, dict):",
-      "        message_id = str(data.get('id') or data.get('record_id') or '')",
-      "    if not message_id:",
-      "        return {'success': False, 'error': 'stub response missing message id'}",
-      "    return {'success': True, 'message_id': message_id}",
-      "",
-    ].join("\n"),
-  );
 }
 
 function startLocalTelnyxStub() {
@@ -200,7 +98,7 @@ function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), {
   return { proc, payload, callLines, auditLines, dir, env };
 }
 
-function buildRunEnv(args, extra, dir, { productionSendPath = false } = {}) {
+function buildRunEnv(_args, extra, dir, { productionSendPath = false } = {}) {
   const calls = join(dir, "calls.jsonl");
   mkdirSync(join(dir, "drafts"), { recursive: true });
   const env = {
@@ -215,16 +113,14 @@ function buildRunEnv(args, extra, dir, { productionSendPath = false } = {}) {
     SMS_DRAFT_DIR: join(dir, "drafts"),
     SMS_SESSION_DIR: join(dir, "sessions"),
     SMS_EVENT_DIR: join(dir, "events"),
-    ...extra,
   };
   if (productionSendPath) {
-    const fixtureRoot = join(dir, "hermes-fixture");
-    installProductionHermesFixture(fixtureRoot);
-    env.PYTHONPATH = fixtureRoot;
+    Object.assign(env, hermesChildEnv(), extra);
     for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]) {
       delete env[key];
     }
     env.NO_PROXY = "*";
+    env.PYTHONSTARTUP = socketGuardPath;
     writeFileSync(join(dir, "empty-runtime.env"), "");
     writeFileSync(join(dir, "empty-proc"), "");
     env.SMS_RUNTIME_ENV_FILE = join(dir, "empty-runtime.env");
@@ -232,6 +128,7 @@ function buildRunEnv(args, extra, dir, { productionSendPath = false } = {}) {
     delete env.SMS_SEND_CONFIRMED_TEST;
     delete env.SMS_SEND_TRANSPORT;
   } else {
+    Object.assign(env, extra);
     const transport = join(dir, "transport.py");
     writeFileSync(
       transport,
@@ -412,13 +309,16 @@ print("ok")
   assert.equal(out, "ok");
 });
 
-test("production send path POSTs to TELNYX_SMS_API_BASE only after SEND", async () => {
+test("production send path POSTs to TELNYX_SMS_API_BASE only after SEND", async (t) => {
+  if (!hermesCiReady()) {
+    t.skip("run scripts/setup-hermes-sms-ci.sh to install Hermes + telnyx_sms @ a7d209f");
+  }
   const stub = await startLocalTelnyxStub();
   try {
     const dir = mkdtempSync(join(tmpdir(), "sms-real-path-"));
     const baseExtra = {
       TELNYX_SMS_API_BASE: stub.apiBase,
-      TELNYX_API_KEY: "KEY_LOCAL_TEST_DUMMY_NOT_REAL",
+      TELNYX_API_KEY: DUMMY_TELNYX_KEY,
     };
     const staged = await runAsync(
       ["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY],

@@ -24,7 +24,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Hermes + telnyx_sms for production send-path test
+        run: bash scripts/setup-hermes-sms-ci.sh
+        env:
+          HERMES_CI_ROOT: ${{ runner.temp }}/hermes-sms-ci
+          HERMES_HOME: ${{ runner.temp }}/hermes-sms-ci/hermes-home
       - run: node --test tests/*.test.mjs
+        env:
+          HERMES_CI_ROOT: ${{ runner.temp }}/hermes-sms-ci
+          HERMES_HOME: ${{ runner.temp }}/hermes-sms-ci/hermes-home
   state-rules:
     runs-on: ubuntu-latest
     steps:
