@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createServer } from "node:http";
 import { mkdtempSync, readFileSync, writeFileSync, chmodSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir, hostname } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -28,7 +29,7 @@ function podLabel() {
   return match ? match[1] : null;
 }
 
-function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-"))) {
+function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), { productionSendPath = false } = {}) {
   const calls = join(dir, "calls.jsonl");
   const transport = join(dir, "transport.py");
   writeFileSync(
@@ -49,7 +50,6 @@ function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-"))) {
     PATH: process.env.PATH,
     HOME: process.env.HOME || dir,
     LANG: "C.UTF-8",
-    SMS_SEND_CONFIRMED_TEST: "1",
     SMS_BOX_ID: "advisor-reach-internal",
     TELNYX_SMS_FROM_NUMBER: FROM,
     TELNYX_SMS_ALLOWED_USERS: OWNER,
@@ -62,6 +62,15 @@ function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-"))) {
     CALLS: calls,
     ...extra,
   };
+  if (productionSendPath) {
+    delete env.SMS_SEND_CONFIRMED_TEST;
+    writeFileSync(join(dir, "empty-runtime.env"), "");
+    writeFileSync(join(dir, "empty-proc"), "");
+    env.SMS_RUNTIME_ENV_FILE = join(dir, "empty-runtime.env");
+    env.SMS_PROC_ENVIRON = join(dir, "empty-proc");
+  } else {
+    env.SMS_SEND_CONFIRMED_TEST = "1";
+  }
   const proc = spawnSync("python3", [scriptPath, ...args], { env, encoding: "utf8" });
   let payload = null;
   try {
@@ -201,6 +210,61 @@ assert mod.resolve_box_id("cursor", {
 print("ok")
 `);
   assert.equal(out, "ok");
+});
+
+test("production send path delivers only after SEND through injected transport", async () => {
+  const trap = await new Promise((resolve) => {
+    const offNetwork = [];
+    const server = createServer((req, res) => {
+      offNetwork.push({ method: req.method, url: req.url, host: req.headers.host });
+      res.writeHead(599);
+      res.end("unexpected non-transport HTTP");
+    });
+    server.listen(0, "127.0.0.1", () => resolve({ server, port: server.address().port, offNetwork }));
+  });
+  try {
+    const dir = mkdtempSync(join(tmpdir(), "sms-real-path-"));
+    const trapBase = `http://127.0.0.1:${trap.port}/v2`;
+    const baseExtra = {
+      TELNYX_SMS_API_BASE: trapBase,
+      TELNYX_API_KEY: "trap-key-not-real",
+    };
+    const staged = run(
+      ["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY],
+      baseExtra,
+      dir,
+      { productionSendPath: true },
+    );
+    assert.equal(staged.payload.outcome, "staged");
+    assert.equal(staged.payload.provider_called, false);
+    assert.equal(staged.callLines.length, 0);
+    assert.equal(trap.offNetwork.length, 0);
+
+    const sent = run(
+      ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
+      baseExtra,
+      dir,
+      { productionSendPath: true },
+    );
+    assert.equal(sent.payload.outcome, "sent");
+    assert.equal(sent.payload.provider_called, true);
+    assert.equal(sent.payload.telnyx_message_id, "msg_test_1");
+    assert.equal(sent.callLines.length, 1);
+    assert.deepEqual(JSON.parse(sent.callLines[0]), { to: DEST, text: BODY });
+    assert.equal(trap.offNetwork.length, 0);
+
+    const again = run(
+      ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
+      baseExtra,
+      dir,
+      { productionSendPath: true },
+    );
+    assert.equal(again.payload.outcome, "refused_duplicate");
+    assert.equal(again.callLines.length, 1);
+    assert.equal(trap.offNetwork.length, 0);
+  } finally {
+    trap.server.close();
+  }
 });
 
 test("stage shows attestation and does not send", () => {
