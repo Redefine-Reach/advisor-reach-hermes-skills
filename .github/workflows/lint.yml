@@ -28,6 +28,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.6"
       - name: Install Hermes + telnyx_sms for production send-path test
         run: bash scripts/setup-hermes-sms-ci.sh
         env:
