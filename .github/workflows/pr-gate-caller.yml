@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   pr-gate:
-    uses: Redefine-Reach/advisorreach-operations/.github/workflows/pr-gate.yml@pr-gate-v1
+    uses: Redefine-Reach/advisorreach-operations/.github/workflows/pr-gate.yml@<OPS75_MERGE_SHA_40> # pr-gate-v1
     with:
       pinned_base: production
       max_behind: 20
