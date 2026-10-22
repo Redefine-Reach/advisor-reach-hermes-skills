@@ -1,0 +1,22 @@
+name: pr-gate
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  pr-gate:
+    uses: Redefine-Reach/advisorreach-operations/.github/workflows/pr-gate.yml@production
+    with:
+      pinned_base: production
+      max_behind: 20
+      send_path: true
+      send_path_cmd: node --test tests/sms-send-confirmed.test.mjs
