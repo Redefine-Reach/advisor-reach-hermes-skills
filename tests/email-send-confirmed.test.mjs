@@ -289,6 +289,26 @@ test("an alias From does not set from_email", () => {
   assert.equal(JSON.parse(sent.callLines[0]).arguments.from_email, undefined);
 });
 
+test("send with a nonexistent draft-id errors without calling the transport", () => {
+  const dir = mkdtempSync(join(tmpdir(), "email-no-draft-"));
+  const draftId = "0000000000000000";
+  assert.equal(existsSync(join(dir, "drafts", `${draftId}.json`)), false);
+  const refused = run(
+    ["send", "--draft-id", draftId, "--confirm", "SEND", "--attest", "yes"],
+    {},
+    dir,
+  );
+  assert.equal(refused.proc.status, 1, refused.proc.stderr);
+  assert.equal(refused.payload.outcome, "error");
+  assert.equal(refused.payload.field, "draft_id");
+  assert.equal(refused.payload.provider_called, false);
+  assert.equal(refused.callLines.length, 0);
+  assert.equal(draftFiles(dir).length, 0);
+  const audit = refused.auditLines.at(-1);
+  assert.equal(audit.outcome, "error");
+  assert.equal(audit.provider_called, false);
+});
+
 test("send refuses a vague yes and anything except the exact confirm", () => {
   for (const confirm of ["yes", "go ahead", "send it", "SEND please", ""]) {
     const dir = mkdtempSync(join(tmpdir(), "email-vague-"));
@@ -404,6 +424,41 @@ test("a delegated child cannot stage or send", () => {
   assert.equal(sent.payload.outcome, "sent");
   assert.equal(sent.callLines.length, 1);
 });
+
+for (const cronEnv of [
+  "HERMES_CRON_JOB_ID",
+  "HERMES_CRON_JOB_NAME",
+  "HERMES_CRON_AUTO_DELIVER_PLATFORM",
+  "HERMES_CRON_AUTO_DELIVER_CHAT_ID",
+]) {
+  test(`cron cannot confirm an owner-staged draft under ${cronEnv}`, () => {
+    const dir = mkdtempSync(join(tmpdir(), "email-cron-confirm-"));
+    const staged = run(stageArgs(), {}, dir);
+    assert.equal(staged.proc.status, 0, staged.proc.stderr);
+    assert.equal(staged.payload.outcome, "staged");
+    assert.equal(staged.payload.provider_called, false);
+    assert.equal(staged.callLines.length, 0);
+    const draftPath = join(dir, "drafts", `${staged.payload.draft_id}.json`);
+    const before = readFileSync(draftPath, "utf8");
+    assert.equal(JSON.parse(before).status, "pending");
+
+    const refused = run(
+      ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
+      { [cronEnv]: "synthetic-cron" },
+      dir,
+    );
+    assert.equal(refused.proc.status, 2, refused.proc.stderr);
+    assert.equal(refused.payload.outcome, "refused_autonomous");
+    assert.equal(refused.payload.provider_called, false);
+    assert.equal(refused.callLines.length, 0);
+    const after = readFileSync(draftPath, "utf8");
+    assert.equal(JSON.parse(after).status, "pending");
+    assert.equal(after, before);
+    const audit = refused.auditLines.at(-1);
+    assert.equal(audit.outcome, "refused_autonomous");
+    assert.equal(audit.provider_called, false);
+  });
+}
 
 test("cron, allow-all, an unresolved box, a stranger, and a second recipient never send", () => {
   const cron = run(stageArgs(), { HERMES_CRON_JOB_ID: "job-1" });
