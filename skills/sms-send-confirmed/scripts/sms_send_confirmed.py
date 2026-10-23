@@ -8,9 +8,11 @@ calls that plugin's ``standalone_sender_fn`` after Hermes resolves
 talk to Telnyx itself and does not accept a From override.
 
 Path A is any resolved box id when that From number is set. The earlier
-spike lock to ``advisor-reach-internal`` is retired. Cron stays
-``refused_autonomous``. Lists and nurture (Mode B) stay refused, and the
-owner allowlist is not widened.
+spike lock to ``advisor-reach-internal`` is retired. Cron and a delegated
+child (``HERMES_DELEGATED_CHILD_CONTEXT``) stay ``refused_autonomous``.
+Lists and nurture (Mode B) stay refused, and the owner allowlist is not
+widened. ``stage`` requires a Why line. That line is only in the owner
+read-back; the client body and ``body_hash`` do not include it.
 
 A successful send writes a time-boxed session file. An inbound from that
 destination becomes an owner event. It does not start a chat with them.
@@ -31,8 +33,13 @@ import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, NoReturn
 from urllib.parse import urlparse
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+import draft_outcome_log as _draft_outcomes
 
 # Hermes is on the box interpreter only. A top-level import would make the
 # gate unusable in CI and in any python that is not the gateway venv.
@@ -49,13 +56,38 @@ except ImportError:
     _platform_registry = None
     _discover_plugins = None
 
-ATTESTATION_VERSION = "red-390-v1"
+# red-390-v2 adds the owner Why line. red-390-v3 updates attestation footer wording
+# (DROP discard, Missing line). The client body and body_hash stay the same.
+ATTESTATION_VERSION = "red-390-v3"
 DEFAULT_MAX_BODY_CHARS = 640
 DEFAULT_DRAFT_TTL_SECONDS = 1800
 DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
+DOUBLE_SEND_GUARD_HOURS = 24
+RECENT_PROVIDER_FAILURE_REASON = (
+    "Your last text to this person may still go through, so I didn't queue a duplicate"
+)
+DOUBLE_SEND_GUARD_EXEMPT_STATUSES = frozenset({"rejected", "not_sent"})
 CONFIRM_TOKENS = frozenset({"send", "/approve"})
+DROP_TOKENS = frozenset({"no", "skip", "drop"})
 ATTEST_YES = frozenset({"yes", "y", "true", "1"})
-STOP_BODIES = frozenset({"stop", "stopall", "unsubscribe", "cancel", "end", "quit"})
+# Telnyx default stop keywords. Case-insensitive; surrounding and repeated
+# whitespace ignored. STOP ALL is two words. Source:
+# https://developers.telnyx.com/docs/messaging/messages/advanced-opt-in-out
+# START and UNSTOP opt back in. HELP is the help keyword, not a stop word.
+TELNYX_STOP_BODIES = frozenset(
+    {
+        "stop",
+        "stopall",
+        "stop all",
+        "unsubscribe",
+        "cancel",
+        "end",
+        "quit",
+    }
+)
+# Extra guards. Not Telnyx defaults. "opt-out" is the hyphenated form of OPTOUT.
+EXTRA_STOP_BODIES = frozenset({"revoke", "optout", "opt-out"})
+STOP_BODIES = TELNYX_STOP_BODIES | EXTRA_STOP_BODIES
 SUGGESTED_NEXT = ("call", "draft reply", "dismiss")
 HYDRATE_KEYS = (
     "TELNYX_API_KEY",
@@ -74,6 +106,88 @@ CRON_ENVS = (
     "HERMES_CRON_AUTO_DELIVER_PLATFORM",
     "HERMES_CRON_AUTO_DELIVER_CHAT_ID",
 )
+# Hermes sets this on execute_code for a delegated child (pin a89f6aba, v0.21.0).
+DELEGATED_CHILD_ENV = "HERMES_DELEGATED_CHILD_CONTEXT"
+WHY_TEXT_MAX = 90
+WHY_LINE_MAX = 120
+SOURCE_LABELS = {
+    "fub_note": "FUB note",
+    "fub_record": "FUB record",
+    "ghl": "GHL record",
+    "calendar": "calendar",
+    "owner_text": "your text",
+}
+NAME_SOURCE_KINDS = frozenset({"gmail", "memory"})
+SOURCE_KINDS = frozenset(SOURCE_LABELS) | NAME_SOURCE_KINDS | {"none"}
+OWNER_TEXT_SUFFIX = "from your own text"  # RED-585 AC9: shown as "Why: <reason>, from your own text."
+SOURCE_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+WHY_TOKEN_RE = re.compile(r"(?i)(?:\b(?:send|stop)\b|/approve)")
+# GSM 03.38 basic text plus the extension characters that stay GSM-7.
+# Controls, ESC, form feed, and backtick are excluded so one of them cannot
+# flip the owner SMS to UCS-2.
+_GSM7_ORDINALS = (
+    *range(0x20, 0x5B),
+    0x5F,
+    *range(0x61, 0x7B),
+    0xA1,
+    0xA3,
+    0xA4,
+    0xA5,
+    0xA7,
+    0xBF,
+    0xC4,
+    0xC5,
+    0xC6,
+    0xC7,
+    0xC9,
+    0xD1,
+    0xD6,
+    0xD8,
+    0xDC,
+    0xDF,
+    0xE0,
+    0xE4,
+    0xE5,
+    0xE6,
+    0xE8,
+    0xE9,
+    0xEC,
+    0xF1,
+    0xF2,
+    0xF6,
+    0xF8,
+    0xF9,
+    0xFC,
+    0x394,
+    0x393,
+    0x39B,
+    0x3A9,
+    0x3A0,
+    0x3A8,
+    0x3A3,
+    0x398,
+    0x39E,
+    0x3A6,
+    0x5E,
+    0x7B,
+    0x7D,
+    0x5C,
+    0x5B,
+    0x5D,
+    0x7E,
+    0x7C,
+    0x20AC,
+)
+GSM7_CHARS = frozenset(chr(code) for code in _GSM7_ORDINALS)
+_WHY_FOLDS = {
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u2013": "-",
+    "\u2014": "-",
+    "\u2026": "...",
+}
 AUDIT_KEYS = (
     "ts",
     "box_id",
@@ -91,6 +205,7 @@ AUDIT_KEYS = (
     "draft_id",
     "provider_called",
     "session_ttl_expires_at",
+    "stubbed",
 )
 POD_NAME = re.compile(r"^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)-\d+$")
 E164_RE = re.compile(r"^\+[1-9]\d{1,14}$")
@@ -133,10 +248,16 @@ def utc_now() -> datetime:
     if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
         raw = str(os.environ.get("SMS_NOW", "")).strip()
         if raw:
-            parsed = datetime.fromisoformat(raw)
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=timezone.utc)
             return parsed
+    raw = str(os.environ.get("DRAFT_OUTCOME_NOW", "")).strip()
+    if raw:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
     return datetime.now(timezone.utc)
 
 
@@ -152,13 +273,571 @@ def body_hash(body: str) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
-def attestation_text(from_number: str, dest: str, body: str) -> str:
-    return (
-        f"You're about to send this text from ARIN's number ({from_number}) to {dest}.\n"
-        f"{body}\n"
-        "Reply SEND to confirm you authorize this one message and that the recipient may receive it.\n"
-        "Reply anything else to cancel. Carrier STOP still works for them."
+def attestation_text(
+    from_number: str,
+    dest: str,
+    body: str,
+    why_line: str,
+    missing_line: str = "",
+) -> str:
+    lines = [
+        f"You're about to send this text from ARIN's number ({from_number}) to {dest}.",
+        body,
+        why_line,
+    ]
+    if missing_line:
+        lines.append(missing_line)
+    lines.extend(
+        [
+            "Reply SEND to confirm you authorize this one message and that the recipient may receive it.",
+            "Reply SEND to send, DROP to discard.",
+            "The recipient can still opt out with their carrier.",
+        ]
     )
+    return "\n".join(lines)
+
+
+def refuse_why(reason: str) -> NoReturn:
+    raise GateFailure("refused_no_why", reason, field="why")
+
+
+def one_line(raw: str) -> str:
+    """Fold the plan's punctuation to ASCII and drop newlines."""
+    flat = str(raw or "").replace("\r\n", "\n").replace("\r", "\n").replace("\n", " ")
+    folded = "".join(_WHY_FOLDS.get(char, char) for char in flat)
+    return re.sub(r"[ \t]+", " ", folded).strip()
+
+
+# Ported from /workspace/eng/fixes patches 0002-0005 (RED-585). Quality gates for
+# owner-texted drafts: a Why must be a client-specific cause (refused_why_generic,
+# refused_why_circular) and the body must be the text itself, to the recipient
+# (refused_body_*). They run before build_why_line and before any draft is written.
+_GENERIC_WHY = (
+    r"\b(?:as|per|at|upon)\s+(?:the\s+)?(?:owner|your|agent|user)(?:'s|s)?\s*(?:request|ask|instruction|text|message)",
+    r"\b(?:as\s+)?(?:requested|asked|instructed|told)\s+by\s+(?:the\s+)?(?:owner|you|user|agent)\b",
+    r"\b(?:owner|you|user|agent)\s+(?:asked|requested|told me|wanted|said)\s+(?:me\s+)?to\b",
+    r"\bowner\s+text\b",
+    r"\bat\s+your\s+request\b",
+    r"\bthe\s+client's\s+recipient\b",
+)
+_ACTION_VERBS = r"(?:congratulate|congrats|wish|remind|tell|text|message|send|follow\s+up(?:\s+with)?|check\s+in(?:\s+with)?|let|notify|thank|ask|call|reach\s+out(?:\s+to)?)"
+_WHY_STOP = {
+    "the", "a", "an", "to", "of", "and", "is", "are", "was", "for", "on", "in", "at", "so", "that", "it",
+    "they", "their", "them", "he", "she", "his", "her", "about", "with", "has", "have", "had", "be", "as",
+}
+_ACTION_TAIL = re.compile(r"[,;:]?\s*\b(?:so|to|and\s+then|then|in\s+order\s+to)\s+" + _ACTION_VERBS + r"\b.*$", re.I)
+# RED-585 QA run 7 items 5-6: "and deserves congratulations" and "so a reminder is timely"
+# are action tails. They match only at the end, so a real cause that uses "so", "meaning",
+# or "deserves" in the middle is left whole.
+_ACTION_TAIL_EXTRA = (
+    re.compile(
+        r"[,;:]?\s*\b(?:and\s+)?(?:deserves?|warrants?|merits?|calls?\s+for)\s+"
+        r"(?:a\s+|an\s+|the\s+)?(?:congrat\w*|recognition|kudos|praise)\s*[.!?]*\s*$",
+        re.I,
+    ),
+    re.compile(
+        r"[,;:]?\s*\b(?:so|which\s+means|meaning)\s+(?:a|an|the)?\s*(?:[\w'-]+\s+){0,4}?"
+        r"(?:is|are|would\s+be|makes?\s+sense|seems?)\s+(?:\w+\s+)?"
+        r"(?:timely|appropriate|fitting|warranted|worthwhile|helpful|a\s+good\s+idea)\s*[.!?]*\s*$",
+        re.I,
+    ),
+)
+# A Why that is only "X is available/ready now" is a status, not a cause (QA run 7 item 2).
+# "now" has to sit on that predicate. A separate cause ("Dana asked...", "because she lands at 4")
+# is not status-only.
+_STATUS_PREDICATE = re.compile(
+    r"(?i)\b(?:is|are)\s+(?:"
+    r"now\s+(?:available|ready)(?:\s+for\s+[\w'-]+(?:\s+[\w'-]+)?)?"
+    r"|(?:available|ready)\s+for\s+[\w'-]+(?:\s+[\w'-]+)?\s+now"
+    r"|(?:available|ready)\s+now(?:\s+for\s+[\w'-]+(?:\s+[\w'-]+)?)?"
+    r")"
+)
+_STATUS_CAUSE = re.compile(
+    r"(?i)\b(?:asked|because|since|due|deadline|expir\w*|clos\w*|lands?|needs?|wants?|before|after|so|meaning)\b"
+)
+_WANT_TAIL = re.compile(r"\b(?:you|i|we|owner|they)?\s*(?:want|wants|need|needs|wish|wishes|would\s+like|'d\s+like)\s*$", re.I)
+_META_BODY = (
+    r"(?:^|[.!?,:;-]\s*)(?:Tell|Let|Remind|Ask|Say|Inform|Notify|Congratulate|Thank)\s+(?:them|him|her|the\s+\w+|[A-Z][a-z]+)\b",
+    r"\b(?:the\s+owner|your\s+agent|per\s+(?:the\s+)?owner|owner\s+(?:said|asked|wants))\b",
+)
+_SECOND_PERSON = r"\b(?:you|your|yours|you're|you'll|you've|you'd|yourself)\b|^\s*(?:hi|hello|hey|dear|good\s+(?:morning|afternoon|evening))\b|\bcongrat|\bhappy\s+birthday\b"
+_FILLER_BODY = r"^\W*(?:(?:hi|hello|hey)\b[^.!?]{0,40}?[,.!]\s*)?(?:i\s*(?:'m|am)\s+)?just\s+(?:sending|dropping)\s+(?:you\s+)?a\s+(?:quick\s+)?(?:note|text|message)\W*$"
+# Punctuation right after the greeting means there is no name yet: "Hi,", "Hey!",
+# "Hi there,", "Good morning,". "Hi, Dana" and "Dear Dana," have a name. A capital
+# sentence word ("The", "Your") is not a name.
+_GREETING_PUNCT = re.compile(
+    r"^\W*(?:hi|hello|hey|dear|good\s+(?:morning|afternoon|evening))(?:\s+there)?\s*[,.!:;-]\s*",
+    re.I,
+)
+_AFTER_GREETING_WORD = re.compile(r"([A-Za-z][A-Za-z'’.-]*)")
+_NOT_A_GREETING_NAME = frozenset(
+    "a an the and but so or it this that your you yours please just yes no ok okay we i our to for of on in at".split()
+)
+_STREET_NUMBER = re.compile(
+    r"\b\d+[A-Za-z]?\s+[A-Za-z0-9.'-]+(?:\s+[A-Za-z0-9.'-]+){0,3}\s+"
+    r"(?:street|st|avenue|ave|road|rd|drive|dr|lane|ln|boulevard|blvd|way|court|ct|"
+    r"place|pl|terrace|ter|circle|cir)\b\.?",
+    re.I,
+)
+
+
+def _greets_without_name(text: str) -> bool:
+    """True for 'Hi,' or 'Hey! The report'. False for 'Hi Dana,' and 'Hi, Dana,'."""
+    match = _GREETING_PUNCT.match(text)
+    if not match:
+        return False
+    word = _AFTER_GREETING_WORD.match(text[match.end() :])
+    if not word:
+        return True
+    return word.group(1).lower() in _NOT_A_GREETING_NAME
+
+
+def _has_price_figure(text: str) -> bool:
+    """True when the body has [PRICE], a dollar amount, or a number that is not a street address."""
+    if re.search(r"\[PRICE\]", text, re.I) or re.search(r"\$\s?\d", text):
+        return True
+    return re.search(r"\d", _STREET_NUMBER.sub(" ", text)) is not None
+
+
+def _content_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9']+", text.lower()) if w not in _WHY_STOP and len(w) > 1}
+
+
+_PLACEHOLDER_RE = re.compile(r"\[\s*(?:(?i:price|date|time)|[A-Z][A-Z0-9 _/-]*?)\s*\]")
+_GREETING_START = re.compile(
+    r"^\W*(?:hi|hello|hey|dear|good\s+(?:morning|afternoon|evening))(?:\s+there)?\b",
+    re.I,
+)
+_NAME_ROLE_TOKENS = frozenset(
+    {
+        "buyer",
+        "seller",
+        "client",
+        "agent",
+        "recipient",
+        "customer",
+        "homeowner",
+        "tenant",
+    }
+)
+# RED-585: Why tails that state what the recipient needs, should do, or should know are refused.
+_WHY_TAIL_JOIN = r",\s*(?:so|and|which\s+means)\s+"
+_WHY_TAIL_SUBJECT = (
+    r"(?:(?:she|he|they|them|you)\b|"
+    r"the\s+(?:buyer|client|seller|recipient)\b|"
+    r"the\s+(?-i:[A-Z][\w'’-]+)\b|"
+    r"(?-i:[A-Z][a-z]+(?:'s)?)\b)"
+)
+_WHY_TAIL_NEED_VERB = (
+    r"(?:needs?|should|must|(?:has|have)\s+to|wants?\s+to|will\s+want|knows?)\b"
+)
+_WHY_RECIPIENT_NEED_TAIL = re.compile(
+    _WHY_TAIL_JOIN + _WHY_TAIL_SUBJECT + r"(?:\s+[\w'’-]+){0,8}\s+" + _WHY_TAIL_NEED_VERB + r".*$",
+    re.I,
+)
+# "so the buyer should know" when the subject is not a single pronoun.
+_WHY_CONSEQUENCE_TAIL = re.compile(
+    r"[,;:]?\s*\bso\s+(?:the\s+)?(?:[\w'’-]+(?:\s+[\w'’-]+){0,5}\s+)?(?:should|need(?:s)? to)\s+know\b.*$",
+    re.I,
+)
+_WHY_SO_THEY_KNOW = re.compile(r"[,;:]?\s*\bso\s+(?:they|he|she|we|you)\s+know\b.*$", re.I)
+_PLACEHOLDER_MISSING_LABELS = {
+    "price": "new price",
+    "date": "date",
+    "time": "time",
+    "address": "address",
+}
+
+
+def is_name_placeholder_token(token: str) -> bool:
+    """True for [NAME], [BUYER NAME], [BUYER], and other recipient role placeholders."""
+    inner = str(token or "").strip()
+    if inner.startswith("[") and inner.endswith("]"):
+        inner = inner[1:-1]
+    key = re.sub(r"\s+", " ", inner.strip().upper())
+    if not key:
+        return False
+    if key == "NAME" or " NAME" in key or key.endswith(" NAME"):
+        return True
+    return key.lower() in _NAME_ROLE_TOKENS
+
+
+def greeting_name_placeholders(text: str) -> list[str]:
+    """Bracketed tokens in the greeting slot mean there is no named recipient yet."""
+    flat = str(text or "").strip()
+    match = _GREETING_START.match(flat)
+    if match:
+        rest = flat[match.end() :].lstrip()
+        bracket = re.match(r"\[\s*([^\]]+)\s*\]", rest)
+        if bracket:
+            token = "[" + bracket.group(1).strip().upper() + "]"
+            if is_name_placeholder_token(token):
+                return [token]
+    punct = _GREETING_PUNCT.match(flat)
+    if punct:
+        rest = flat[punct.end() :].lstrip()
+        bracket = re.match(r"\[\s*([^\]]+)\s*\]", rest)
+        if bracket:
+            token = "[" + bracket.group(1).strip().upper() + "]"
+            if is_name_placeholder_token(token):
+                return [token]
+    return []
+
+
+def content_placeholders(text: str) -> list[str]:
+    """Fill-in placeholders that are not a missing recipient name in the greeting."""
+    return [token for token in unfilled_placeholders(text) if not is_name_placeholder_token(token)]
+
+
+def placeholder_missing_label(token: str) -> str:
+    inner = token.strip("[]").strip().lower()
+    return _PLACEHOLDER_MISSING_LABELS.get(inner, inner.replace("_", " "))
+
+
+def format_missing_line(placeholders: list[str]) -> str:
+    if not placeholders:
+        return ""
+    labels = [placeholder_missing_label(token) for token in placeholders]
+    if len(labels) == 1:
+        detail = labels[0]
+    elif len(labels) == 2:
+        detail = f"{labels[0]} and {labels[1]}"
+    else:
+        detail = ", ".join(labels[:-1]) + f", and {labels[-1]}"
+    if len(labels) == 1:
+        restage = "Reply with it to restage, or DROP to discard."
+    elif len(labels) == 2:
+        restage = "Reply with both to restage, or DROP to discard."
+    else:
+        restage = "Reply with them to restage, or DROP to discard."
+    return f"Missing: {detail}. {restage}"
+
+
+def why_has_consequence_action_tail(why: str) -> bool:
+    """True when the Why ends with what the recipient needs, should do, or should know."""
+    reason = " ".join(str(why or "").split())
+    if not reason:
+        return False
+    return bool(
+        _WHY_RECIPIENT_NEED_TAIL.search(reason)
+        or _WHY_CONSEQUENCE_TAIL.search(reason)
+        or _WHY_SO_THEY_KNOW.search(reason)
+    )
+
+
+def unfilled_placeholders(text: str) -> list[str]:
+    """Bracketed fill-in tokens ([PRICE], [DATE], [TIME], any [UPPERCASE]) left in a body."""
+    seen: list[str] = []
+    for match in _PLACEHOLDER_RE.finditer(text or ""):
+        token = "[" + match.group(0)[1:-1].strip().upper() + "]"
+        if token not in seen:
+            seen.append(token)
+    return seen
+
+
+def _cap_sentence(text: str) -> str:
+    """Capitalize the first letter after a leading source label was removed."""
+    for index, char in enumerate(text):
+        if char.isalpha():
+            if char.islower():
+                return text[:index] + char.upper() + text[index + 1 :]
+            return text
+    return text
+
+
+def strip_why_provenance(why: str) -> str:
+    """Drop a trailing '(owner text, 2026-10-15)' or '(your text, Oct 17)' tag the model added.
+    Provenance is audit-only (--source-kind/--source-date)."""
+    flat = " ".join(str(why or "").split())
+    stripped = re.sub(
+        r"\s*\((?:owner[ _]text|your[ _]text|[^()]*\b20\d\d-\d\d-\d\d)[^()]*\)\s*$", "", flat, flags=re.I
+    )
+    # The script adds ", from your own text." itself. A copy the model already wrote
+    # (leading, trailing, or a parenthetical anywhere) would show the phrase twice.
+    lead = re.sub(
+        r"(?i)^[\s,;]*\(?\s*from\s+your\s+own\s+text\s*\)?\s*[,:;.-]*\s*",
+        "",
+        stripped,
+        count=1,
+    )
+    led = lead != stripped
+    stripped = lead
+    stripped = re.sub(r"(?i)\s*\(\s*from\s+your\s+own\s+text\s*\)", " ", stripped)
+    stripped = re.sub(
+        r"(?i)[\s,;]*\(?\s*from\s+your\s+own\s+text\s*\)?[\s.]*$",
+        "",
+        stripped,
+    )
+    stripped = re.sub(r"\s{2,}", " ", stripped).strip()
+    if stripped == flat:
+        return flat
+    stripped = stripped.rstrip(" .,;")
+    if led:
+        stripped = _cap_sentence(stripped)
+    return stripped
+
+
+def why_is_generic(why: str) -> bool:
+    """True when `why` only restates that the owner asked, or is too thin to be a reason."""
+    reason = " ".join(str(why or "").split())
+    if not reason:
+        return False
+    if len(reason.split()) < 4:
+        return True
+    return any(re.search(pat, reason, re.I) for pat in _GENERIC_WHY)
+
+
+def why_is_only_status(why: str) -> bool:
+    """True when `why` only says something is available or ready now."""
+    reason = " ".join(str(why or "").split())
+    match = _STATUS_PREDICATE.search(reason)
+    if not match:
+        return False
+    outside = f"{reason[: match.start()]} {reason[match.end() :]}"
+    if _STATUS_CAUSE.search(outside):
+        return False
+    return len(_content_words(outside)) < 4
+
+
+def why_cause(why: str, body: str = "") -> str | None:
+    """Cause part of a why, or None when it only repeats the action or the draft.
+    An event named as the cause ("Pat is closing today") is accepted; a trailing
+    action clause ("..., so congratulate Pat") is trimmed off."""
+    reason = " ".join(str(why or "").split())
+    if not reason:
+        return ""
+    if re.search(r"^\s*" + _ACTION_VERBS + r"\b", reason, re.I):
+        return None
+    if re.search(r"\b(?:a|the)\s+(?:quick\s+)?(?:note|text|message)\s*$", reason, re.I):
+        return None
+    cause = reason
+    if why_is_only_status(reason):
+        return None
+    tail = _ACTION_TAIL.search(reason)
+    for extra in _ACTION_TAIL_EXTRA:
+        found = extra.search(cause)
+        if found and (tail is None or found.start() < tail.start()):
+            tail = found
+    if tail:
+        cause = reason[: tail.start()].strip(" ,;:")
+        if _WANT_TAIL.search(cause):
+            return None
+    words = _content_words(cause)
+    if len(words) < 2:
+        return None
+    body_words = _content_words(body)
+    if body_words and len(words) >= 3 and words <= body_words and len(words) / len(body_words) >= 0.8:
+        return None
+    return cause
+
+
+def why_is_circular(why: str, body: str = "") -> bool:
+    return why_cause(why, body) is None
+
+
+def body_problem(body: str, why: str) -> tuple[str, str] | None:
+    """Quality gate for owner-texted drafts. Returns (outcome, reason) or None."""
+    text = " ".join(str(body or "").split())
+    if re.search(_FILLER_BODY, text, re.I):
+        return ("refused_body_no_content", "the draft says nothing; ask the owner one short question: what should the note say")
+    if re.search(_META_BODY[0], text) or re.search(_META_BODY[1], text, re.I):
+        return ("refused_body_meta", "the draft contains an instruction to the owner (for example 'Tell them ...'). Write the text itself, in second person, to the recipient")
+    if not re.search(_SECOND_PERSON, text, re.I):
+        return ("refused_body_not_to_recipient", "the draft is not addressed to the recipient. Write it to them in second person (greet them, use 'you/your')")
+    if greeting_name_placeholders(text):
+        return (
+            "refused_no_recipient",
+            "no named recipient (a bracketed name or role in the greeting counts as missing). "
+            "Ask the owner exactly one recipient question and do not stage: "
+            "'Who should I text?' or, when a role is clear, 'Which buyer should I text?'",
+        )
+    if _greets_without_name(text):
+        return (
+            "refused_no_recipient",
+            "no named recipient. Ask the owner exactly one recipient question and do not stage: "
+            "'Who should I text?' or, when a role is clear, 'Which buyer should I text?'",
+        )
+    if re.search(r"\b(?:price|priced|pricing|cost)\b", text, re.I) and not _has_price_figure(text):
+        return ("refused_body_missing_placeholder", "the draft mentions price but gives no figure. Put [PRICE] where the number goes; a street number is not a price. Do not invent one")
+    return None
+
+
+def gate_why_and_body(why_raw: str, body: str) -> str:
+    """Run the 0002-0005 gates. Returns the Why text to render (provenance and action tail removed)."""
+    why = strip_why_provenance(one_line(why_raw))
+    if not why:
+        return why_raw
+    if why_is_generic(why):
+        raise GateFailure(
+            "refused_why_generic",
+            "why only restates the request. Restage with one client-specific reason from the owner's "
+            "message or known context (deadline, last contact, what the client asked). Do not invent "
+            "one; take it from what the owner said",
+            field="why",
+        )
+    if why_is_only_status(why):
+        raise GateFailure(
+            "refused_why_circular",
+            "why is a status, not a cause. Name what the client asked or what happened, "
+            "not that it is available or ready now",
+            field="why",
+        )
+    if why_has_consequence_action_tail(why):
+        raise GateFailure(
+            "refused_why_action_tail",
+            "why has a trailing consequence or recipient need (for example 'so she needs the new date', "
+            "'and she needs the good news', or 'so the buyer should know'). "
+            "State the reason or fact only; rewrite without that tail",
+            field="why",
+        )
+    cause = why_cause(why, body)
+    if cause is None:
+        raise GateFailure(
+            "refused_why_circular",
+            "why repeats the action or the draft. Give the cause from the owner's message or context "
+            "(deadline, last contact, what the client asked, the event), not the action itself",
+            field="why",
+        )
+    problem = body_problem(body, cause)
+    if problem:
+        raise GateFailure(problem[0], problem[1], field="body")
+    return cause
+
+
+
+# A Why line must give a cause. These only say that the owner asked, or cite
+# the owner's text and its date, which restates the trigger (RED-585).
+_TRIGGER_RESTATE_RES = (
+    re.compile(
+        r"(?i)\b(?:you|owner|the owner|user)\s+"
+        r"(?:just\s+)?(?:asked|told|texted|messaged|wanted|requested|said|instructed)\b"
+    ),
+    re.compile(r"(?i)\b(?:per|from|in|as|at)\s+(?:your|the owner'?s?)\s+(?:text|message|request|ask)\b"),
+    re.compile(r"(?i)\b(?:as|per)\s+requested\b"),
+    re.compile(r"(?i)\b(?:your|owner)\s+(?:text|message|request)\b"),
+    re.compile(r"(?i)\(\s*(?:your|owner)[^)]*\)"),
+)
+_TRIGGER_FILLER = frozenset(
+    "a an the this that it to for of on at in by is was text message request asked today now "
+    "you your me my i we owner user draft drafting".split()
+)
+
+
+def restates_trigger(why: str) -> bool:
+    """True when the Why text only restates that the owner asked, or only cites
+    the owner's text and its date, instead of giving a reason."""
+    text = one_line(why)
+    if any(rx.search(text) for rx in _TRIGGER_RESTATE_RES):
+        return True
+    words = re.findall(r"[a-z0-9']+", text.lower())
+    month_or_day = set(m.lower() for m in SOURCE_MONTHS) | {"oct", "october"}
+    content = [
+        w for w in words
+        if w not in _TRIGGER_FILLER and w not in month_or_day and not w.isdigit()
+    ]
+    return not content
+
+
+def format_source_date(raw: str) -> str:
+    text = str(raw or "").strip()
+    try:
+        parsed = datetime.strptime(text, "%Y-%m-%d")
+    except ValueError:
+        refuse_why("source-date must be YYYY-MM-DD")
+    if parsed.strftime("%Y-%m-%d") != text:
+        refuse_why("source-date must be YYYY-MM-DD")
+    return f"{SOURCE_MONTHS[parsed.month - 1]} {parsed.day}"
+
+
+def _why_clause_for_line(why: str, kind: str) -> str:
+    """Drop trailing punctuation that would double against the source suffix.
+
+    ``owner_text`` joins with a comma, so "in..." would read "in..., from your
+    own text." and "today," would read "today,, from your own text." Other
+    kinds keep a trailing ellipsis in front of the parenthesis.
+    """
+    ellipsis = why.endswith("...")
+    core = why[:-3] if ellipsis else why
+    core = core.rstrip(" \t.,;:!?")
+    if ellipsis and kind != "owner_text" and core:
+        return f"{core}..."
+    return core
+
+
+def build_why_line(
+    why_raw: str,
+    kind_raw: str,
+    date_raw: str,
+    name_raw: str,
+    ref_raw: str,
+) -> tuple[str, str, str | None, str | None]:
+    """Render the owner Why line. Returns line, kind, ISO date, and ref.
+
+    ``none`` and ``owner_text`` do not take a date or ref. ``owner_text`` stores
+    null for both; every other kind (except ``none``) requires a source-date.
+    The client body is not touched.
+    """
+    kind = str(kind_raw or "").strip().lower()
+    why = _why_clause_for_line(one_line(why_raw), kind)
+    name = one_line(name_raw)
+    ref = str(ref_raw or "").strip()
+    date_text = str(date_raw or "").strip()
+    if not why or not kind:
+        refuse_why("stage requires --why and --source-kind")
+    if len(why) > WHY_TEXT_MAX:
+        refuse_why(f"why is {len(why)} characters; the limit is {WHY_TEXT_MAX}")
+    if restates_trigger(why):
+        raise GateFailure(
+            "refused_why_trigger",
+            "why restates the trigger (the owner's text or request) and gives no reason; "
+            "state what is due or happened and why now",
+            field="why",
+        )
+    if kind not in SOURCE_KINDS:
+        refuse_why(
+            "source-kind must be fub_note, fub_record, ghl, gmail, calendar, owner_text, memory, or none"
+        )
+    if ref and re.search(r"[\x00-\x1f]", ref):
+        refuse_why("source-ref must be one line")
+    if kind == "none":
+        if date_text or ref:
+            refuse_why("source-kind none cannot include a date or ref")
+        line = f"Why: {why} (no source)."
+        stored_date = None  # AC10: no source -> explicit nulls, never ""
+        stored_ref = None
+    elif kind == "owner_text":
+        if date_text or ref:
+            refuse_why("source-kind owner_text cannot include a date or ref")
+        line = f"Why: {why}, {OWNER_TEXT_SUFFIX}."
+        stored_date = None
+        stored_ref = None
+    else:
+        if not date_text:
+            refuse_why("source-date is required unless source-kind is none or owner_text")
+        shown_date = format_source_date(date_text)
+        if kind in NAME_SOURCE_KINDS:
+            if not name:
+                refuse_why("source-name is required for gmail and memory")
+            if re.search(r"[,()]", name):
+                refuse_why("source-name must not contain commas or parentheses")
+            if kind == "gmail":
+                label = f"Gmail from {name}"
+            elif kind == "memory":
+                label = f"ARIN memory: {name}"
+            else:
+                refuse_why("source-name is not used for this source-kind")
+        else:
+            label = SOURCE_LABELS[kind]
+        line = f"Why: {why} ({label}, {shown_date})."
+        stored_date = date_text
+        stored_ref = ref
+    if any(char not in GSM7_CHARS for char in line):
+        refuse_why("Why line must be GSM-7")
+    if WHY_TOKEN_RE.search(line):
+        refuse_why("Why line must not contain SEND, /approve, or STOP")
+    if len(line) > WHY_LINE_MAX:
+        refuse_why(f"Why line is {len(line)} characters; the limit is {WHY_LINE_MAX}")
+    return line, kind, stored_date, stored_ref
 
 
 def classify_phone(raw: str) -> tuple[str, str | None]:
@@ -236,12 +915,17 @@ def paths(environ: Mapping[str, str] | None = None) -> dict[str, Path]:
     drafts = Path(env.get("SMS_DRAFT_DIR", "/opt/data/audit/sms-drafts"))
     sessions = Path(env.get("SMS_SESSION_DIR", "/opt/data/sms-sessions"))
     events = Path(env.get("SMS_EVENT_DIR", "/opt/data/sms-events"))
+    draft_outcomes_default = "/opt/data/audit/draft-outcomes.jsonl"
+    if env.get("SMS_SEND_CONFIRMED_TEST") == "1" and "DRAFT_OUTCOMES_PATH" not in env:
+        draft_outcomes_default = str(audit.parent / "draft-outcomes.jsonl")
+    draft_outcomes = Path(env.get("DRAFT_OUTCOMES_PATH", draft_outcomes_default))
     return {
         "audit": audit,
         "opt_out": opt_out,
         "drafts": drafts,
         "sessions": sessions,
         "events": events,
+        "draft_outcomes": draft_outcomes,
     }
 
 
@@ -362,6 +1046,53 @@ def phone_allowlist(environ: Mapping[str, str] | None = None, *, enforce_closed:
     return owners
 
 
+def normalize_identity_token(raw: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    if lowered.startswith("tg:"):
+        rest = text[3:].strip()
+        if TELEGRAM_ID_RE.fullmatch(rest):
+            return rest
+    if TELEGRAM_ID_RE.fullmatch(text):
+        return text
+    kind, number = classify_phone(text)
+    if kind == "ok" and number:
+        return number
+    return text
+
+
+def owner_identity_groups(environ: Mapping[str, str] | None = None) -> list[frozenset[str]]:
+    env = os.environ if environ is None else environ
+    raw = str(env.get("ARIN_OWNER_IDENTITIES", "")).strip()
+    if not raw:
+        return []
+    groups: list[frozenset[str]] = []
+    for group_part in raw.split(","):
+        members: set[str] = set()
+        for token in group_part.split("|"):
+            normalized = normalize_identity_token(token.strip())
+            if normalized:
+                members.add(normalized)
+        if members:
+            groups.append(frozenset(members))
+    return groups
+
+
+def actor_matches_approver(actor: str, approver: str, groups: list[frozenset[str]]) -> bool:
+    a = normalize_identity_token(actor)
+    ap = normalize_identity_token(approver)
+    if a == ap:
+        return True
+    if not groups:
+        return False
+    for group in groups:
+        if a in group and ap in group:
+            return True
+    return False
+
+
 def telegram_allowlist(environ: Mapping[str, str] | None = None) -> set[str]:
     env = os.environ if environ is None else environ
     raw = str(env.get("TELEGRAM_ALLOWED_USERS", "")).strip()
@@ -410,7 +1141,8 @@ def same_principal(approver: str, dest: str) -> bool:
 
 
 def is_stop_body(body: str) -> bool:
-    return str(body or "").strip().lower() in STOP_BODIES
+    text = " ".join(str(body or "").strip().lower().split())
+    return text in STOP_BODIES
 
 
 def from_number(environ: Mapping[str, str] | None = None) -> str:
@@ -449,6 +1181,16 @@ def assert_not_cron(environ: Mapping[str, str] | None = None) -> None:
                 "refused_autonomous",
                 "scheduled and standing jobs cannot send a third-party SMS",
             )
+
+
+def assert_not_delegated_child(environ: Mapping[str, str] | None = None) -> None:
+    """A delegated child must not stage or send (PLAN-subagents §2.6)."""
+    env = os.environ if environ is None else environ
+    if str(env.get(DELEGATED_CHILD_ENV, "")).strip():
+        raise GateFailure(
+            "refused_autonomous",
+            "a delegated child cannot stage or send a third-party SMS",
+        )
 
 
 def load_opt_outs(path: Path) -> set[str]:
@@ -518,10 +1260,9 @@ def audit(
     provider_status: str | None = None,
     provider_called: bool = False,
     session_ttl_expires_at: str | None = None,
+    stubbed: bool | None = None,
 ) -> None:
-    append_audit(
-        store["audit"],
-        {
+    row = {
             "ts": iso(utc_now()),
             "box_id": box_id,
             "approver": approver,
@@ -538,8 +1279,10 @@ def audit(
             "draft_id": draft_id,
             "provider_called": provider_called,
             "session_ttl_expires_at": session_ttl_expires_at,
-        },
-    )
+        }
+    if stubbed is not None:
+        row["stubbed"] = stubbed
+    append_audit(store["audit"], row)
 
 
 class DraftLock:
@@ -627,6 +1370,54 @@ def parse_expiry(draft: dict) -> datetime:
     return parsed
 
 
+def latest_draft_for_approver(directory: Path, approver: str) -> dict | None:
+    """Most recent draft file for this approver (any status), or None."""
+    if not directory.exists():
+        return None
+    latest: dict | None = None
+    latest_at = ""
+    for path in directory.glob("*.json"):
+        if path.name.startswith("."):
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict) or str(data.get("approver") or "") != approver:
+            continue
+        created = str(data.get("created_at") or "")
+        if latest is None or created > latest_at:
+            latest = data
+            latest_at = created
+    return latest
+
+
+def guard_why_not_reused(
+    previous: dict | None,
+    *,
+    dest: str,
+    body: str,
+    why_line: str,
+) -> None:
+    """RED-585: a new draft must not reuse the prior Why when the text or recipient changed."""
+    if not previous:
+        return
+    prior_line = str(previous.get("why_line") or "").strip()
+    new_line = str(why_line or "").strip()
+    if not prior_line or prior_line != new_line:
+        return
+    same_dest = str(previous.get("dest") or "") == dest
+    same_body = str(previous.get("body_hash") or "") == body_hash(body)
+    if same_dest and same_body:
+        return
+    raise GateFailure(
+        "refused_why_reused",
+        "why matches the previous draft but the recipient or message changed. "
+        "Write a new why for this text and this person; do not copy the last draft's why",
+        field="why",
+    )
+
+
 def pending_blocks(directory: Path, now: datetime) -> bool:
     if not directory.exists():
         return False
@@ -647,6 +1438,11 @@ def pending_blocks(directory: Path, now: datetime) -> bool:
 
 def is_confirm(token: str) -> bool:
     return str(token or "").strip().lower() in CONFIRM_TOKENS
+
+
+def is_drop(token: str) -> bool:
+    """True when the owner answered NO or skip. That drops the draft and does not send."""
+    return str(token or "").strip().lower() in DROP_TOKENS
 
 
 def is_attest(token: str) -> bool:
@@ -678,10 +1474,15 @@ def parse_provider_stdout(stdout: str, stderr: str, code: int) -> dict:
             "error": "",
         }
     error = payload.get("error") or stderr.strip() or f"send exit {code}"
+    raw_status = str(payload.get("provider_status") or "").strip().lower()
+    if raw_status in DOUBLE_SEND_GUARD_EXEMPT_STATUSES:
+        provider_status = raw_status
+    else:
+        provider_status = raw_status if raw_status else "error"
     return {
         "success": False,
         "message_id": str(payload.get("message_id") or ""),
-        "provider_status": str(payload.get("provider_status") or "error"),
+        "provider_status": provider_status,
         "error": str(error).replace("\n", " ")[:500],
     }
 
@@ -696,15 +1497,21 @@ def normalize_sender_result(result: object) -> dict:
         }
     error = ""
     message_id = ""
+    provider_status = "error"
     if isinstance(result, dict):
         error = str(result.get("error") or "")
         message_id = str(result.get("message_id") or "")
+        raw_status = str(result.get("provider_status") or "").strip().lower()
+        if raw_status in DOUBLE_SEND_GUARD_EXEMPT_STATUSES:
+            provider_status = raw_status
+        elif raw_status:
+            provider_status = raw_status
     if not error:
         error = "provider rejected the send"
     return {
         "success": False,
         "message_id": message_id,
-        "provider_status": "error",
+        "provider_status": provider_status,
         "error": error.replace("\n", " ")[:500],
     }
 
@@ -744,15 +1551,33 @@ def resolve_standalone_sender(discover, resolve_all, get_entry, load_config, pla
     return sender, platform_config_for_send(load_config, platform_type, config_type), ""
 
 
+def stub_provider_enabled() -> bool:
+    flag = str(os.environ.get("SMS_SEND_STUB_PROVIDER", "")).strip().lower()
+    if flag not in {"1", "true", "yes", "on"}:
+        return False
+    if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
+        return True
+    return str(os.environ.get("SMS_SEND_STUB_ALLOW", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def deliver(dest: str, body: str) -> dict:
     """One adapter send. Test mode never falls through to the plugin."""
+    if stub_provider_enabled():
+        digest = hashlib.sha256(f"{dest}\0{body}".encode("utf-8")).hexdigest()[:16]
+        return {
+            "success": True,
+            "message_id": f"stub-{digest}",
+            "provider_status": "stubbed",
+            "error": "",
+            "stubbed": True,
+        }
     if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
         transport = os.environ.get("SMS_SEND_TRANSPORT", "").strip()
         if not transport:
             return {
                 "success": False,
                 "message_id": "",
-                "provider_status": "error",
+                "provider_status": "not_sent",
                 "error": "test mode has no transport",
             }
         proc = subprocess.run(
@@ -769,7 +1594,7 @@ def deliver(dest: str, body: str) -> dict:
         return {
             "success": False,
             "message_id": "",
-            "provider_status": "error",
+            "provider_status": "not_sent",
             "error": "telnyx plugin loader unavailable",
         }
     sender, pconfig, error = resolve_standalone_sender(
@@ -784,7 +1609,7 @@ def deliver(dest: str, body: str) -> dict:
         return {
             "success": False,
             "message_id": "",
-            "provider_status": "error",
+            "provider_status": "not_sent",
             "error": error or "telnyx_sms standalone_sender_fn is not registered",
         }
     try:
@@ -808,6 +1633,7 @@ def context() -> dict:
     hydrate_sms_env()
     box_id = resolve_box_id()
     assert_not_cron()
+    assert_not_delegated_child()
     assert_path_a_box(box_id)
     phones = phone_allowlist()
     telegram = telegram_allowlist()
@@ -823,6 +1649,7 @@ def context() -> dict:
         "phones": phones,
         "telegram": telegram,
         "owners": phones | telegram,
+        "owner_identity_groups": owner_identity_groups(),
         "from": sender,
         "store": store,
     }
@@ -863,8 +1690,304 @@ def refuse_context(failure: GateFailure, *, approver: str = "", dest: str = "", 
     return emit(payload, failure.status)
 
 
-def one_line(raw: str) -> str:
-    return " ".join(str(raw or "").split())
+def audit_outcome_log_failed(
+    store: dict[str, Path],
+    *,
+    box_id: str,
+    draft_id: str | None,
+    reason_class: str,
+) -> None:
+    try:
+        append_audit(
+            store["audit"],
+            {
+                "ts": iso(utc_now()),
+                "box_id": box_id,
+                "approver": "",
+                "approved_at": None,
+                "attestation_version": ATTESTATION_VERSION,
+                "dest": "",
+                "from": "",
+                "body_hash": "",
+                "body_len": 0,
+                "telnyx_message_id": None,
+                "provider_status": None,
+                "outcome": "outcome_log_failed",
+                "reason": reason_class[:120],
+                "draft_id": draft_id,
+                "provider_called": False,
+                "session_ttl_expires_at": None,
+            },
+        )
+    except Exception:
+        return
+
+
+def assert_draft_owner(ctx: dict, draft: dict, *, draft_id: str) -> None:
+    approver = str(draft.get("approver") or "")
+    if approver not in ctx["owners"] or draft.get("from") != ctx["from"]:
+        raise GateFailure(
+            "refused_not_owner",
+            "draft owner or From no longer matches this box",
+            extra={"draft_id": draft_id, "dest": str(draft.get("dest") or "")},
+        )
+
+
+def resolve_turn_actor(raw: str, *, field: str = "actor") -> str:
+    text = str(raw or "").strip()
+    if not text:
+        raise GateFailure(
+            "error",
+            "turn actor is required for send, cancel, and stage --replaces",
+            field=field,
+            status=EXIT_ERROR,
+        )
+    normalized = normalize_identity_token(text)
+    if TELEGRAM_ID_RE.fullmatch(normalized):
+        return normalized
+    kind, number = classify_phone(text)
+    if kind == "ok" and number:
+        return number
+    raise GateFailure("error", "actor is not valid", field=field, status=EXIT_ERROR)
+
+
+def resolve_turn_actor_for_command(
+    actor_raw: str,
+    draft: dict,
+    *,
+    field: str = "actor",
+) -> str:
+    """Resolve --actor for send/cancel; hermetic tests may omit it and use the draft approver."""
+    text = str(actor_raw or "").strip()
+    if text:
+        return resolve_turn_actor(text, field=field)
+    if resolve_box_sms_turn_owner() is not None:
+        return resolve_turn_actor("", field=field)
+    approver = str(draft.get("approver") or "").strip()
+    if approver:
+        return resolve_turn_actor(approver, field=field)
+    return resolve_turn_actor("", field=field)
+
+
+def assert_actor_is_draft_approver(
+    draft: dict,
+    actor: str,
+    *,
+    draft_id: str,
+    groups: list[frozenset[str]] | None = None,
+) -> None:
+    approver = str(draft.get("approver") or "")
+    identity_groups = groups if groups is not None else owner_identity_groups()
+    if not actor_matches_approver(actor, approver, identity_groups):
+        raise GateFailure(
+            "refused_not_owner",
+            "only the draft approver may act on this draft",
+            field="actor",
+            extra={"draft_id": draft_id, "dest": str(draft.get("dest") or "")},
+        )
+
+
+def provider_send_is_definitively_failed(result: dict) -> bool:
+    if result.get("success"):
+        return False
+    status = str(result.get("provider_status") or "").strip().lower()
+    return status in DOUBLE_SEND_GUARD_EXEMPT_STATUSES
+
+
+def provider_send_triggers_double_send_guard(result: dict) -> bool:
+    if result.get("success"):
+        return not str(result.get("message_id") or "").strip()
+    return not provider_send_is_definitively_failed(result)
+
+
+def apply_double_send_guard(draft: dict, dest: str, body: str, when: datetime) -> None:
+    draft["double_send_guard_dest"] = dest
+    draft["double_send_guard_body_hash"] = body_hash(body)
+    draft["double_send_guard_at"] = iso(when)
+
+
+def assert_no_recent_double_send_guard(store: dict[str, Path], dest: str, body: str, now: datetime) -> None:
+    digest = body_hash(body)
+    cutoff = now - timedelta(hours=DOUBLE_SEND_GUARD_HOURS)
+    directory = store["drafts"]
+    for path in directory.glob("*.json"):
+        try:
+            data = read_draft(path)
+        except Exception:
+            continue
+        if str(data.get("double_send_guard_dest") or "") != dest:
+            continue
+        if str(data.get("double_send_guard_body_hash") or "") != digest:
+            continue
+        raw = str(data.get("double_send_guard_at") or "")
+        if not raw:
+            continue
+        try:
+            guarded_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if guarded_at.tzinfo is None:
+            guarded_at = guarded_at.replace(tzinfo=timezone.utc)
+        if guarded_at >= cutoff:
+            raise GateFailure(
+                "refused_recent_provider_failure",
+                RECENT_PROVIDER_FAILURE_REASON,
+                field="body",
+            )
+
+
+def new_draft_id() -> str:
+    forced = str(os.environ.get("SMS_DRAFT_ID_NEXT", "")).strip()
+    if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1" and _draft_outcomes.DRAFT_ID_RE.fullmatch(forced):
+        os.environ.pop("SMS_DRAFT_ID_NEXT", None)
+        return forced
+    return os.urandom(8).hex()
+
+
+def snapshot_for_outcome(draft: dict, body: str) -> None:
+    _draft_outcomes.refresh_edit_distance_from_first(draft, body)
+    draft["body_hash_final"] = str(draft.get("body_hash") or "")
+    draft["len_final"] = len(body)
+
+
+def maybe_finalize_draft_outcome(
+    store: dict[str, Path],
+    draft: dict,
+    outcome: str,
+    *,
+    box_id: str,
+    refuse_reason: str | None = None,
+) -> None:
+    try:
+        _draft_outcomes.record_outcome(
+            store,
+            draft,
+            outcome=outcome,
+            box_slug=box_id or None,
+            refuse_reason=refuse_reason,
+        )
+    except Exception as exc:
+        audit_outcome_log_failed(
+            store,
+            box_id=box_id,
+            draft_id=str(draft.get("draft_id") or "") or None,
+            reason_class=exc.__class__.__name__,
+        )
+
+
+def finalize_script_refused_draft(
+    store: dict[str, Path],
+    draft: dict,
+    path: Path,
+    *,
+    box_id: str,
+    refuse_reason: str,
+    body: str,
+    provider_result: dict | None = None,
+) -> None:
+    """Terminal script refusal: one refused outcome line; draft stays re-stageable via replaces."""
+    if provider_result is not None and provider_send_triggers_double_send_guard(provider_result):
+        apply_double_send_guard(draft, str(draft.get("dest") or ""), body, utc_now())
+    snapshot_for_outcome(draft, body)
+    maybe_finalize_draft_outcome(
+        store,
+        draft,
+        "refused",
+        box_id=box_id,
+        refuse_reason=refuse_reason,
+    )
+    draft["status"] = "refused"
+    draft["refuse_reason"] = refuse_reason
+    _draft_outcomes.strip_plaintext_fields(draft, keep_chain_baseline=True)
+    write_draft(path, draft)
+
+
+def resolve_box_sms_turn_owner() -> str | None:
+    raw = str(os.environ.get("SMS_TURN_OWNER_E164", "")).strip()
+    if not raw:
+        return None
+    kind, number = classify_phone(raw)
+    if kind == "ok" and number:
+        return number
+    normalized = normalize_identity_token(raw)
+    return normalized or None
+
+
+def resolve_box_telegram_turn_owner() -> str | None:
+    """Box-set Telegram id for this inbound owner Telegram turn (W7).
+
+    Only the arin-sms-stage plugin sets TG_TURN_OWNER_ID, per turn, after the
+    turn source is telegram and the sender is on TELEGRAM_ALLOWED_USERS. It is
+    never on the execute_code passthrough list, so a model-run script has none.
+    """
+    raw = str(os.environ.get("TG_TURN_OWNER_ID", "")).strip()
+    if raw.lower().startswith("tg:"):
+        raw = raw[3:].strip()
+    return raw if TELEGRAM_ID_RE.fullmatch(raw) else None
+
+
+def assert_actor_is_box_sms_turn(
+    actor: str,
+    ctx: dict,
+    *,
+    draft_id: str = "",
+    dest: str = "",
+    mapped_telegram_approver: str = "",
+) -> None:
+    """RED-700: SEND and re-stage on the box-resolved SMS text-turn owner; mapped owner Telegram may SEND."""
+    normalized = normalize_identity_token(actor)
+    if TELEGRAM_ID_RE.fullmatch(normalized):
+        approver = str(mapped_telegram_approver or "").strip()
+        groups = ctx.get("owner_identity_groups") or owner_identity_groups()
+        # W7: the Telegram actor must be the box-resolved Telegram turn sender.
+        # No test-mode bypass: fail closed when the box did not set it.
+        tg_turn_owner = resolve_box_telegram_turn_owner()
+        if (
+            approver
+            and groups
+            and tg_turn_owner is not None
+            and normalized == tg_turn_owner
+            and actor_matches_approver(actor, approver, groups)
+        ):
+            return
+        if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
+            telegram = ctx.get("telegram") or telegram_allowlist()
+            if normalized in telegram and actor_matches_approver(actor, approver, groups):
+                return
+        raise GateFailure(
+            "refused_not_owner",
+            "SEND and re-stage require the owner's SMS text thread until RED-700",
+            field="actor",
+            extra={"draft_id": draft_id, "dest": dest},
+        )
+    kind, number = classify_phone(actor)
+    if kind != "ok" or not number or number not in ctx["phones"]:
+        raise GateFailure(
+            "refused_not_owner",
+            "SEND and re-stage require the owner's SMS number on this turn",
+            field="actor",
+            extra={"draft_id": draft_id, "dest": dest},
+        )
+    turn_owner = resolve_box_sms_turn_owner()
+    if turn_owner is None:
+        if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
+            return
+        if kind == "ok" and number and number in ctx["phones"]:
+            return
+        raise GateFailure(
+            "error",
+            "send and re-stage are only available on the owner's SMS text turn",
+            field="actor",
+            status=EXIT_ERROR,
+            extra={"draft_id": draft_id, "dest": dest},
+        )
+    if normalized != turn_owner:
+        raise GateFailure(
+            "refused_not_owner",
+            "SEND and re-stage require the box-resolved SMS owner for this turn",
+            field="actor",
+            extra={"draft_id": draft_id, "dest": dest},
+        )
 
 
 def stage(
@@ -875,6 +1998,9 @@ def stage(
     source_kind_raw: str = "",
     source_date_raw: str = "",
     source_name_raw: str = "",
+    source_ref_raw: str = "",
+    replaces_raw: str = "",
+    actor_raw: str = "",
 ) -> int:
     try:
         ctx = context()
@@ -901,15 +2027,112 @@ def stage(
                 field="body",
             )
         assert_not_opted_out(dest, ctx["store"]["opt_out"])
+        why_clean = strip_why_provenance(one_line(why_raw))
+        replaces_id = str(replaces_raw or "").strip()
+        legacy_optional_why = not why_clean and not source_kind and not replaces_id
+        legacy_production_why = (
+            source_kind == "owner_text"
+            and bool(why_clean)
+            and bool(source_date or source_name)
+            and not replaces_id
+        )
+        if legacy_optional_why or legacy_production_why:
+            why_line = ""
+            source_ref = None
+        else:
+            # Format first (missing, bad source, GSM-7, tokens, length, restated trigger),
+            # then the 0002-0005 quality gates, then render the line from the cause only.
+            build_why_line(why_clean, source_kind_raw, source_date_raw, source_name_raw, source_ref_raw)
+            why_shown = gate_why_and_body(why_clean, body)
+            why_line, source_kind, source_date, source_ref = build_why_line(
+                why_shown,
+                source_kind_raw,
+                source_date_raw,
+                source_name_raw,
+                source_ref_raw,
+            )
         now = utc_now()
         with DraftLock(ctx["store"]["drafts"]):
-            if pending_blocks(ctx["store"]["drafts"], now):
+            previous: dict | None = None
+            if replaces_id:
+                prev_path = draft_path(ctx["store"]["drafts"], replaces_id)
+                if not prev_path.is_file():
+                    raise GateFailure(
+                        "error",
+                        "replaces draft was not found",
+                        field="replaces",
+                        status=EXIT_ERROR,
+                    )
+                previous = read_draft(prev_path)
+                prev_status = str(previous.get("status") or "")
+                if prev_status not in {"pending", "refused"}:
+                    raise GateFailure(
+                        "error",
+                        "replaces draft is not pending or refused",
+                        field="replaces",
+                        status=EXIT_ERROR,
+                    )
+                actor = resolve_turn_actor(actor_raw, field="actor")
+                assert_actor_is_box_sms_turn(
+                    actor,
+                    ctx,
+                    draft_id=replaces_id,
+                    dest=str(previous.get("dest") or ""),
+                )
+                assert_actor_is_draft_approver(
+                    previous,
+                    actor,
+                    draft_id=replaces_id,
+                    groups=ctx["owner_identity_groups"],
+                )
+                prev_refuse = str(previous.get("refuse_reason") or "")
+                if prev_status == "refused" and prev_refuse not in _draft_outcomes.RESTAGEABLE_REFUSE_REASONS:
+                    raise GateFailure(
+                        "error",
+                        "this draft cannot be re-staged after a provider failure",
+                        field="replaces",
+                        status=EXIT_ERROR,
+                    )
+                if prev_status == "refused" and pending_blocks(ctx["store"]["drafts"], now):
+                    raise GateFailure(
+                        "refused_multi",
+                        "a draft is already waiting for SEND; cancel it before staging another",
+                    )
+                if str(previous.get("approver") or "") != approver:
+                    raise GateFailure(
+                        "refused_not_owner",
+                        "replaces draft belongs to another approver",
+                        field="replaces",
+                    )
+                if str(previous.get("dest") or "") != dest:
+                    raise GateFailure(
+                        "refused_why_reused",
+                        "re-stage after an edit must keep the same recipient; stage a new draft for someone else",
+                        field="dest",
+                    )
+                guard_why_not_reused(
+                    previous,
+                    dest=dest,
+                    body=body,
+                    why_line=why_line,
+                )
+            elif pending_blocks(ctx["store"]["drafts"], now):
                 raise GateFailure(
                     "refused_multi",
                     "a draft is already waiting for SEND; cancel it before staging another",
                 )
-            draft_id = os.urandom(8).hex()
+            assert_no_recent_double_send_guard(ctx["store"], dest, body, now)
+            if not replaces_id and not legacy_optional_why and not legacy_production_why:
+                guard_why_not_reused(
+                    latest_draft_for_approver(ctx["store"]["drafts"], approver),
+                    dest=dest,
+                    body=body,
+                    why_line=why_line,
+                )
+            draft_id = new_draft_id()
             expires = now + draft_ttl()
+            created_at = iso(now)
+            body_digest = body_hash(body)
             record = {
                 "draft_id": draft_id,
                 "status": "pending",
@@ -918,37 +2141,55 @@ def stage(
                 "dest": dest,
                 "from": ctx["from"],
                 "body": body,
-                "body_hash": body_hash(body),
+                "body_hash": body_digest,
                 "why": why,
                 "source_kind": source_kind,
                 "source_date": source_date,
                 "source_name": source_name,
                 "attestation_version": ATTESTATION_VERSION,
-                "created_at": iso(now),
+                "why_line": why_line,
+                "source_kind": source_kind,
+                "source_date": source_date,
+                "source_ref": source_ref,
+                "created_at": created_at,
                 "expires_at": iso(expires),
             }
+            if previous is not None:
+                _draft_outcomes.inherit_chain_fields(record, previous, body, body_digest)
+                if str(previous.get("status") or "") in {"pending", "refused"}:
+                    _draft_outcomes.mark_superseded(
+                        draft_path(ctx["store"]["drafts"], replaces_id),
+                        previous,
+                    )
+            else:
+                _draft_outcomes.seed_chain_fields(record, body, body_digest, created_at)
             write_draft(draft_path(ctx["store"]["drafts"], draft_id), record)
-        shown = attestation_text(ctx["from"], dest, body)
-        return emit(
-            {
-                "ok": True,
-                "outcome": "staged",
-                "draft_id": draft_id,
-                "dest": dest,
-                "from": ctx["from"],
-                "body_len": len(body),
-                "body_hash": record["body_hash"],
-                "why": why,
-                "source_kind": source_kind,
-                "source_date": source_date,
-                "source_name": source_name,
-                "attestation_version": ATTESTATION_VERSION,
-                "expires_at": record["expires_at"],
-                "attestation": shown,
-                "provider_called": False,
-            },
-            EXIT_OK,
-        )
+        missing_line = format_missing_line(content_placeholders(body))
+        shown = attestation_text(ctx["from"], dest, body, why_line, missing_line)
+        staged_payload = {
+            "ok": True,
+            "outcome": "staged",
+            "draft_id": draft_id,
+            "dest": dest,
+            "from": ctx["from"],
+            "body_len": len(body),
+            "body_hash": record["body_hash"],
+            "why": why,
+            "source_kind": source_kind,
+            "source_date": source_date,
+            "source_name": source_name,
+            "attestation_version": ATTESTATION_VERSION,
+            "why_line": why_line,
+            "expires_at": record["expires_at"],
+            "attestation": shown,
+            "provider_called": False,
+        }
+        if record.get("replaces"):
+            staged_payload["replaces"] = record["replaces"]
+        if missing_line:
+            staged_payload["missing_line"] = missing_line
+            staged_payload["content_placeholders"] = content_placeholders(body)
+        return emit(staged_payload, EXIT_OK)
     except GateFailure as failure:
         approver = ""
         dest = ""
@@ -962,22 +2203,24 @@ def stage(
         return refuse_context(failure, approver=approver, dest=dest, body=body)
 
 
-def cancel_draft(directory: Path, draft_id: str, reason: str) -> dict | None:
+def cancel_draft(directory: Path, draft_id: str, reason: str) -> tuple[dict | None, bool]:
     path = draft_path(directory, draft_id)
     if not path.exists():
-        return None
+        return None, False
     data = read_draft(path)
-    original_body = str(data.get("body") or "")
-    if data.get("status") == "pending":
-        data["status"] = "cancelled"
-        data["cancelled_reason"] = reason
-        data["body"] = ""
-        write_draft(path, data)
-    data["body"] = original_body
-    return data
+    if data.get("status") != "pending":
+        return data, False
+    body = str(data.get("body") or "")
+    snapshot_for_outcome(data, body)
+    data["status"] = "cancelled"
+    data["cancelled_reason"] = reason
+    _draft_outcomes.strip_plaintext_fields(data)
+    write_draft(path, data)
+    data["body"] = body
+    return data, True
 
 
-def send(draft_id: str, confirm: str, attest: str) -> int:
+def send(draft_id: str, confirm: str, attest: str, actor_raw: str = "") -> int:
     ctx: dict = {}
     draft: dict = {}
     held_body = ""
@@ -1012,31 +2255,67 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                     "this draft is not waiting for a confirm",
                     extra={"draft_id": draft_id, "dest": dest},
                 )
+            actor = resolve_turn_actor_for_command(actor_raw, draft, field="actor")
+            assert_actor_is_box_sms_turn(
+                actor,
+                ctx,
+                draft_id=draft_id,
+                dest=dest,
+                mapped_telegram_approver=approver,
+            )
+            assert_actor_is_draft_approver(
+                draft,
+                actor,
+                draft_id=draft_id,
+                groups=ctx["owner_identity_groups"],
+            )
+            assert_draft_owner(ctx, draft, draft_id=draft_id)
             if utc_now() >= parse_expiry(draft):
-                draft["status"] = "cancelled"
+                snapshot_for_outcome(draft, body)
+                maybe_finalize_draft_outcome(ctx["store"], draft, "ignored", box_id=ctx["box_id"])
+                draft["status"] = "ignored"
                 draft["cancelled_reason"] = "expired"
-                draft["body"] = ""
+                _draft_outcomes.strip_plaintext_fields(draft)
                 write_draft(path, draft)
                 raise GateFailure(
                     "refused_no_confirm",
                     "confirmation window expired; stage the message again",
                     extra={"draft_id": draft_id, "dest": dest},
                 )
-            if approver not in ctx["owners"] or draft.get("from") != ctx["from"]:
-                raise GateFailure(
-                    "refused_not_owner",
-                    "draft owner or From no longer matches this box",
-                    extra={"draft_id": draft_id, "dest": dest},
-                )
             if not is_confirm(confirm):
+                dropped = is_drop(confirm)
                 draft["status"] = "cancelled"
-                draft["cancelled_reason"] = "confirm was not SEND"
-                draft["body"] = ""
+                draft["cancelled_reason"] = (
+                    "owner replied NO, DROP, or skip" if dropped else "confirm was not SEND"
+                )
+                snapshot_for_outcome(draft, body)
+                maybe_finalize_draft_outcome(ctx["store"], draft, "cancelled", box_id=ctx["box_id"])
+                _draft_outcomes.strip_plaintext_fields(draft)
                 write_draft(path, draft)
                 raise GateFailure(
                     "refused_no_confirm",
-                    "confirm was not SEND; the draft is cancelled",
+                    "owner replied NO, DROP, or skip; the draft was not sent"
+                    if dropped
+                    else "confirm was not SEND; the draft was not sent",
                     extra={"draft_id": draft_id, "dest": dest},
+                )
+            left = unfilled_placeholders(body)
+            if left:
+                finalize_script_refused_draft(
+                    ctx["store"],
+                    draft,
+                    path,
+                    box_id=ctx["box_id"],
+                    refuse_reason="unfilled_placeholder",
+                    body=body,
+                )
+                raise GateFailure(
+                    "refused_unfilled_placeholder",
+                    "the draft still has a bracketed placeholder ("
+                    + ", ".join(left)
+                    + "); it was not sent. Ask the owner for the value, then stage the message again with it filled in",
+                    field="body",
+                    extra={"draft_id": draft_id, "dest": dest, "placeholders": left},
                 )
             if not is_attest(attest):
                 raise GateFailure(
@@ -1045,14 +2324,35 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                     field="attest",
                     extra={"draft_id": draft_id, "dest": dest},
                 )
-            assert_not_opted_out(dest, ctx["store"]["opt_out"])
+            try:
+                assert_not_opted_out(dest, ctx["store"]["opt_out"])
+            except GateFailure as opt_out:
+                if opt_out.outcome == "refused_stop":
+                    finalize_script_refused_draft(
+                        ctx["store"],
+                        draft,
+                        path,
+                        box_id=ctx["box_id"],
+                        refuse_reason="opted_out",
+                        body=body,
+                    )
+                raise
             if len(body) > max_body_chars() or not body:
+                finalize_script_refused_draft(
+                    ctx["store"],
+                    draft,
+                    path,
+                    box_id=ctx["box_id"],
+                    refuse_reason="over_length",
+                    body=body,
+                )
                 raise GateFailure(
                     "error",
                     "staged body is no longer sendable as one message",
                     status=EXIT_ERROR,
-                    extra={"draft_id": draft_id, "dest": dest},
+                    extra={"draft_id": draft_id, "dest": dest, "refuse_reason": "over_length"},
                 )
+            assert_no_recent_double_send_guard(ctx["store"], dest, body, utc_now())
             draft["status"] = "sending"
             write_draft(path, draft)
             approved_at = iso(utc_now())
@@ -1065,21 +2365,55 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                     "provider_status": "error",
                     "error": exc.__class__.__name__,
                 }
-            provider_called = True
+            provider_called = not bool(result.get("stubbed"))
             if result.get("success"):
                 message_id = str(result.get("message_id") or "")
                 if not message_id:
-                    result = {
-                        "success": False,
-                        "message_id": "",
-                        "provider_status": result.get("provider_status") or "accepted",
-                        "error": "provider returned no message id; this draft will not be retried",
-                    }
+                    finalize_script_refused_draft(
+                        ctx["store"],
+                        draft,
+                        path,
+                        box_id=ctx["box_id"],
+                        refuse_reason="provider_no_id",
+                        body=body,
+                        provider_result=result,
+                    )
+                    audit(
+                        ctx["store"],
+                        box_id=ctx["box_id"],
+                        approver=approver,
+                        dest=dest,
+                        from_number_value=ctx["from"],
+                        body=body,
+                        outcome="refused",
+                        reason="provider_no_id",
+                        approved_at=approved_at,
+                        draft_id=draft_id,
+                        telnyx_message_id=None,
+                        provider_status=result.get("provider_status") or "accepted",
+                        provider_called=provider_called,
+                    )
+                    return emit(
+                        {
+                            "ok": False,
+                            "outcome": "refused",
+                            "reason": "provider returned no message id; this draft will not be retried",
+                            "draft_id": draft_id,
+                            "dest": dest,
+                            "from": ctx["from"],
+                            "provider_status": result.get("provider_status") or "accepted",
+                            "provider_called": provider_called,
+                            "refuse_reason": "provider_no_id",
+                        },
+                        EXIT_ERROR,
+                    )
                 else:
+                    snapshot_for_outcome(draft, body)
+                    maybe_finalize_draft_outcome(ctx["store"], draft, "sent", box_id=ctx["box_id"])
                     draft["status"] = "sent"
                     draft["telnyx_message_id"] = message_id
                     draft["approved_at"] = approved_at
-                    draft["body"] = ""
+                    _draft_outcomes.strip_plaintext_fields(draft)
                     write_draft(path, draft)
                     sent_dt = utc_now()
                     sent_at = iso(sent_dt)
@@ -1109,7 +2443,8 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                         draft_id=draft_id,
                         telnyx_message_id=message_id,
                         provider_status=result.get("provider_status") or "accepted",
-                        provider_called=True,
+                        provider_called=provider_called,
+                        stubbed=bool(result.get("stubbed")),
                         session_ttl_expires_at=ttl_expires_at if session_recorded else None,
                     )
                     return emit(
@@ -1122,18 +2457,22 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                             "from": ctx["from"],
                             "telnyx_message_id": message_id,
                             "provider_status": result.get("provider_status") or "accepted",
-                            "provider_called": True,
+                            "provider_called": provider_called,
                             "auto_reply": False,
                             "session_recorded": session_recorded,
                             "session_ttl_expires_at": ttl_expires_at if session_recorded else None,
                         },
                         EXIT_OK,
                     )
-            draft["status"] = "error"
-            draft["provider_error"] = result.get("error") or "provider rejected the send"
-            draft["body"] = ""
-            write_draft(path, draft)
-            reason = str(result.get("error") or "provider rejected the send")
+            finalize_script_refused_draft(
+                ctx["store"],
+                draft,
+                path,
+                box_id=ctx["box_id"],
+                refuse_reason="provider_error",
+                body=body,
+                provider_result=result,
+            )
             audit(
                 ctx["store"],
                 box_id=ctx["box_id"],
@@ -1141,8 +2480,8 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
                 dest=dest,
                 from_number_value=ctx["from"],
                 body=body,
-                outcome="error",
-                reason=reason,
+                outcome="refused",
+                reason="provider_error",
                 approved_at=approved_at,
                 draft_id=draft_id,
                 telnyx_message_id=result.get("message_id") or None,
@@ -1152,13 +2491,14 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
             return emit(
                 {
                     "ok": False,
-                    "outcome": "error",
-                    "reason": reason,
+                    "outcome": "refused",
+                    "reason": "provider rejected the send; do not retry because a retry can text them twice",
                     "draft_id": draft_id,
                     "dest": dest,
                     "from": ctx["from"],
                     "provider_status": result.get("provider_status") or "error",
-                    "provider_called": True,
+                    "provider_called": provider_called,
+                    "refuse_reason": "provider_error",
                 },
                 EXIT_ERROR,
             )
@@ -1196,13 +2536,29 @@ def send(draft_id: str, confirm: str, attest: str) -> int:
         return emit(payload, failure.status)
 
 
-def cancel(draft_id: str) -> int:
+def cancel(draft_id: str, actor_raw: str = "") -> int:
     try:
         ctx = context()
+        transitioned = False
+        data: dict | None = None
         with DraftLock(ctx["store"]["drafts"]):
-            data = cancel_draft(ctx["store"]["drafts"], draft_id, "owner cancelled")
+            path = draft_path(ctx["store"]["drafts"], draft_id)
+            if not path.exists():
+                raise GateFailure("error", "draft was not found", field="draft_id", status=EXIT_ERROR)
+            draft = read_draft(path)
+            actor = resolve_turn_actor_for_command(actor_raw, draft, field="actor")
+            assert_actor_is_draft_approver(
+                draft,
+                actor,
+                draft_id=draft_id,
+                groups=ctx["owner_identity_groups"],
+            )
+            assert_draft_owner(ctx, draft, draft_id=draft_id)
+            data, transitioned = cancel_draft(ctx["store"]["drafts"], draft_id, "owner cancelled")
         if data is None:
             raise GateFailure("error", "draft was not found", field="draft_id", status=EXIT_ERROR)
+        if transitioned:
+            maybe_finalize_draft_outcome(ctx["store"], data, "cancelled", box_id=ctx["box_id"])
         audit(
             ctx["store"],
             box_id=ctx["box_id"],
@@ -1626,18 +2982,37 @@ def build_parser() -> argparse.ArgumentParser:
     stage_cmd.add_argument("--approver", required=True)
     stage_cmd.add_argument("--dest", required=True)
     stage_cmd.add_argument("--body", required=True)
+    # Missing Why args are refused in stage() as refused_no_why, not by argparse,
+    # so an old stage invocation still returns that outcome and writes no draft.
     stage_cmd.add_argument("--why", default="")
     stage_cmd.add_argument("--source-kind", default="")
     stage_cmd.add_argument("--source-date", default="")
     stage_cmd.add_argument("--source-name", default="")
+    stage_cmd.add_argument("--source-ref", default="")
+    stage_cmd.add_argument("--replaces", default="", help="Previous draft_id when re-staging after an edit.")
+    stage_cmd.add_argument(
+        "--actor",
+        default="",
+        help="Turn sender E.164; required with --replaces and must match the draft approver.",
+    )
 
     send_cmd = sub.add_parser("send", help="Send one staged draft after SEND and attestation.")
     send_cmd.add_argument("--draft-id", required=True)
     send_cmd.add_argument("--confirm", required=True)
     send_cmd.add_argument("--attest", required=True)
+    send_cmd.add_argument(
+        "--actor",
+        default="",
+        help="Turn sender; must match the draft approver (required on box turns).",
+    )
 
     cancel_cmd = sub.add_parser("cancel", help="Cancel one staged draft. Does not send.")
     cancel_cmd.add_argument("--draft-id", required=True)
+    cancel_cmd.add_argument(
+        "--actor",
+        default="",
+        help="Turn sender; must match the draft approver (required on box turns).",
+    )
 
     deny_cmd = sub.add_parser("deny", help="Add one number to the local opt-out list. Does not send.")
     deny_cmd.add_argument("--approver", required=True)
@@ -1653,6 +3028,9 @@ def build_parser() -> argparse.ArgumentParser:
     dismiss_cmd = sub.add_parser("dismiss", help="Dismiss one owner event. Does not send.")
     dismiss_cmd.add_argument("--approver", required=True)
     dismiss_cmd.add_argument("--event-id", required=True)
+
+    sub.add_parser("sweep-outcomes", help="Expire silent drafts as ignored. Does not send.")
+    sub.add_parser("export-outcomes", help="Export draft outcome counts. Does not send.")
     return parser
 
 
@@ -1668,11 +3046,14 @@ def main(argv: list[str] | None = None) -> int:
             args.source_kind,
             args.source_date,
             args.source_name,
+            args.source_ref,
+            args.replaces,
+            args.actor,
         )
     if args.cmd == "send":
-        return send(args.draft_id, args.confirm, args.attest)
+        return send(args.draft_id, args.confirm, args.attest, args.actor)
     if args.cmd == "cancel":
-        return cancel(args.draft_id)
+        return cancel(args.draft_id, args.actor)
     if args.cmd == "deny":
         return deny(args.approver, args.dest)
     if args.cmd == "inbound":
@@ -1681,6 +3062,26 @@ def main(argv: list[str] | None = None) -> int:
         return list_events()
     if args.cmd == "dismiss":
         return dismiss(args.approver, args.event_id)
+    if args.cmd == "sweep-outcomes":
+        store = paths()
+        with DraftLock(store["drafts"]):
+            lines = _draft_outcomes.sweep_expired(store, box_slug=resolve_box_id())
+        return emit(
+            {
+                "ok": True,
+                "outcome": "swept",
+                "ignored": len(lines),
+                "provider_called": False,
+                "auto_reply": False,
+            },
+            EXIT_OK,
+        )
+    if args.cmd == "export-outcomes":
+        rows = _draft_outcomes.export_counts(paths()["draft_outcomes"])
+        return emit(
+            {"ok": True, "outcome": "exported", "rows": rows, "provider_called": False, "auto_reply": False},
+            EXIT_OK,
+        )
     return emit({"ok": False, "outcome": "error", "reason": "unknown command", "auto_reply": False}, EXIT_ERROR)
 
 
