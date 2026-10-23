@@ -2,7 +2,7 @@
 // The script is the gate: stage never sends; send requires SEND plus attestation;
 // opt-out, cron, multi-dest, an unresolved box, and a delegated child never call
 // the transport. Path A allows any resolved non-empty box id when
-// TELNYX_SMS_FROM_NUMBER is set. stage requires a Why line (red-390-v2).
+// TELNYX_SMS_FROM_NUMBER is set. stage requires a Why line (red-390-v3 attestation).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -21,6 +21,7 @@ const script = readFileSync(scriptPath, "utf8");
 
 const OWNER = "+17145550100";
 const DEST = "+15555550199";
+const DEST2 = "+15555550200";
 const FROM = "+19283563339";
 const BODY = "Hi Dana, your listing packet is ready.";
 
@@ -39,7 +40,7 @@ function draftFiles(dir) {
 function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), options = {}) {
   // Existing stage flows stay valid: a Why line is required, so inject one
   // unless the test passed --why itself or opted out.
-  const cmdArgs =
+  let cmdArgs =
     options.why === false || args[0] !== "stage" || args.includes("--why")
       ? args
       : [
@@ -49,6 +50,15 @@ function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), o
           "--source-kind",
           "owner_text",
         ];
+  if (cmdArgs[0] === "send" && !cmdArgs.includes("--actor")) {
+    cmdArgs = [...cmdArgs, "--actor", OWNER];
+  }
+  if (cmdArgs[0] === "cancel" && !cmdArgs.includes("--actor")) {
+    cmdArgs = [...cmdArgs, "--actor", OWNER];
+  }
+  if (cmdArgs[0] === "stage" && cmdArgs.includes("--replaces") && !cmdArgs.includes("--actor")) {
+    cmdArgs = [...cmdArgs, "--actor", OWNER];
+  }
   const calls = join(dir, "calls.jsonl");
   const transport = join(dir, "transport.py");
   writeFileSync(
@@ -78,7 +88,9 @@ function run(args, extra = {}, dir = mkdtempSync(join(tmpdir(), "sms-send-")), o
     SMS_DRAFT_DIR: join(dir, "drafts"),
     SMS_SESSION_DIR: join(dir, "sessions"),
     SMS_EVENT_DIR: join(dir, "events"),
+    DRAFT_OUTCOMES_PATH: join(dir, "draft-outcomes.jsonl"),
     SMS_SEND_TRANSPORT: transport,
+    SMS_TURN_OWNER_E164: OWNER,
     CALLS: calls,
     ...extra,
   };
@@ -155,8 +167,8 @@ test("skill routes third-party SMS through confirm, the pinned adapter, and the 
   assert.match(skill, /refused_multi/);
   assert.match(skill, /\/opt\/data\/audit\/sms-outbound\.jsonl/);
   assert.match(skill, /\/opt\/data\/audit\/sms-opt-out\.txt/);
-  assert.match(skill, /Reply SEND to send, or NO to drop it/);
-  assert.match(skill, /`NO` or `skip`/);
+  assert.match(skill, /Reply SEND to send, DROP to discard/);
+  assert.match(skill, /`DROP`, `NO`/);
   assert.match(skill, /STOP, STOPALL, STOP ALL, UNSUBSCRIBE/);
   assert.match(skill, /CANCEL, END, and QUIT/);
   assert.match(skill, /REVOKE and OPTOUT are extra guards/);
@@ -187,7 +199,7 @@ test("script sends through standalone_sender_fn after plugin resolve, not hermes
   assert.match(script, /standalone_sender_fn/);
   assert.match(script, /_resolve_all/);
   assert.match(script, /a7d209f/);
-  assert.match(script, /red-390-v2/);
+  assert.match(script, /red-390-v3/);
   assert.doesNotMatch(script, /red-390-v1/);
   assert.match(script, /refused_no_why/);
   assert.match(script, /HERMES_DELEGATED_CHILD_CONTEXT/);
@@ -262,7 +274,7 @@ test("stage shows attestation and does not send", () => {
   assert.equal(payload.dest, DEST);
   assert.match(payload.attestation, /from ARIN's number \(\+19283563339\) to \+15555550199/);
   assert.match(payload.attestation, /Reply SEND to confirm you authorize this one message/);
-  assert.match(payload.attestation, /Reply SEND to send, or NO to drop it\./);
+  assert.match(payload.attestation, /Reply SEND to send, DROP to discard\./);
   assert.match(payload.attestation, /The recipient can still opt out with their carrier\./);
   assert.doesNotMatch(payload.attestation, /to cancel/i);
   assert.doesNotMatch(payload.attestation, /\bSTOP\b/);
@@ -373,8 +385,8 @@ test("the cancel command drops a staged draft and does not send", () => {
   assert.equal(later.callLines.length, 0);
 });
 
-test("NO, no, and skip drop the draft and do not send", () => {
-  for (const token of ["NO", "no", "  skip ", "Skip"]) {
+test("DROP, NO, no, and skip drop the draft and do not send", () => {
+  for (const token of ["DROP", "drop", "NO", "no", "  skip ", "Skip"]) {
     const dir = mkdtempSync(join(tmpdir(), "sms-drop-"));
     const staged = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {}, dir);
     const dropped = run(
@@ -383,7 +395,7 @@ test("NO, no, and skip drop the draft and do not send", () => {
       dir,
     );
     assert.equal(dropped.payload.outcome, "refused_no_confirm", token);
-    assert.match(dropped.payload.reason, /owner replied NO or skip/);
+    assert.match(dropped.payload.reason, /owner replied NO, DROP, or skip/);
     assert.equal(dropped.payload.provider_called, false);
     assert.equal(dropped.callLines.length, 0);
     const later = run(
@@ -697,10 +709,24 @@ test("a reply still requires SEND", () => {
   sendOne(dir);
   const inbound = run(["inbound", "--sender", DEST, "--body", "Can you call?", "--message-id", "r1"], {}, dir);
   assert.equal(inbound.payload.outcome, "owner_event");
+  const replyWhy = "Dana asked to call back";
   const staged = run(
-    ["stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Dana, yes, I will call you."],
+    [
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      DEST,
+      "--body",
+      "Hi Dana, yes, I will call you.",
+      "--why",
+      replyWhy,
+      "--source-kind",
+      "owner_text",
+    ],
     {},
     dir,
+    { why: false },
   );
   assert.equal(staged.payload.outcome, "staged");
   assert.equal(staged.callLines.length, 1);
@@ -712,9 +738,22 @@ test("a reply still requires SEND", () => {
   assert.equal(vague.payload.outcome, "refused_no_confirm");
   assert.equal(vague.callLines.length, 1);
   const restaged = run(
-    ["stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Dana, yes, I will call you."],
+    [
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      DEST,
+      "--body",
+      "Hi Dana, yes, I will call you.",
+      "--why",
+      replyWhy,
+      "--source-kind",
+      "owner_text",
+    ],
     {},
     dir,
+    { why: false },
   );
   const sent = run(
     ["send", "--draft-id", restaged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
@@ -763,7 +802,7 @@ test("REVOKE, OPTOUT, and STOP ALL refuse before any provider call", () => {
   }
 });
 
-test("a Telegram approver can confirm and cannot be the destination", () => {
+test("a Telegram approver can stage but cannot SEND until RED-700", () => {
   const dir = mkdtempSync(join(tmpdir(), "sms-tg-"));
   const staged = run(
     ["stage", "--approver", "424242", "--dest", DEST, "--body", BODY],
@@ -772,18 +811,28 @@ test("a Telegram approver can confirm and cannot be the destination", () => {
   );
   assert.equal(staged.payload.outcome, "staged");
   const sent = run(
-    ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
+    [
+      "send",
+      "--draft-id",
+      staged.payload.draft_id,
+      "--confirm",
+      "SEND",
+      "--attest",
+      "yes",
+      "--actor",
+      "424242",
+    ],
     { TELEGRAM_ALLOWED_USERS: "424242" },
     dir,
   );
-  assert.equal(sent.payload.outcome, "sent");
+  assert.equal(sent.payload.outcome, "refused_not_owner");
   const same = run(
     ["stage", "--approver", "15555550199", "--dest", DEST, "--body", BODY],
     { TELEGRAM_ALLOWED_USERS: "15555550199" },
     dir,
   );
   assert.equal(same.payload.outcome, "refused_not_third_party");
-  assert.equal(same.callLines.length, 1);
+  assert.equal(same.callLines.length, 0);
   const stranger = run(
     ["stage", "--approver", "99999", "--dest", "+15555550123", "--body", BODY],
     { TELEGRAM_ALLOWED_USERS: "424242" },
@@ -877,7 +926,7 @@ test("stage puts the Why line in the attestation and not in the client body", ()
   );
   assert.equal(staged.payload.outcome, "staged");
   assert.equal(staged.payload.provider_called, false);
-  assert.equal(staged.payload.attestation_version, "red-390-v2");
+  assert.equal(staged.payload.attestation_version, "red-390-v3");
   assert.equal(staged.payload.source_kind, "fub_note");
   assert.equal(staged.payload.source_date, "2026-10-07");
   assert.equal(staged.payload.why_line, line);
@@ -895,7 +944,7 @@ test("stage puts the Why line in the attestation and not in the client body", ()
   assert.equal(draft.source_kind, "fub_note");
   assert.equal(draft.source_date, "2026-10-07");
   assert.equal(draft.source_ref, "note-1");
-  assert.equal(draft.attestation_version, "red-390-v2");
+  assert.equal(draft.attestation_version, "red-390-v3");
   assert.doesNotMatch(draft.body, /Why:/);
   const sent = run(
     ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes"],
@@ -1402,7 +1451,7 @@ test("0004: body must be the text itself, to the recipient; [PRICE] placeholder;
     ["Dana asked if the inspection report is in. It is.", "refused_body_not_to_recipient"],
     ["The appraisal came in.", "refused_body_not_to_recipient"],
     ["Hi Dana, the price dropped on the Oak St listing.", "refused_body_missing_placeholder"],
-    ["Hi, the price on Oak St dropped to [PRICE].", "refused_body_no_greeting_name"],
+    ["Hi, the price on Oak St dropped to [PRICE].", "refused_no_recipient"],
     ["Hi Dana, just sending a quick note.", "refused_body_no_content"],
   ]) {
     const r = stageWith(body, why);
@@ -1503,7 +1552,7 @@ test("skill: keep the owner's wording and facts; only address the recipient; kee
 // --- RED-585 QA run 7 (Oct 18) draft fixes -------------------------------------------------
 test("QA run 7 items 1-2: a bare 'Hi,' greeting is refused; 'Hi Dana, ...' stages; a status Why is refused", () => {
   const bare = stageWith("Hi, you asked if the inspection report is in. It is.", "Dana asked if the inspection report is in");
-  assert.equal(bare.payload.outcome, "refused_body_no_greeting_name", bare.stdout);
+  assert.equal(bare.payload.outcome, "refused_no_recipient", bare.stdout);
   assert.equal(draftFiles(bare.dir).length, 0);
   const named = stageWith("Hi Dana, yes, the inspection report is in.", "Dana asked if the inspection report is in");
   assert.equal(named.payload.outcome, "staged", named.stdout);
@@ -1521,7 +1570,7 @@ test("QA run 7 item 4: a missing price stages with [PRICE]; a price word with no
   const bad = stageWith("Hi Dana, the new price for Oak St is set.", "Dana asked about the new Oak St price");
   assert.equal(bad.payload.outcome, "refused_body_missing_placeholder", bad.stdout);
   const skill = readFileSync(skillPath, "utf8");
-  assert.match(skill, /Any missing\s+detail[\s\S]*?is\s+NEVER a reason to ask/);
+  assert.match(skill, /missing[\s\S]*?content[\s\S]*?is NEVER a reason to ask instead of staging/);
   assert.match(skill, /\[PRICE\]/);
 });
 
@@ -1552,7 +1601,7 @@ test("QA run 7 AC9: owner_text Why says 'from your own text' once, even if the m
   const twice = stageWith("Hi Sam, happy birthday!", "It's Sam's birthday today, from your own text.");
   assert.equal(twice.payload.why_line, "Why: It's Sam's birthday today, from your own text.");
   assert.equal(twice.payload.why_line.split("from your own text").length, 2);
-  assert.match(r.payload.attestation, /Reply SEND to send, or NO to drop it\./);
+  assert.match(r.payload.attestation, /Reply SEND to send, DROP to discard\./);
   assert.ok(r.payload.why_line.length <= 120);
   // Non-owner kinds keep their own label and still carry a real date.
   const fub = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", "Hi Dana, the offer is in.",
@@ -1643,7 +1692,7 @@ test("greeting name: nameless forms refuse; a name after the comma or Dear count
     "Hey! The inspection report is in.",
   ]) {
     const r = stageWith(body, why);
-    assert.equal(r.payload.outcome, "refused_body_no_greeting_name", body + " " + r.stdout);
+    assert.equal(r.payload.outcome, "refused_no_recipient", body + " " + r.stdout);
     assert.equal(draftFiles(r.dir).length, 0);
   }
   for (const body of [
@@ -1715,7 +1764,10 @@ test("send refuses a draft whose body still has a bracketed placeholder, and res
     assert.ok(sent.payload.placeholders.length >= 1);
     const files = draftFiles(dir).map((n) => JSON.parse(readFileSync(join(dir, "drafts", n), "utf8")));
     assert.equal(files.length, 1);
-    assert.ok(files.every((d) => d.status === "cancelled" && d.body === ""), "draft is cancelled and body cleared");
+    assert.ok(
+      files.every((d) => d.status === "refused" && d.refuse_reason === "unfilled_placeholder" && d.body === ""),
+      "draft is refused with reason and body stripped from disk",
+    );
   }
   const spaced = stageThenSend("Hi Dana, the showing is on [ DATE ].", why);
   assert.equal(spaced.sent.payload.outcome, "refused_unfilled_placeholder", spaced.sent.stdout);
@@ -1738,8 +1790,253 @@ test("the placeholder guard does not block ordinary brackets, and NO on a placeh
 
 test("SKILL.md: any missing detail gets a placeholder, restage after the value, never send a placeholder", () => {
   const skill = readFileSync(skillPath, "utf8");
-  assert.match(skill, /Any missing\s+detail[\s\S]*?bracketed UPPERCASE placeholder/);
+  assert.match(skill, /bracketed UPPERCASE placeholder/);
   assert.match(skill, /stage the message AGAIN with the value filled in/);
   assert.match(skill, /NEVER send a bracketed placeholder/);
   assert.match(skill, /refused_unfilled_placeholder/);
+  assert.match(skill, /refused_no_recipient/);
+  assert.match(skill, /Who should I text/);
+  assert.match(skill, /Reply SEND to send, DROP to discard/);
+});
+
+test("SKILL.md cancel script example runs with --actor", () => {
+  const skill = readFileSync(skillPath, "utf8");
+  const blocks = [...skill.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1]);
+  const lines = blocks
+    .flatMap((b) => b.split("\n"))
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith("python3 ") && l.includes("sms_send_confirmed.py"));
+  assert.ok(lines.length >= 1, "expected documented cancel example");
+  assert.ok(!lines.some((l) => l.includes(" send ")), "SKILL must not document direct send");
+  assert.ok(!lines.some((l) => l.includes("--replaces")), "SKILL must not document direct re-stage");
+  const script = join(root, "skills", "sms-send-confirmed", "scripts", "sms_send_confirmed.py");
+  const cancelLine = lines.find((l) => l.includes(" cancel "));
+  assert.ok(cancelLine);
+  const cmd = cancelLine
+    .replace("/opt/data/skills/sms-send-confirmed/scripts/sms_send_confirmed.py", script)
+    .replace("+17145550100", OWNER);
+  const args = cmd.replace(/^python3\s+\S+\s+/, "").split(/\s+/).map((a) => (a === "DRAFT_ID" ? "DRAFT_ID" : a));
+  const cancelDir = mkdtempSync(join(tmpdir(), "sms-skill-cancel-"));
+  const cancelDraft = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY], {}, cancelDir);
+  const cancelArgs = args.map((a) => (a === "DRAFT_ID" ? cancelDraft.payload.draft_id : a));
+  const cancelled = run(cancelArgs, {}, cancelDir);
+  assert.equal(cancelled.payload.outcome, "cancelled");
+});
+
+// --- RED-585 QA RUN 10 (Oct 19) -----------------------------------------------------------
+test("RED-585: back-to-back drafts cannot reuse the prior Why when recipient or body differs", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sms-why-reuse-"));
+  const appraisalWhy = "The appraisal came in";
+  const first = run(
+    [
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      DEST,
+      "--body",
+      "Hi Garcias, the appraisal came in.",
+      "--why",
+      appraisalWhy,
+      "--source-kind",
+      "owner_text",
+    ],
+    {},
+    dir,
+    { why: false },
+  );
+  assert.equal(first.payload.outcome, "staged", first.stdout);
+  assert.match(first.payload.why_line, /appraisal came in/);
+  const dropped = run(
+    ["send", "--draft-id", first.payload.draft_id, "--confirm", "DROP", "--attest", "yes"],
+    {},
+    dir,
+  );
+  assert.equal(dropped.payload.outcome, "refused_no_confirm");
+  const copiedWhy = run(
+    [
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      DEST2,
+      "--body",
+      "Hi Hendersons, the comparison is coming before our 4 PM call.",
+      "--why",
+      appraisalWhy,
+      "--source-kind",
+      "owner_text",
+    ],
+    {},
+    dir,
+    { why: false },
+  );
+  assert.equal(copiedWhy.payload.outcome, "refused_why_reused", copiedWhy.stdout);
+  const distinct = run(
+    [
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      DEST2,
+      "--body",
+      "Hi Hendersons, the comparison is coming before our 4 PM call.",
+      "--why",
+      "The Hendersons need the comparison before the 4 PM call",
+      "--source-kind",
+      "owner_text",
+    ],
+    {},
+    dir,
+    { why: false },
+  );
+  assert.equal(distinct.payload.outcome, "staged", distinct.stdout);
+  assert.notEqual(distinct.payload.why_line, first.payload.why_line);
+  assert.match(distinct.payload.why_line, /comparison before the 4 PM call/);
+  assert.match(first.payload.why_line, /appraisal came in/);
+  const dropDistinct = run(
+    ["send", "--draft-id", distinct.payload.draft_id, "--confirm", "DROP", "--attest", "yes"],
+    {},
+    dir,
+  );
+  assert.equal(dropDistinct.payload.outcome, "refused_no_confirm");
+  const sameAgain = run(
+    [
+      "stage",
+      "--approver",
+      OWNER,
+      "--dest",
+      DEST,
+      "--body",
+      "Hi Garcias, the appraisal came in.",
+      "--why",
+      appraisalWhy,
+      "--source-kind",
+      "owner_text",
+    ],
+    {},
+    dir,
+    { why: false },
+  );
+  assert.equal(sameAgain.payload.outcome, "staged", "restaging the same text may reuse the same why");
+});
+
+test("RUN 10 item 9: [NAME] in the greeting is refused_no_recipient; no draft", () => {
+  const r = stageWith("Hi [NAME], just following up.", "The prior conversation needs a follow-up now");
+  assert.equal(r.payload.outcome, "refused_no_recipient", r.stdout);
+  assert.match(r.payload.reason, /Who should I text/i);
+  assert.equal(draftFiles(r.dir).length, 0);
+  assert.equal(r.payload.provider_called, false);
+});
+
+test("RUN 10 item 4: [BUYER NAME] in the greeting is who-first refused, not a content placeholder draft", () => {
+  const r = stageWith(
+    "Hi [BUYER NAME], the price dropped to [PRICE] on the Oak St listing.",
+    "The price dropped on Oak St",
+  );
+  assert.equal(r.payload.outcome, "refused_no_recipient", r.stdout);
+  assert.equal(draftFiles(r.dir).length, 0);
+});
+
+test("RUN 10 item 4 rule: real named recipient with [PRICE] stages, Missing line, and carrier opt-out last", () => {
+  const body = "Hi Dana, the price dropped to [PRICE] on the Oak St listing.";
+  const why = "The price dropped on the Oak St listing";
+  const r = stageWith(body, why);
+  assert.equal(r.payload.outcome, "staged", r.stdout);
+  assert.equal(
+    r.payload.missing_line,
+    "Missing: new price. Reply with it to restage, or DROP to discard.",
+  );
+  assert.doesNotMatch(r.payload.missing_line, /Reply SEND to send/);
+  const lines = r.payload.attestation.split("\n");
+  const whyIdx = lines.findIndex((l) => l.startsWith("Why:"));
+  const missingIdx = lines.findIndex((l) => l.startsWith("Missing:"));
+  const authIdx = lines.findIndex((l) => l.startsWith("Reply SEND to confirm"));
+  const dropIdx = lines.findIndex((l) => l === "Reply SEND to send, DROP to discard.");
+  const optIdx = lines.findIndex((l) => l === "The recipient can still opt out with their carrier.");
+  assert.ok(whyIdx > 1 && missingIdx > whyIdx && authIdx > missingIdx && dropIdx > authIdx && optIdx === lines.length - 1);
+  assert.match(r.payload.attestation, /The recipient can still opt out with their carrier\./);
+});
+
+test("RED-585 live: recipient need tails on the Why are refused; fact-only whys stage", () => {
+  const body = "Hi Dana, your closing date is now Nov 3.";
+  const bad = [
+    "Dana's closing date changed, so she needs the new date",
+    "The offer on 12 Oak St was accepted, and she needs the good news",
+  ];
+  for (const why of bad) {
+    const r = stageWith(body, why);
+    assert.equal(r.payload.outcome, "refused_why_action_tail", why + " " + r.stdout);
+    assert.match(r.payload.reason, /reason or fact only/i);
+    assert.equal(draftFiles(r.dir).length, 0);
+  }
+  for (const why of [
+    "Dana's closing date moved to Nov 3.",
+    "The offer on 12 Oak St was accepted.",
+  ]) {
+    const r = stageWith(body, why);
+    assert.equal(r.payload.outcome, "staged", why + " " + r.stdout);
+    assert.match(r.payload.why_line, new RegExp(why.replace(/[.?]$/, "").split(".")[0].slice(0, 12)));
+  }
+});
+
+test("RUN 10 item 8: Why consequence tail is refused_why_action_tail", () => {
+  const r = stageWith("Hi Garcias, the appraisal came in.", "The appraisal came in, so the Garcias should know");
+  assert.equal(r.payload.outcome, "refused_why_action_tail", r.stdout);
+  assert.equal(draftFiles(r.dir).length, 0);
+  const buyer = stageWith(
+    "Hi Dana, the price dropped to [PRICE] on the Oak St listing.",
+    "The price dropped, so the buyer should know",
+  );
+  assert.equal(buyer.payload.outcome, "refused_why_action_tail", buyer.stdout);
+});
+
+test("RUN 10 negative controls: items 1-3 and 5-7 style drafts still stage unchanged", () => {
+  const cases = [
+    ["Hi Hendersons, the comparison is coming before our 4 PM call.", "The Hendersons need the comparison before the 4 PM call"],
+    ["Hi Dana, yes, the inspection report is in.", "Dana asked if the inspection report is in"],
+    ["Hi Mike, just checking in since things have gone quiet on your end.", "Mike from Zillow went quiet on the listing"],
+    ["Hi Pat, congratulations on closing today.", "Pat is closing today"],
+    ["Hi Lee, a reminder that the showing is tomorrow at 10.", "Lee's showing is tomorrow at 10"],
+    ["Hi Sam, happy birthday!", "Sam's birthday is today"],
+  ];
+  for (const [body, why] of cases) {
+    const r = stageWith(body, why);
+    assert.equal(r.payload.outcome, "staged", body + " " + r.stdout);
+    assert.equal(r.payload.missing_line, undefined);
+    assert.match(r.payload.attestation, /The recipient can still opt out with their carrier\./);
+  }
+});
+
+test("who-first: role placeholder [BUYER] in greeting refuses; known real name with [PRICE] stages", () => {
+  const role = stageWith("Hi [BUYER], the appraisal came in.", "The appraisal came in");
+  assert.equal(role.payload.outcome, "refused_no_recipient", role.stdout);
+  const named = stageWith("Hi Dana, the new price for 12 Oak St is [PRICE].", "Dana asked about the new Oak St price");
+  assert.equal(named.payload.outcome, "staged", named.stdout);
+  assert.ok(named.payload.missing_line);
+});
+
+test("Why action tail: real causes with 'so ... can' still stage (not _WHY_SO_CAN)", () => {
+  for (const [body, why] of [
+    ["Hi Dana, we can plan the move timeline.", "Dana asked so she can plan the move"],
+    ["Hi Lee, Saturday works for the showing.", "Lee asked for Saturday so the showing can be booked"],
+  ]) {
+    const r = stageWith(body, why);
+    assert.equal(r.payload.outcome, "staged", why + " " + r.stdout);
+    assert.notEqual(r.payload.outcome, "refused_why_action_tail");
+  }
+});
+
+test("attestation with multiple content placeholders lists Missing once before standard footer", () => {
+  const r = stageWith(
+    "Hi Dana, the showing is on [DATE] at [TIME].",
+    "Dana asked to confirm the showing time",
+  );
+  assert.equal(r.payload.outcome, "staged", r.stdout);
+  assert.match(
+    r.payload.missing_line,
+    /^Missing: date and time\. Reply with both to restage, or DROP to discard\.$/,
+  );
+  assert.ok(r.payload.attestation.indexOf(r.payload.missing_line) < r.payload.attestation.indexOf("Reply SEND to confirm"));
+  assert.ok(r.payload.attestation.endsWith("The recipient can still opt out with their carrier."));
 });

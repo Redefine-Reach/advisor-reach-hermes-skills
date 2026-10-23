@@ -29,6 +29,7 @@ COULD_NOT_SAVE = "I couldn't save that right now."
 ONE_CLIENT = "One preference is for the owner or for one named client."
 WHICH_ONE = "Which one should I forget? Ask me to list them."
 NOT_FOUND = "That isn't one I have saved."
+OWNER_ONLY = "Only the owner can change learned draft style on this box."
 GATE_PATH = "/opt/box/arin_donotkeep.py"
 KIND_MAX = 40
 TEXT_MAX = 400
@@ -37,6 +38,21 @@ WHEN_MAX = 200
 STEP_MAX = 180
 STEP_COUNT = 6
 LABEL_MAX = 80
+
+
+def require_owner_session() -> None:
+    """Refuse only when the turn sender is known and not on the owner allowlist."""
+    actor = str(os.environ.get("LEARNING_LOOP_ACTOR", "")).strip()
+    if not actor:
+        return
+    owners = {
+        part.strip()
+        for part in str(os.environ.get("LEARNING_LOOP_OWNERS", "")).split(",")
+        if part.strip()
+    }
+    if not owners or actor in owners:
+        return
+    blocked("error", OWNER_ONLY)
 
 
 def emit(obj, code=0):
@@ -557,7 +573,57 @@ def matching_forget(data, args):
     return [row for row in rows if needle == row.get("text") or needle in str(row.get("text") or "")]
 
 
+def style_signals(data):
+    return [
+        row
+        for row in data.get("signals", [])
+        if isinstance(row, dict) and row.get("signal") == "style"
+    ]
+
+
+def matching_style_forget(data, args):
+    rows = style_signals(data)
+    if not rows:
+        return []
+    about = plain(getattr(args, "about", None), NOTE_MAX) or plain(args.text, NOTE_MAX)
+    if about:
+        matches = [row for row in rows if about.casefold() in str(row.get("note") or "").casefold()]
+        return matches
+    ordered = sorted(rows, key=lambda row: str(row.get("created_at") or ""))
+    return [ordered[-1]] if ordered else []
+
+
 def cmd_forget(home, args):
+    require_owner_session()
+    if getattr(args, "style_note", False):
+        if args.procedure or args.id:
+            blocked("error", WHICH_ONE)
+        try:
+            data = load_store(home)
+        except Exception:
+            blocked("error", COULD_NOT_SAVE)
+        matches = matching_style_forget(data, args)
+        if not matches:
+            blocked("error", NOT_FOUND)
+        if len(matches) != 1:
+            blocked("error", WHICH_ONE)
+        target = matches[0]
+        signal_id = target.get("id")
+
+        def mutate(store):
+            store["signals"] = [
+                row
+                for row in store["signals"]
+                if not (isinstance(row, dict) and row.get("id") == signal_id)
+            ]
+
+        def check(store):
+            ids = [row.get("id") for row in store["signals"] if isinstance(row, dict)]
+            return signal_id not in ids
+
+        if commit_store(home, mutate, check) is None:
+            blocked("error", COULD_NOT_SAVE)
+        emit(base_result(ok=True, saved=True, confirm=CONFIRM_FORGOT, id=signal_id))
     if args.procedure:
         client = plain(args.client, LABEL_MAX)
         procedure = slug(args.procedure)
@@ -617,6 +683,7 @@ def cmd_forget(home, args):
 
 
 def cmd_record(home, args):
+    require_owner_session()
     action = args.action
     if action not in {"edit", "send", "skip"}:
         blocked("error", COULD_NOT_SAVE)
@@ -672,6 +739,7 @@ def signals_for(data, kind):
 
 
 def cmd_show(home, args):
+    require_owner_session()
     kind = None
     if args.kind:
         kind = kind_of(args.kind, "")
@@ -834,6 +902,8 @@ def build_parser():
     forget = sub.add_parser("forget")
     forget.add_argument("--id")
     forget.add_argument("--text")
+    forget.add_argument("--about")
+    forget.add_argument("--style-note", action="store_true")
     forget.add_argument("--client")
     forget.add_argument("--procedure")
     forget.set_defaults(func=cmd_forget)

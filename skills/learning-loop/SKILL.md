@@ -9,9 +9,11 @@ This is how ARIN keeps an explicit preference, a correction the owner repeats, a
 
 On a text turn, the terminal and `execute_code` are refused. Call the box plugin tool `learning_loop`. That is the path on texts. Do not try the script, the terminal, or `execute_code` there, and do not stop because those are blocked.
 
-- `save` stores one preference, a repeated correction, a client procedure, or a draft style note.
-- `show` lists what is remembered for the owner or one named client, including what to apply before a draft.
-- `forget` removes the one item the owner named.
+- `save` stores one explicit preference, a repeated correction, or a client procedure.
+- `record` stores one draft style or acted-on signal (`action` `edit`, `send`, or `skip`; `note` only for `edit`).
+- `next` returns style notes to apply before staging another draft of that `kind`.
+- `show` lists learned draft signals; `list` covers saved preferences.
+- `forget` removes one named preference, one client procedure, or one style note (`forget --style-note`, optional `--about`).
 
 Pass the same scope, client, kind, and text the commands below use. If `learning_loop` returns an error, say that and stop.
 
@@ -21,7 +23,19 @@ In a non-text session, run the script from `execute_code` with an argument list:
 
 Do not use `execute_code` on a text turn. Do not set `LEARNING_LOOP_TEST` or `LEARNING_LOOP_JUDGE`. Do not set `ARIN_DONOTKEEP_PY`.
 
-On a text turn, a line below that says to run a command means call `learning_loop` with `save`, `show`, or `forget` and those fields. `save-explicit`, `note-correction`, `record`, and `write-client-skill` are `save`. `apply`, `list`, `next`, `show`, and `status` are `show`. `forget` is `forget`. It does not mean `execute_code`.
+On a text turn, call the box plugin `learning_loop` with these ops (not `execute_code`):
+
+| Op | Script command | When |
+| --- | --- | --- |
+| `save` | `save-explicit`, `note-correction`, or `write-client-skill` | explicit preference, second correction, client procedure |
+| `record` | `record --kind <kind> --action edit\|send\|skip` (+ `--note` for edit only) | after the owner edits, sends, or drops a draft |
+| `next` | `next --kind <kind>` | before every new draft of that kind |
+| `show` | `show` or `show --kind <kind>` | what you learned from drafts |
+| `forget` | `forget --id` / `--text` (preference), `--style-note` [--about], or client procedure fields | owner names what to remove |
+| `list` | `list` | saved preferences and client procedures |
+| memory / Daily Brief prefs | `list` and `next --kind daily-brief` | what to apply before a brief or draft |
+
+Non-owner sessions must not call `record`, `show`, or `forget`; the plugin refuses them.
 
 Every command prints one JSON object. `confirm` is either null or one line. Send that line to the owner only when `saved` is true and `confirm` is that line, and only after this command returns. If `confirm` is null, do not say it was saved. If `say` is set, say that sentence and stop. Do not add an approval question, a second sentence about the save, or a memory-tool call.
 
@@ -39,11 +53,9 @@ When the owner corrects a draft or a brief, and they are not stating a new prefe
 
 ## After /new
 
-`/new` drops the chat. It does not drop the file. On the first turn of a session, including the turn right after `/new`, run `apply` before a Daily Brief or a draft:
+`/new` drops the chat. It does not drop the file. On the first turn of a session, including the turn right after `/new`, run `next --kind daily-brief` before a Daily Brief, or `next --kind <kind>` before another draft kind.
 
-`apply --kind daily-brief`
-
-Add `--client "<name>"` only when the work is about that one client. Follow every returned item for order, length, and emphasis. Owner items apply to the owner's work. A client's items apply only when that client was named. A preference does not authorize a send, a page, a job, or a CRM write.
+Add client scope only when the work is about that one client (`list --scope client --client "<name>"`). Follow every returned item for order, length, and emphasis. Owner items apply to the owner's work. A client's items apply only when that client was named. A preference does not authorize a send, a page, a job, or a CRM write.
 
 ## What you remember
 
@@ -56,6 +68,8 @@ Reply with those preferences and client procedures. Do not include the owner and
 ## Forget that
 
 `forget` removes one preference. Pass `--id` from the list you just showed. `--text` is allowed only when it matches one preference. If `say` is `Which one should I forget? Ask me to list them.`, list them and stop. Do not delete a second item. `confirm` (`Forgot that.`) is sent only when `saved` is true.
+
+To forget one learned draft style note without touching a saved preference, use `forget --style-note` for the most recent style signal, or `forget --style-note --about "<words>"` when the owner names part of that note. Preferences are removed only when the owner names a preference, not when they ask to forget a style note.
 
 ## Do-not-keep
 
@@ -77,7 +91,7 @@ Do not announce the record. Before the next draft of that kind, run `next --kind
 
 ## Background review
 
-Silent background review stays off. Do not run a review, do not create a review job, and do not change Hermes config. `status` reports `background_review` as `off`, `on`, or `unset`. `unset` and `off` stay as they are. If it is `on`, say so and do not start a review. This script has no command that turns it on.
+Silent background review stays off. Do not run a review, do not create a review job, and do not change Hermes config. If background review is on in Hermes config, say so and do not start a review. This script has no command that turns it on.
 
 ## What you never do
 

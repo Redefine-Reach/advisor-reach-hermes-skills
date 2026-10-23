@@ -7,6 +7,7 @@ required_environment_variables:
   - TELNYX_SMS_API_BASE
 optional_environment_variables:
   - TELEGRAM_ALLOWED_USERS
+  - ARIN_OWNER_IDENTITIES
 ---
 
 # SMS send confirmed
@@ -37,13 +38,18 @@ business, or a MoO blast) stays refused.
 and do not answer with a plain-text draft. Call the `sms_stage` tool instead.
 It runs this skill's script with the same gates.
 
+- Before every stage, run `learning_loop` op `next` with the draft `kind` (for
+  example `sms-third-party` or the kind your box uses for these drafts).
 - Stage: `sms_stage(action="stage", approver=<owner E.164>, dest=<E.164>,
   body=<text>, why=<one line>, source_kind=<kind>, source_date=<YYYY-MM-DD>,
-  source_name=<only if required>)`. Follow the Why line rules below. When the
-  owner dictated the text, use `source_kind="owner_text"` and today's date.
+  source_name=<only if required>, replaces=<draft_id only when re-staging after
+  an edit>)`. Follow the Why line rules below. When the owner dictated the text,
+  use `source_kind="owner_text"` and today's date.
 - Show the tool's read-back verbatim and stop. Do not send in this turn.
 - When the owner's next text is exactly `SEND` or `/approve`, call
-  `sms_stage(action="send")`. The destination and body come from the staged draft.
+  `sms_stage(action="send", draft_id=<id>)`. The destination and body come from the
+  staged draft. The box plugin supplies the turn sender; do not pass `actor` in the
+  tool call.
 - If they cancel, call `sms_stage(action="cancel", draft_id=<id>)`.
 - If the tool returns an error, say nothing was sent. Do not retry another way.
 
@@ -91,6 +97,18 @@ Telegram user id when they confirm from Telegram. The E.164 must be on
 is set, a Telegram id on that list may confirm. When it is unset, this
 skill still runs and only an allowlisted SMS owner can confirm. Never
 pass the destination as the approver.
+
+`ARIN_OWNER_IDENTITIES` (optional) links one owner's channels: comma-separated
+groups of `|`-joined ids, for example `+17145550100|tg:424242`. Phones are
+normalized to E.164. On `cancel`, `--actor` must match the draft approver or
+share a group with them. **SEND and re-stage (RED-700):** only on the owner's
+SMS text thread — the box sets `SMS_TURN_OWNER_E164` and the plugin passes that
+identity; do not call `send` or `stage --replaces` from the app, Telegram, or
+`execute_code` with a model-chosen `--actor`. Identity never comes from the
+message body. The one exception (AC18) is a mapped owner Telegram SEND on the
+owner's own Telegram turn via `sms_stage`: the box sets `TG_TURN_OWNER_ID` for
+that turn only, and the script refuses a Telegram `--actor` that does not match
+it. Neither variable reaches `execute_code`, so a script run there is refused.
 
 ## Turn 1 — stage, then stop
 
@@ -153,25 +171,44 @@ Every `stage` needs why this text, why now, and where you read that. If
   (greet them by name: "Hi Dana, yes, the report is in." or "Hi, Dana, ..."; never a bare
   "Hi,", "Hello,", "Hey!", "Hi there,", or "Good morning,"; use "you"
   and "your"; answer the client's question, do not repeat "you asked ..." back to them).
-  ALWAYS draft when the owner names a recipient and gives anything to say. Any missing
-  detail (price, date, time, address, amount, name, anything the owner did not say) is
-  NEVER a reason to ask: stage the draft with a bracketed UPPERCASE placeholder where
-  the detail goes ("Hi Dana, the new price for 12 Oak St is [PRICE]."; also [DATE],
-  [TIME], or a short label such as [ADDRESS]). Never add facts the owner did not give.
-  Then ask the owner for the missing detail in the same reply as the read-back. When the
-  owner supplies it, stage the message AGAIN with the value filled in and show the new
-  read-back; never edit around the old draft. NEVER send a bracketed placeholder: a
-  `send` on a draft whose body still has `[PRICE]`, `[DATE]`, `[TIME]` or any
-  `[UPPERCASE]` token is refused (`refused_unfilled_placeholder`), the draft is
-  cancelled, and nothing is sent. Restage with the value filled in.
-  `refused_body_no_greeting_name`: the draft greets with no name ("Hi,", "Hello,", "Hey!", "Hi there,", "Good morning,"). "Hi Dana,", "Hi, Dana,", and "Dear Dana," count.
+  **Who first.** When the owner asks to text, follow up, or check in and you do not
+  have one identifiable recipient, ask exactly one recipient question and do not call
+  `stage`. Generic: `Who should I text?` When a role is clear (buyer, seller, client):
+  `Which buyer should I text?` Do not ask about price or other content in that turn.
+  If conversation or memory already names exactly one matching person (for example
+  one buyer in context), use that real name and stage normally. If it is unknown or
+  ambiguous, ask only about the recipient.
+  `refused_no_recipient`: the draft has no named recipient — a bare greeting ("Hi,",
+  "Hello,", "Hey!", "Hi there,", "Good morning,"), or a bracketed name or role in the
+  greeting (`[NAME]`, `[BUYER NAME]`, `[BUYER]`, and similar). Do not stage; ask who
+  (or which buyer) as above.
+  When the owner names a recipient and gives anything to say, stage. Any missing
+  **content** detail (price, date, time, address, amount — not the recipient's name)
+  is NEVER a reason to ask instead of staging: put a bracketed UPPERCASE placeholder in the body
+  ("Hi Dana, the new price for 12 Oak St is [PRICE]."; also [DATE], [TIME], [ADDRESS]).
+  Never add facts the owner did not give. The read-back order is: body, Why line,
+  `Missing: ...` (when placeholders remain), then the usual authorization lines and
+  `The recipient can still opt out with their carrier.` last. The Missing line says
+  `Reply with it to restage, or DROP to discard.` (use `both` / `them` when several
+  details are missing). It never invites SEND while placeholders remain. Ask for missing content
+  in the same reply as the read-back. When the owner supplies a value, stage the message AGAIN with the value filled in and show the new read-back; never edit around the old draft.   NEVER send a bracketed placeholder: `refused_unfilled_placeholder` at
+  `send` writes one `refused` outcome (`unfilled_placeholder`); re-stage with
+  `--replaces` after the owner supplies the value.
+  `refused_why_action_tail`: the Why line has a trailing consequence or states what
+  the recipient needs, should do, or should know (joined by `, so`, `, and`, `so`,
+  `and`, or `which means`, then a person such as she/he/they/the buyer/Dana and
+  needs/should/must/has to/wants to/know). Examples: `so the buyer should know`,
+  `so she needs the new date`, `and she needs the good news`. Rewrite to state the
+  reason or fact only (for example `Dana's closing date moved to Nov 3.`).
+  `refused_why_reused`: the Why line is identical to the owner's previous draft but
+  the recipient or the message body changed. Write a fresh why for each new text and
+  person; never copy the last draft's Why into a different action.
   `refused_body_meta`: instructions like "Tell them ..." in the text.
   `refused_body_not_to_recipient`: not addressed to the recipient.
   `refused_unfilled_placeholder` (at send): the body still has a bracketed placeholder; restage with the value.
   `refused_body_missing_placeholder`: price mentioned with no figure. A street number is not a figure; use [PRICE] or the amount.
   `refused_body_no_content`: filler ("just sending a note"); ask ONE short question
-  (what should the note say?). With no recipient name, ask ONE short question
-  ("Who should I text?") and do not stage.
+  (what should the note say?).
 - `--source-date`: `YYYY-MM-DD`. Required unless the kind is `none` or
   `owner_text` (do not pass a date for `owner_text`).
 - `--source-name`: the Gmail sender's first name, or for `memory` the inner
@@ -206,22 +243,48 @@ Silence, an earlier yes, or "text my clients" is not consent. Consent is
 destination, this From number, this body, and this Why line. That is the same rule as
 email outreach: the irreversible step needs its own go-ahead.
 
-## Turn 2 — SEND or NO
+## Turn 2 — SEND, edit, or DROP
 
 Wait for the owner's next message. The attestation already tells them:
-Reply SEND to send, or NO to drop it.
+Reply SEND to send, DROP to discard.
 
-- If it is exactly `SEND` or `/approve` (after trimming; either case), and
-  you showed that draft's attestation, run `send` once with that
-  `--draft-id`, `--confirm` set to their message, and `--attest yes`.
-- If it is `NO` or `skip` (after trimming; either case), run the `cancel`
-  command for that draft and tell them it was not sent.
-- Any other reply does not send. Run the `cancel` command for that draft
-  and tell them it was not sent. A vague "yes", "go ahead", or "send it"
-  is not a confirm.
+Before you act, call `learning_loop` op `next` with this draft's `kind` so
+style notes apply. Do not announce that you recorded anything.
 
-Do not ask the owner to answer with a carrier opt-out keyword. `NO` and
-`skip` are the words that drop a staged draft.
+- If it is exactly `SEND` or `/approve` (after trimming; either case) **on an
+  SMS text turn**, and you showed that draft's attestation, call
+  `sms_stage(action="send", draft_id=<id>)` once. The box supplies the SMS
+  owner identity; do not pass `--actor` in the tool call and do not invoke
+  `send` from the app or `execute_code` until RED-700. When the outcome is
+  `sent`, call `learning_loop` op `record` with `action="send"` and the same
+  `kind`. Do not pass a note or the body.
+- If the owner replies with an **edit** (a shorter wording, tone change, or
+  other revision — not DROP/NO/skip and not SEND), do **not** cancel. Call
+  `learning_loop` op `record` with `action="edit"` and a `note` that states
+  the change in plain words ("shorter, no exclamation"), never the draft body.
+  Then re-stage on the **same SMS text thread** with `replaces` set to that
+  `draft_id`, the updated body, and a **new** Why line (the guard refuses a
+  reused Why whenever the body changes). Use `sms_stage` on texts; do not
+  re-stage from the app or `execute_code` until RED-700. Show the new
+  attestation and wait again for SEND or DROP.
+- After a fixable script refusal (`unfilled_placeholder`, `opted_out`, or
+  `over_length`), re-stage with `--replaces` on the SMS text thread only. A
+  refused draft can be the source of only one re-stage.
+- If it is `DROP`, `NO`, or `skip` (after trimming; either case), run
+  `cancel` with `--draft-id` and `--actor`, then `learning_loop` op
+  `record` with `action="skip"` and the same `kind` (no note). Tell them it
+  was not sent with **Not sent.** first. `NO` remains an alias for owners who
+  already use it.
+- Any other reply that is not SEND and not an edit does not send. Run
+  `cancel` for that draft, then `record` with `action="skip"` when the owner
+  clearly dropped the approach, and tell them it was not sent. A vague "yes",
+  "go ahead", or "send it" is not a confirm.
+
+Do not ask the owner to answer with a carrier opt-out keyword. `DROP`, `NO`,
+and `skip` drop a staged draft.
+
+The read-back footer is unchanged: Why line, then SEND/DROP, then the carrier
+opt-out line last. Never remove the SEND demand because of a learned note.
 
 `--attest yes` is allowed only after you displayed the staged attestation.
 If you did not, stop. Do not pass `--attest yes` to get the script to send.
@@ -233,12 +296,28 @@ a follow-up text to that person.
 
 If the outcome is not `sent`, tell the owner the `reason` in their words
 and stop. Do not retry a provider error, a timeout, or a draft whose
-status is `sending` or `error` — a retry can text them twice. You may fix
+status is `sending` or `refused` with `refuse_reason` `provider_error` or
+`provider_no_id` — a retry can text them twice. Staging the same body to the
+same recipient again within 24 hours after an ambiguous provider failure
+returns `refused_recent_provider_failure` with: "Your last text to this person may still go through, so I didn't queue a duplicate" (no outcome line). Definitive provider `rejected` or local `not_sent` failures do not arm the guard. You may fix
 one named `field` (`dest`, `body`, `approver`, or `why`) and `stage` once more,
 which needs a new `SEND`. A `field` of `from` means the box number is
 missing: stop, and do not invent one. A `field` of `attest` means you may
 run `send` one more time with `--attest yes` only if the attestation was
 actually shown.
+
+### Script examples (cancel only off the SMS text thread)
+
+Until RED-700, do **not** run `send` or `stage --replaces` from `execute_code`,
+the app, or Telegram. SEND and re-stage happen only on the owner's SMS text
+turn via `sms_stage`, with `SMS_TURN_OWNER_E164` set by the box.
+
+App or Telegram may still **cancel** when `ARIN_OWNER_IDENTITIES` links the
+channel to the approver:
+
+```bash
+python3 /opt/data/skills/sms-send-confirmed/scripts/sms_send_confirmed.py cancel --draft-id DRAFT_ID --actor +17145550100
+```
 
 ## Refuses (fail closed)
 
