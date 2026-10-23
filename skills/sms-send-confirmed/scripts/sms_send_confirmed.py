@@ -283,8 +283,9 @@ def attestation_text(
     lines = [
         f"You're about to send this text from ARIN's number ({from_number}) to {dest}.",
         body,
-        why_line,
     ]
+    if why_line:
+        lines.append(why_line)
     if missing_line:
         lines.append(missing_line)
     lines.extend(
@@ -1189,7 +1190,7 @@ def assert_not_delegated_child(environ: Mapping[str, str] | None = None) -> None
     if str(env.get(DELEGATED_CHILD_ENV, "")).strip():
         raise GateFailure(
             "refused_autonomous",
-            "a delegated child cannot stage or send a third-party SMS",
+            "a background run cannot stage or send a third-party SMS",
         )
 
 
@@ -1956,7 +1957,7 @@ def assert_actor_is_box_sms_turn(
                 return
         raise GateFailure(
             "refused_not_owner",
-            "SEND and re-stage require the owner's SMS text thread until RED-700",
+            "SEND and re-stage require the owner's SMS text thread",
             field="actor",
             extra={"draft_id": draft_id, "dest": dest},
         )
