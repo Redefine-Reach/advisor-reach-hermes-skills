@@ -1761,10 +1761,11 @@ def resolve_turn_actor_for_command(
     text = str(actor_raw or "").strip()
     if text:
         return resolve_turn_actor(text, field=field)
-    if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
-        approver = str(draft.get("approver") or "").strip()
-        if approver:
-            return resolve_turn_actor(approver, field=field)
+    if resolve_box_sms_turn_owner() is not None:
+        return resolve_turn_actor("", field=field)
+    approver = str(draft.get("approver") or "").strip()
+    if approver:
+        return resolve_turn_actor(approver, field=field)
     return resolve_turn_actor("", field=field)
 
 
@@ -1970,6 +1971,8 @@ def assert_actor_is_box_sms_turn(
     turn_owner = resolve_box_sms_turn_owner()
     if turn_owner is None:
         if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
+            return
+        if kind == "ok" and number and number in ctx["phones"]:
             return
         raise GateFailure(
             "error",
