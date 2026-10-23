@@ -858,6 +858,27 @@ test("a Telegram approver can confirm and cannot be the destination", () => {
   assert.equal(stranger.payload.outcome, "refused_not_owner");
 });
 
+test("a Telegram actor on the wrong turn gets an owner-facing refusal", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sms-tg-actor-"));
+  const staged = run(
+    ["stage", "--approver", "424242", "--dest", DEST, "--body", BODY],
+    { TELEGRAM_ALLOWED_USERS: "424242" },
+    dir,
+  );
+  assert.equal(staged.payload.outcome, "staged");
+  const refused = run(
+    ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes", "--actor", "99999"],
+    { TELEGRAM_ALLOWED_USERS: "424242" },
+    dir,
+  );
+  assert.equal(refused.payload.outcome, "refused_not_owner");
+  assert.equal(refused.payload.field, "actor");
+  assert.equal(refused.payload.provider_called, false);
+  assert.equal(refused.callLines.length, 0);
+  assert.equal(refused.payload.reason, "SEND and re-stage require the owner's SMS text thread.");
+  assert.doesNotMatch(refused.payload.reason, /RED-\d+/);
+});
+
 test("hydrate fills empty keys without extending the allowlist", () => {
   const dir = mkdtempSync(join(tmpdir(), "sms-hydrate-"));
   const runtime = join(dir, "runtime.env");

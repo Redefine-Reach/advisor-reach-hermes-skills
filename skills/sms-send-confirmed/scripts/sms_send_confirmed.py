@@ -64,7 +64,7 @@ DEFAULT_DRAFT_TTL_SECONDS = 1800
 DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
 DOUBLE_SEND_GUARD_HOURS = 24
 RECENT_PROVIDER_FAILURE_REASON = (
-    "Your last text to this person may still go through, so I didn't queue a duplicate"
+    "Your last text to this person may still go through, so I didn't queue a duplicate."
 )
 DOUBLE_SEND_GUARD_EXEMPT_STATUSES = frozenset({"rejected", "not_sent"})
 CONFIRM_TOKENS = frozenset({"send", "/approve"})
@@ -639,7 +639,7 @@ def body_problem(body: str, why: str) -> tuple[str, str] | None:
     """Quality gate for owner-texted drafts. Returns (outcome, reason) or None."""
     text = " ".join(str(body or "").split())
     if re.search(_FILLER_BODY, text, re.I):
-        return ("refused_body_no_content", "the draft says nothing; ask the owner one short question: what should the note say")
+        return ("refused_body_no_content", "the draft says nothing; ask the owner one short question: what should the note say?")
     if re.search(_META_BODY[0], text) or re.search(_META_BODY[1], text, re.I):
         return ("refused_body_meta", "the draft contains an instruction to the owner (for example 'Tell them ...'). Write the text itself, in second person, to the recipient")
     if not re.search(_SECOND_PERSON, text, re.I):
@@ -790,7 +790,7 @@ def build_why_line(
         raise GateFailure(
             "refused_why_trigger",
             "why restates the trigger (the owner's text or request) and gives no reason; "
-            "state what is due or happened and why now",
+            "state what is due or what happened and why now",
             field="why",
         )
     if kind not in SOURCE_KINDS:
@@ -1956,7 +1956,7 @@ def assert_actor_is_box_sms_turn(
                 return
         raise GateFailure(
             "refused_not_owner",
-            "SEND and re-stage require the owner's SMS text thread until RED-700",
+            "SEND and re-stage require the owner's SMS text thread.",
             field="actor",
             extra={"draft_id": draft_id, "dest": dest},
         )
