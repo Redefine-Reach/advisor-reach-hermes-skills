@@ -30,6 +30,23 @@ Do not change Helm, the box's settings, or the Telnyx portal. A session file is
 not an allowlist entry. Mode B (a list, a nurture sequence, a book of
 business, or a MoO blast) stays refused.
 
+
+## On a text (telnyx_sms) turn: use the sms_stage tool
+
+`execute_code` and the terminal are blocked on texted turns. Do not try them,
+and do not answer with a plain-text draft. Call the `sms_stage` tool instead.
+It runs this skill's script with the same gates.
+
+- Stage: `sms_stage(action="stage", approver=<owner E.164>, dest=<E.164>,
+  body=<text>, why=<one line>, source_kind=<kind>, source_date=<YYYY-MM-DD>,
+  source_name=<only if required>)`. Follow the Why line rules below. When the
+  owner dictated the text, use `source_kind="owner_text"` and today's date.
+- Show the tool's read-back verbatim and stop. Do not send in this turn.
+- When the owner's next text is exactly `SEND` or `/approve`, call
+  `sms_stage(action="send")`. The destination and body come from the staged draft.
+- If they cancel, call `sms_stage(action="cancel", draft_id=<id>)`.
+- If the tool returns an error, say nothing was sent. Do not retry another way.
+
 ## When this skill applies
 
 Use it when the owner asks you to text, SMS, or message a named person who
