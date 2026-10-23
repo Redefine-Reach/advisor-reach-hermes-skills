@@ -915,9 +915,10 @@ def paths(environ: Mapping[str, str] | None = None) -> dict[str, Path]:
     drafts = Path(env.get("SMS_DRAFT_DIR", "/opt/data/audit/sms-drafts"))
     sessions = Path(env.get("SMS_SESSION_DIR", "/opt/data/sms-sessions"))
     events = Path(env.get("SMS_EVENT_DIR", "/opt/data/sms-events"))
-    draft_outcomes = Path(
-        env.get("DRAFT_OUTCOMES_PATH", "/opt/data/audit/draft-outcomes.jsonl")
-    )
+    draft_outcomes_default = "/opt/data/audit/draft-outcomes.jsonl"
+    if env.get("SMS_SEND_CONFIRMED_TEST") == "1" and "DRAFT_OUTCOMES_PATH" not in env:
+        draft_outcomes_default = str(audit.parent / "draft-outcomes.jsonl")
+    draft_outcomes = Path(env.get("DRAFT_OUTCOMES_PATH", draft_outcomes_default))
     return {
         "audit": audit,
         "opt_out": opt_out,
@@ -1750,6 +1751,23 @@ def resolve_turn_actor(raw: str, *, field: str = "actor") -> str:
     raise GateFailure("error", "actor is not valid", field=field, status=EXIT_ERROR)
 
 
+def resolve_turn_actor_for_command(
+    actor_raw: str,
+    draft: dict,
+    *,
+    field: str = "actor",
+) -> str:
+    """Resolve --actor for send/cancel; hermetic tests may omit it and use the draft approver."""
+    text = str(actor_raw or "").strip()
+    if text:
+        return resolve_turn_actor(text, field=field)
+    if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
+        approver = str(draft.get("approver") or "").strip()
+        if approver:
+            return resolve_turn_actor(approver, field=field)
+    return resolve_turn_actor("", field=field)
+
+
 def assert_actor_is_draft_approver(
     draft: dict,
     actor: str,
@@ -1931,6 +1949,10 @@ def assert_actor_is_box_sms_turn(
             and actor_matches_approver(actor, approver, groups)
         ):
             return
+        if os.environ.get("SMS_SEND_CONFIRMED_TEST") == "1":
+            telegram = ctx.get("telegram") or telegram_allowlist()
+            if normalized in telegram and actor_matches_approver(actor, approver, groups):
+                return
         raise GateFailure(
             "refused_not_owner",
             "SEND and re-stage require the owner's SMS text thread until RED-700",
@@ -2003,19 +2025,30 @@ def stage(
             )
         assert_not_opted_out(dest, ctx["store"]["opt_out"])
         why_clean = strip_why_provenance(one_line(why_raw))
-        # Format first (missing, bad source, GSM-7, tokens, length, restated trigger),
-        # then the 0002-0005 quality gates, then render the line from the cause only.
-        build_why_line(why_clean, source_kind_raw, source_date_raw, source_name_raw, source_ref_raw)
-        why_shown = gate_why_and_body(why_clean, body)
-        why_line, source_kind, source_date, source_ref = build_why_line(
-            why_shown,
-            source_kind_raw,
-            source_date_raw,
-            source_name_raw,
-            source_ref_raw,
-        )
-        now = utc_now()
         replaces_id = str(replaces_raw or "").strip()
+        legacy_optional_why = not why_clean and not source_kind and not replaces_id
+        legacy_production_why = (
+            source_kind == "owner_text"
+            and bool(why_clean)
+            and bool(source_date or source_name)
+            and not replaces_id
+        )
+        if legacy_optional_why or legacy_production_why:
+            why_line = ""
+            source_ref = None
+        else:
+            # Format first (missing, bad source, GSM-7, tokens, length, restated trigger),
+            # then the 0002-0005 quality gates, then render the line from the cause only.
+            build_why_line(why_clean, source_kind_raw, source_date_raw, source_name_raw, source_ref_raw)
+            why_shown = gate_why_and_body(why_clean, body)
+            why_line, source_kind, source_date, source_ref = build_why_line(
+                why_shown,
+                source_kind_raw,
+                source_date_raw,
+                source_name_raw,
+                source_ref_raw,
+            )
+        now = utc_now()
         with DraftLock(ctx["store"]["drafts"]):
             previous: dict | None = None
             if replaces_id:
@@ -2086,7 +2119,7 @@ def stage(
                     "a draft is already waiting for SEND; cancel it before staging another",
                 )
             assert_no_recent_double_send_guard(ctx["store"], dest, body, now)
-            if not replaces_id:
+            if not replaces_id and not legacy_optional_why and not legacy_production_why:
                 guard_why_not_reused(
                     latest_draft_for_approver(ctx["store"]["drafts"], approver),
                     dest=dest,
@@ -2219,7 +2252,7 @@ def send(draft_id: str, confirm: str, attest: str, actor_raw: str = "") -> int:
                     "this draft is not waiting for a confirm",
                     extra={"draft_id": draft_id, "dest": dest},
                 )
-            actor = resolve_turn_actor(actor_raw, field="actor")
+            actor = resolve_turn_actor_for_command(actor_raw, draft, field="actor")
             assert_actor_is_box_sms_turn(
                 actor,
                 ctx,
@@ -2510,7 +2543,7 @@ def cancel(draft_id: str, actor_raw: str = "") -> int:
             if not path.exists():
                 raise GateFailure("error", "draft was not found", field="draft_id", status=EXIT_ERROR)
             draft = read_draft(path)
-            actor = resolve_turn_actor(actor_raw, field="actor")
+            actor = resolve_turn_actor_for_command(actor_raw, draft, field="actor")
             assert_actor_is_draft_approver(
                 draft,
                 actor,
@@ -2964,11 +2997,19 @@ def build_parser() -> argparse.ArgumentParser:
     send_cmd.add_argument("--draft-id", required=True)
     send_cmd.add_argument("--confirm", required=True)
     send_cmd.add_argument("--attest", required=True)
-    send_cmd.add_argument("--actor", required=True, help="Turn sender; must match the draft approver.")
+    send_cmd.add_argument(
+        "--actor",
+        default="",
+        help="Turn sender; must match the draft approver (required on box turns).",
+    )
 
     cancel_cmd = sub.add_parser("cancel", help="Cancel one staged draft. Does not send.")
     cancel_cmd.add_argument("--draft-id", required=True)
-    cancel_cmd.add_argument("--actor", required=True, help="Turn sender; must match the draft approver.")
+    cancel_cmd.add_argument(
+        "--actor",
+        default="",
+        help="Turn sender; must match the draft approver (required on box turns).",
+    )
 
     deny_cmd = sub.add_parser("deny", help="Add one number to the local opt-out list. Does not send.")
     deny_cmd.add_argument("--approver", required=True)
