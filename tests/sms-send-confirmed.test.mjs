@@ -969,3 +969,58 @@ print("ok")
 `);
   assert.equal(out, "ok");
 });
+
+test("skill documents actor, replaces, the confirm window, and draft outcomes", () => {
+  assert.match(skill, /--actor/);
+  assert.match(skill, /stage --replaces/);
+  assert.match(skill, /refused_duplicate/);
+  assert.match(skill, /draft-outcomes\.jsonl/);
+  assert.match(skill, /30 minutes/);
+  assert.match(skill, /replaces_chain/);
+  assert.doesNotMatch(skill, /RED-\d+/);
+});
+
+test("owner-facing text hides ticket ids and omits an empty Why line", () => {
+  const plain = run(["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY]);
+  assert.equal(plain.payload.outcome, "staged");
+  assert.equal(plain.payload.attestation.includes("\n\n"), false);
+  assert.match(plain.payload.attestation, /Reply SEND to confirm you authorize this one message/);
+  assert.equal(plain.callLines.length, 0);
+
+  const dir = mkdtempSync(join(tmpdir(), "sms-owner-text-"));
+  const staged = run(
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY],
+    { SMS_TURN_OWNER_E164: OWNER },
+    dir,
+  );
+  const telegram = run(
+    ["send", "--draft-id", staged.payload.draft_id, "--confirm", "SEND", "--attest", "yes", "--actor", "424242"],
+    { SMS_TURN_OWNER_E164: OWNER },
+    dir,
+  );
+  assert.equal(telegram.payload.outcome, "refused_not_owner");
+  assert.equal(telegram.payload.provider_called, false);
+  assert.equal(telegram.callLines.length, 0);
+  assert.doesNotMatch(telegram.payload.reason, /RED-\d+/);
+  assert.equal(
+    telegram.payload.reason,
+    "SEND and re-stage require the owner's SMS text thread",
+  );
+
+  const fresh = mkdtempSync(join(tmpdir(), "sms-background-"));
+  const waiting = run(
+    ["stage", "--approver", OWNER, "--dest", DEST, "--body", BODY],
+    {},
+    fresh,
+  );
+  const background = run(
+    ["send", "--draft-id", waiting.payload.draft_id, "--confirm", "SEND", "--attest", "yes", "--actor", OWNER],
+    { HERMES_DELEGATED_CHILD_CONTEXT: "1" },
+    fresh,
+  );
+  assert.equal(background.payload.outcome, "refused_autonomous");
+  assert.equal(background.payload.provider_called, false);
+  assert.equal(background.callLines.length, 0);
+  assert.equal(background.payload.reason, "a background run cannot stage or send a third-party SMS");
+  assert.doesNotMatch(background.payload.reason, /delegated child|RED-\d+/);
+});

@@ -78,10 +78,16 @@ one argument). Do not set `SMS_SEND_TRANSPORT` or `SMS_SEND_CONFIRMED_TEST`.
 
 The approver is the E.164 of the person texting you on SMS, or their
 Telegram user id when they confirm from Telegram. The E.164 must be on
-`TELNYX_SMS_ALLOWED_USERS`. `TELEGRAM_ALLOWED_USERS` is optional. When it
-is set, a Telegram id on that list may confirm. When it is unset, this
-skill still runs and only an allowlisted SMS owner can confirm. Never
-pass the destination as the approver.
+`TELNYX_SMS_ALLOWED_USERS`. `TELEGRAM_ALLOWED_USERS` is optional. A
+Telegram id on that list may confirm only when this turn's box-resolved
+Telegram sender is that same id. When that sender is not set, SEND and
+re-stage stay on the owner's SMS text thread. When the Telegram list is
+unset, this skill still runs and only an allowlisted SMS owner can
+confirm. Never pass the destination as the approver.
+
+Pass that same approver as `--actor` on `send`, `cancel`, and
+`stage --replaces`. `--actor` has to match the draft approver. On an SMS
+turn it also has to be the box-resolved turn owner. Do not omit `--actor`.
 
 ## Turn 1 — stage, then stop
 
@@ -92,8 +98,20 @@ pass the destination as the approver.
 2. One plain-text body, 640 characters or fewer (the box sends one segment
    at that cap; a longer body would become more than one Telnyx send).
    No Markdown. If you need it shorter, ask before staging.
-3. Run `stage` with `--approver`, `--dest`, and `--body`. `--why`, `--source-kind`, `--source-date`, and `--source-name` are optional. Pass them when you have them. Leaving them off still stages. The script stores each one on the draft. This does not send.
-4. Your entire reply to the owner is the JSON `attestation` field, verbatim.
+3. Run `stage` with `--approver`, `--dest`, and `--body`. To show a Why
+   line, pass `--why` and `--source-kind` together. `--source-date` is
+   required unless the kind is `owner_text` or `none`. `gmail` and
+   `memory` also need `--source-name`. `--source-ref` is optional.
+   Leaving all of them off still stages, and the read-back then has no
+   Why line. Passing only one of `--why` or `--source-kind` refuses.
+   This does not send.
+4. If a draft is already waiting, do not stage a second one. Re-stage an
+   edit with `--replaces` set to that draft id and `--actor` set to the
+   approver. That supersedes the prior draft and keeps the same
+   destination. A `SEND` for the old draft id does not send. To text a
+   different number, `cancel` the waiting draft first, then `stage` a
+   new one.
+5. Your entire reply to the owner is the JSON `attestation` field, verbatim.
    It shows From (the box DID), the destination, the body, and the
    authorization line. Do not paraphrase it, do not add a second draft, and
    do not call `send` in this turn.
@@ -112,9 +130,16 @@ Wait for the owner's next message.
 
 - If it is exactly `SEND` or `/approve` (after trimming; either case), and
   you showed that draft's attestation, run `send` once with that
-  `--draft-id`, `--confirm` set to their message, and `--attest yes`.
-- Anything else cancels. Run `cancel` for that draft and tell them it was
-  not sent. A vague "yes", "go ahead", or "send it" is not a confirm.
+  `--draft-id`, `--confirm` set to their message, `--attest yes`, and
+  `--actor` set to the approver.
+- Anything else cancels. Run `cancel` with that `--draft-id` and the same
+  `--actor`, and tell them it was not sent. A vague "yes", "go ahead", or
+  "send it" is not a confirm.
+- A staged draft expires 30 minutes after `stage` (`expires_at`). A later
+  confirm is `refused_no_confirm` and the reason says the confirmation
+  window expired. Stage the message again. Do not retry `send` on that id.
+- A second `send` of a draft that already went out is `refused_duplicate`.
+  The reason says it was already sent. Do not retry it.
 
 `--attest yes` is allowed only after you displayed the staged attestation.
 If you did not, stop. Do not pass `--attest yes` to get the script to send.
@@ -126,18 +151,22 @@ a follow-up text to that person.
 
 If the outcome is not `sent`, tell the owner the `reason` in their words
 and stop. Do not retry a provider error, a timeout, or a draft whose
-status is `sending` or `error` — a retry can text them twice. You may fix
-one named `field` (`dest`, `body`, or `approver`) and `stage` once more,
-which needs a new `SEND`. A `field` of `from` means the box number is
-missing: stop, and do not invent one. A `field` of `attest` means you may
-run `send` one more time with `--attest yes` only if the attestation was
-actually shown.
+status is `sending` or `error` — a retry can text them twice. Do not read
+an outcome code aloud. While a draft is still pending, change the body
+with `stage --replaces` and the same destination, then wait for a new
+`SEND`. To change the destination or the approver, `cancel` first, then
+`stage` a new draft, which needs a new `SEND`. A `field` of `from` means
+the box number is missing: stop, and do not invent one. A `field` of
+`attest` means you may run `send` one more time with `--attest yes` only
+if the attestation was actually shown.
 
 ## Refuses (fail closed)
 
 The script refuses, and you must not work around it, when:
 
-- there is no `SEND` / `/approve` (`refused_no_confirm`)
+- there is no `SEND` / `/approve`, or the 30-minute confirm window has expired (`refused_no_confirm`)
+- the draft was already sent (`refused_duplicate`)
+- `--actor` is not the draft approver, or is not this turn's owner (`refused_not_owner`)
 - attestation was not accepted (`refused_no_attestation`)
 - the destination is on the local opt-out list (`refused_stop`)
 - the caller is a schedule, cron, or standing job, or inbound allow-all is
@@ -172,7 +201,10 @@ Refusals and the send result are appended to
 `/opt/data/audit/sms-outbound.jsonl` on the box PVC. Each line has the
 approver, `approved_at` when they confirmed, destination, From, `body_hash`,
 `body_len`, `telnyx_message_id`, `provider_status`, and `outcome`. The body
-itself is not in that file. Do not paste the audit line into the reply.
+itself is not in that file. A final draft outcome is also appended to
+`/opt/data/audit/draft-outcomes.jsonl`. That line has no body, no phone
+number, and no Why text. `replaces_chain` lists superseded draft ids,
+oldest first. Do not paste either audit line into the reply.
 Do not read the file back unless the owner asks whether a specific send
 was recorded — then summarize the outcome, the destination, and whether a
 provider id was stored, not the raw JSON.
