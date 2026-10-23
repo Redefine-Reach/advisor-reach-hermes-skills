@@ -426,8 +426,17 @@ test("cron, allow-all, an unresolved box, a stranger, and a second recipient nev
 
   const multi = run(stageArgs().map((part) => (part === TO ? "jane@example.com, bob@example.com" : part)));
   assert.equal(multi.payload.outcome, "refused_multi");
+  assert.match(multi.payload.reason, /Lists, Cc, and Bcc are refused/);
   assert.equal(multi.callLines.length, 0);
   assert.equal(draftFiles(multi.dir).length, 0);
+
+  const bad = run(stageArgs().map((part) => (part === TO ? "not-an-email" : part)));
+  assert.equal(bad.payload.outcome, "error");
+  assert.equal(bad.payload.reason, "to is not one email address");
+  assert.equal(bad.payload.provider_called, false);
+  assert.equal(bad.callLines.length, 0);
+  assert.equal(draftFiles(bad.dir).length, 0);
+  assert.doesNotMatch(bad.proc.stderr || "", /Traceback/);
 
   const subjectToken = run(stageArgs().map((part) => (part === SUBJECT ? "Please SEND this" : part)));
   assert.equal(subjectToken.payload.outcome, "refused_no_why");

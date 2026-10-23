@@ -377,12 +377,14 @@ def one_email(raw: str, field: str) -> str:
     text = str(raw or "").strip()
     if not text:
         raise GateFailure("error", f"{field} is empty", field=field, status=EXIT_ERROR)
-    if LISTISH.search(text) or MULTI_DEST.search(text) or text.count("@") != 1:
+    if LISTISH.search(text) or MULTI_DEST.search(text) or text.count("@") > 1:
         raise GateFailure(
             "refused_multi",
             "Name one recipient. Lists, Cc, and Bcc are refused.",
             field=field,
         )
+    if text.count("@") != 1:
+        raise GateFailure("error", f"{field} is not one email address", field=field, status=EXIT_ERROR)
     local, domain = text.split("@", 1)
     candidate = f"{local}@{domain.lower()}"
     if not EMAIL_RE.fullmatch(candidate):
