@@ -43,6 +43,15 @@ test("tool execution passes account by alias when several accounts exist, asks o
   assert.match(skill, /With a single connected account, omit `account`\./);
 });
 
+test("gmail sends go through email-send-confirmed and not the Gmail send tool", () => {
+  assert.match(skill, /email-send-confirmed/);
+  assert.match(skill, /That reuse rule does not apply to email/);
+  assert.match(skill, /Never call\n\s+`GMAIL_SEND_EMAIL`/);
+  assert.match(skill, /GMAIL_REPLY_TO_THREAD/);
+  assert.match(skill, /GMAIL_SEND_DRAFT/);
+  assert.match(skill, /exactly `SEND` or `\/approve`/);
+});
+
 test("removing an account needs an explicit yes; writes name the source account", () => {
   assert.match(skill, /^- `action: "remove"` deletes a connected account -- only with the user's explicit yes/m);
   assert.match(skill, /and which account it goes from/);
