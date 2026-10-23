@@ -1006,6 +1006,8 @@ test("case 20 sms summary and delivery expiry", () => {
   assert.match(summary.payload.text, new RegExp(expected.banner));
   assert.equal(summary.payload.text.split(ready.delivered.url).length - 1, 1);
   for (const banned of expected.forbidden) assert.equal(summary.payload.text.includes(banned), false);
+  assert.doesNotMatch(summary.payload.text, /hypoth…|This is a…/);
+  assert.match(summary.payload.text, /steady and concrete\./);
   const longCtx = world();
   const made = seed(longCtx);
   confirm(longCtx, made.id, 1);
@@ -1021,6 +1023,8 @@ test("case 20 sms summary and delivery expiry", () => {
   assert.equal(sms.payload.ok, true, sms.stdout + sms.stderr);
   assert.ok(sms.payload.text.length <= 300);
   assert.equal(sms.payload.text.includes(delivered.payload.url), true);
+  assert.doesNotMatch(sms.payload.text, /deta…/);
+  assert.match(sms.payload.text, /detail…|detail\./);
 });
 
 test("audit lines have no client name or excerpt", () => {

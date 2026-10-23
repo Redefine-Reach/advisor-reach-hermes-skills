@@ -3625,11 +3625,31 @@ def cmd_deliver(client_id: str, opts: dict[str, list[str]]) -> None:
 
 
 def shrink(text: str, limit: int) -> str:
+    """Fit owner-facing text in limit characters.
+
+    A finished sentence is kept whole. Otherwise the cut ends on a word and an
+    ellipsis. A string with no spaces still ends at the character limit.
+    """
     if len(text) <= limit:
         return text
     if limit <= 1:
         return "…"
-    return text[: limit - 1].rstrip() + "…"
+    head = text[:limit].rstrip()
+    sentence_end = max(head.rfind(". "), head.rfind("! "), head.rfind("? "))
+    if sentence_end >= 12:
+        cut = head[: sentence_end + 1].rstrip()
+        if cut and len(cut) <= limit:
+            return cut
+    room = limit - 1
+    head = text[:room].rstrip()
+    space = head.rfind(" ")
+    if space >= 12:
+        head = head[:space].rstrip(" ,;:")
+    else:
+        head = head.rstrip(" ,;:")
+    if not head:
+        return "…"
+    return head + "…"
 
 
 def cmd_sms(client_id: str, opts: dict[str, list[str]]) -> None:
@@ -3655,7 +3675,13 @@ def cmd_sms(client_id: str, opts: dict[str, list[str]]) -> None:
     second = re.sub(r"https?://\S+", "", second).strip()
     style = " Style: insufficient evidence."
     if disc.strip().lower() != "insufficient evidence":
-        style = " Style: " + redact(disc)[0] + "."
+        disc_text = redact(disc)[0].rstrip()
+        if not disc_text:
+            style = " Style: insufficient evidence."
+        else:
+            if disc_text[-1] not in ".!?":
+                disc_text += "."
+            style = " Style: " + disc_text
     identity = f" Identity: {level}."
     banner = "Verify before use."
 
@@ -3664,7 +3690,9 @@ def cmd_sms(client_id: str, opts: dict[str, list[str]]) -> None:
 
     # Keep the style hunch: cap it first, then trim the lead points evenly; drop style last.
     if len(style) > 72:
-        style = shrink(style.rstrip("."), 71) + "."
+        style = shrink(style, 72)
+        if not style.endswith((".", "!", "?", "…")):
+            style += "."
     text = assemble(style, first, second)
     while len(text) > 300 and (len(first) > 40 or len(second) > 40 or style):
         if len(first) >= len(second) and len(first) > 40:
