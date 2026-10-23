@@ -1,0 +1,24 @@
+name: pr-gate
+
+on:
+  pull_request:
+    branches:
+      - production
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  pr-gate:
+    uses: Redefine-Reach/advisorreach-operations/.github/workflows/pr-gate.yml@<OPS75_MERGE_SHA_40> # pr-gate-v1
+    with:
+      pinned_base: production
+      max_behind: 20
+      send_path: false
+      send_path_cmd: ""
