@@ -46,7 +46,7 @@ test("routes GHL away from Composio and declares the sandbox env vars", () => {
 test("looks up contact details in CRM before asking the owner", () => {
   assert.match(skill, /## Resolving contact details/);
   assert.match(skill, /look them up here first/);
-  assert.match(skill, /Do not ask the owner for that number or address until the lookup/);
+  assert.match(skill, /Do not ask the owner for that phone number or email until the lookup returns no match/);
   assert.match(skill, /name the candidates you found/);
 });
 

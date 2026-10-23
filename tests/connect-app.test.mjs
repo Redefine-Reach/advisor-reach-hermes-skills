@@ -51,7 +51,7 @@ test("removing an account needs an explicit yes; writes name the source account"
 test("google calendar owner blocks have no attendees; invites need SEND", () => {
   assert.match(skill, /## Google Calendar events/);
   assert.match(skill, /no attendees and no guest list/);
-  assert.match(skill, /unless they explicitly asked you to invite that person/);
+  assert.match(skill, /unless the owner explicitly asked you to invite that person/);
   assert.match(skill, /exactly `SEND` or\n`\/approve`/);
   assert.match(skill, /Calendar \*\*invites to\n  other people\*\* use the `SEND` \/ `\/approve` gate/);
 });
